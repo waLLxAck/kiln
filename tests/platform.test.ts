@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { WorkbenchError } from '../packages/domain/errors';
+import { noLinks, systemLink } from '../packages/storage/files';
 import { commonBinFolders, desktopPath, mergePath, parseShellPath } from '../packages/providers/path';
 import { configCatalog, editorConfigRoot } from '../packages/home/catalog';
 
@@ -35,4 +39,29 @@ test('VS Code user settings are found where each platform keeps them', () => {
   assert.equal(settings('linux'), path.join('/home/ada', '.config', 'Code', 'User', 'settings.json'));
   assert.equal(settings('darwin'), path.join('/home/ada', 'Library', 'Application Support', 'Code', 'User', 'settings.json'));
   assert.equal(settings('win32'), undefined);
+});
+
+test('links the operating system owns above the home folder are accepted; links the user made are still rejected', { skip: process.platform === 'win32' && 'Windows has no such system links, and creating symlinks needs privileges there' }, () => {
+  assert.equal(systemLink('/var', 'darwin', '/Users/ada'), true);
+  assert.equal(systemLink('/tmp', 'darwin', '/Users/ada'), true);
+  assert.equal(systemLink('/var', 'linux', '/home/ada'), false);
+  assert.equal(systemLink('/home', 'linux', '/home/ada'), true, 'an ancestor of home, as with /home -> /var/home');
+  assert.equal(systemLink('/home/ada', 'linux', '/home/ada'), true, 'home itself');
+  assert.equal(systemLink('/home/ada/skills', 'linux', '/home/ada'), false, 'inside home');
+  assert.equal(systemLink('/home/other', 'linux', '/home/ada'), false);
+  assert.equal(systemLink('/var', 'win32', '/var/home/ada'), false);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-links-'));
+  const previous = process.env.HOME;
+  try {
+    fs.mkdirSync(path.join(root, 'var', 'home', 'ada', 'real'), { recursive: true });
+    fs.symlinkSync(path.join(root, 'var', 'home'), path.join(root, 'home'));
+    fs.symlinkSync(path.join(root, 'var', 'home', 'ada', 'real'), path.join(root, 'var', 'home', 'ada', 'linked'));
+    process.env.HOME = path.join(root, 'home', 'ada');
+    assert.doesNotThrow(() => noLinks(path.join(root, 'home', 'ada', '.kiln', 'library')));
+    assert.throws(() => noLinks(path.join(root, 'home', 'ada', 'linked', 'file.md')), (error: unknown) => error instanceof WorkbenchError && error.code === 'SYMLINK_REJECTED');
+  } finally {
+    process.env.HOME = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

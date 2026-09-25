@@ -1,5 +1,6 @@
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { invariant, WorkbenchError } from '../domain/errors';
@@ -23,13 +24,23 @@ export function contained(root: string, relative: string) {
   invariant(result.startsWith(path.resolve(root) + path.sep), 'INVALID_PATH', 'Path escapes its root.');
   return result;
 }
+/**
+ * Links the operating system owns rather than the user: macOS's /var, /tmp and /etc (which point into /private), and the folders
+ * leading to a home folder reached through a link, such as /home -> /var/home on Fedora Atomic. Windows has none.
+ */
+export function systemLink(current: string, platform: NodeJS.Platform = process.platform, home = os.homedir()) {
+  if (platform === 'win32') return false;
+  if (platform === 'darwin' && ['/var', '/tmp', '/etc'].includes(current)) return true;
+  const resolvedHome = path.resolve(home);
+  return resolvedHome === current || resolvedHome.startsWith(current + path.sep);
+}
 export function noLinks(absolute: string) {
   const resolved = path.resolve(absolute);
   const parts = resolved.slice(path.parse(resolved).root.length).split(path.sep);
   let current = path.parse(resolved).root;
   for (const part of parts) {
     current = path.join(current, part);
-    if (fs.existsSync(current)) invariant(!fs.lstatSync(current).isSymbolicLink(), 'SYMLINK_REJECTED', `Linked path must be handled by its existing manager: ${current}`);
+    if (fs.existsSync(current)) invariant(!fs.lstatSync(current).isSymbolicLink() || systemLink(current), 'SYMLINK_REJECTED', `Linked path must be handled by its existing manager: ${current}`);
   }
 }
 export function atomicWrite(file: string, value: string | Buffer) {
