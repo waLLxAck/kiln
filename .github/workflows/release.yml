@@ -26,7 +26,8 @@ jobs:
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-      - run: npm run dist:win
+      # The next step publishes; stop electron-builder from publishing on its own when it sees a tag.
+      - run: npm run dist:win -- --publish never
         env:
           KILN_PUBLIC_BUILD: '1'
       - name: Publish the release
