@@ -40,10 +40,10 @@ export function prepareMachine(m: Machine) {
   const stub = path.resolve('tests', 'screenshots', 'stubs', 'claude-stub.mjs');
   for (const [file, content] of Object.entries(videoFiles)) write(path.join(m.bin, 'ytdlp-fixture', file), content);
   if (process.platform === 'win32') {
-    write(path.join(m.bin, 'claude.cmd'), `@echo off\r\nnode "${stub}" %*\r\n`);
-    // Node spawns `yt-dlp` without a shell, so on Windows it has to be a real executable. The runner's .NET Framework compiler builds one.
+    // Kiln launches both as native executables on Windows, so the stubs are tiny executables built with the runner's .NET Framework compiler.
     const csc = path.join(process.env.WINDIR ?? 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
-    execFileSync(csc, ['/nologo', `/out:${path.join(m.bin, 'yt-dlp.exe')}`, path.resolve('tests', 'screenshots', 'stubs', 'yt-dlp.cs')], { stdio: 'pipe' });
+    for (const name of ['claude', 'yt-dlp']) execFileSync(csc, ['/nologo', `/out:${path.join(m.bin, `${name}.exe`)}`, path.resolve('tests', 'screenshots', 'stubs', `${name}.cs`)], { stdio: 'pipe' });
+    fs.copyFileSync(stub, path.join(m.bin, 'claude-stub.mjs'));
   } else {
     write(path.join(m.bin, 'claude'), `#!/bin/sh\nexec node "${stub}" "$@"\n`);
     write(path.join(m.bin, 'yt-dlp'), `#!/bin/sh\ncp "${path.join(m.bin, 'ytdlp-fixture')}"/* .\n`);
