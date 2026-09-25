@@ -24,7 +24,7 @@ export function scanAgents(wb: Workbench, input: unknown) {
   const home = process.env.KILN_HOME ?? os.homedir();
   const roots = data.root ? [{ root: data.root, provider: data.provider ?? 'copilot' }] : [
     ...(['codex', 'claude', 'copilot'] as const).map(provider => ({ provider, root: path.join(home, agentFolder(provider)) })),
-    ...wb.targets().filter(t => t.scope === 'project').map(t => ({ provider: t.provider, root: path.join(t.root, agentFolder(t.provider, t.scope)) })),
+    ...wb.targets().filter(t => !t.skillFolder).map(t => ({ provider: t.provider, root: path.join(t.root, agentFolder(t.provider, t.scope)) })),
   ];
   const entries: AgentFile[] = [], seen = new Set<string>(), existing = known(wb);
   const visit = (root: string, provider: ProviderId, depth = 0) => {
