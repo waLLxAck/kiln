@@ -21,7 +21,6 @@ export function refineMacDownload(root: HTMLElement) {
     if (architecture !== 'x86') return;
     const intel = download('mac-x64'), silicon = download('mac-arm64');
     root.querySelectorAll<HTMLAnchorElement>('a[data-download="mac-arm64"]').forEach(link => { link.href = intel.url; link.dataset.download = intel.key; });
-    root.querySelectorAll<HTMLElement>('[data-download-file]').forEach(label => { label.textContent = `${intel.file} · ${intel.label}`; });
     // The Apple silicon build takes the Intel build's place among the other platforms.
     root.querySelectorAll<HTMLAnchorElement>('a[data-download-other="mac-x64"]').forEach(link => { link.href = silicon.url; link.dataset.downloadOther = silicon.key; link.textContent = silicon.label; });
   }).catch(() => undefined);

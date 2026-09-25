@@ -78,15 +78,14 @@ async function checkStatic(run) {
   // Every platform's file is offered in the download section, once, as the button or one of the other links.
   const offered = await page.locator('#download a[data-download], #download a[data-download-other]').evaluateAll(links => links.map(link => link.href));
   assert.deepEqual([...offered].sort(), Object.values(files).sort(), `${label}: one link per platform file`);
-  const note = os => page.locator(`#download [data-install-note="${os}"]`).innerText();
-  assert.match(await note('windows'), /unsigned.*SmartScreen.*More info.*Run anyway/s, `${label}: Windows SmartScreen note`);
-  assert.match(await note('mac'), /not notarized|isn’t notarized/, `${label}: macOS notarization note`);
-  assert.match(await note('mac'), /right-click.*Open/s, `${label}: macOS right-click Open`);
-  assert.match(await note('mac'), /xattr -dr com\.apple\.quarantine \/Applications\/Kiln\.app/, `${label}: macOS quarantine command`);
-  assert.match(await note('linux'), new RegExp(`chmod \\+x Kiln-${version}-x86_64\\.AppImage`), `${label}: AppImage chmod`);
-  assert.match(await note('linux'), new RegExp(`sudo apt install \\./kiln_${version}_amd64\\.deb`), `${label}: deb install`);
-  assert.match(await note('linux'), /--no-sandbox/, `${label}: Linux sandbox note`);
-  for (const os of ['mac', 'linux']) assert.match(await note(os), /untested/, `${label}: ${os} build marked untested`);
+  // The download section stays short: one honest line about the builds and a link to the install steps in the README.
+  const buildNote = await page.locator('#download [data-build-note]').innerText();
+  assert.match(buildNote, /Windows build isn’t signed/, `${label}: Windows build called unsigned`);
+  assert.match(buildNote, /macOS and Linux builds are new and untested/, `${label}: macOS and Linux builds called new and untested`);
+  assert.ok(await page.locator(`#download a[href="${repository}#download"]`).isVisible(), `${label}: link to the install steps in the README`);
+  const closing = await page.locator('#download').innerText();
+  for (const detail of [/SmartScreen/, /notariz/, /Gatekeeper/, /xattr/, /chmod/, /FUSE|libfuse/, /apt install/, /--no-sandbox/, /AppArmor/]) assert.doesNotMatch(closing, detail, `${label}: no install detail (${detail.source}) in the download section`);
+  assert.equal(await page.locator('#download [data-install-note], #download .install-notes').count(), 0, `${label}: no per-platform install notes`);
   assert.doesNotMatch(await page.locator('body').innerText(), /private GitHub repository|account that has access/, `${label}: no private-repository note`);
   assert.ok(await page.locator(`#download a[href="${repository}/releases"]`).count() >= 1, `${label}: link to all releases`);
   assert.ok(await page.locator(`a[href="${kofi}"]`).count() >= 1, `${label}: Ko-fi link`);
@@ -98,7 +97,7 @@ async function checkStatic(run) {
   assert.equal(await page.locator('.site-footer').count(), 1, `${label}: footer`);
 }
 
-/** The hero and closing buttons and the footer link offer `key`; the other files are listed beside it and this platform's notes come first. */
+/** The hero and closing buttons and the footer link offer `key`, and the other files are listed beside it. */
 async function checkDownload({ page, label }, key) {
   const buttons = await page.locator('a.download-button').evaluateAll(links => links.map(link => ({ href: link.href, key: link.dataset.download, text: link.innerText })));
   assert.equal(buttons.length, 2, `${label}: hero and closing download buttons`);
@@ -108,10 +107,8 @@ async function checkDownload({ page, label }, key) {
     assert.equal(button.key, key, `${label}: download button key`);
     assert.match(button.text, new RegExp(`for ${name}$`), `${label}: download button names ${name}`);
   }
-  assert.match(await page.locator('#download [data-download-file]').innerText(), new RegExp(files[key].split('/').pop().replaceAll('.', '\\.')), `${label}: file name under the button`);
   const others = await page.locator('#download a[data-download-other]').evaluateAll(links => links.map(link => link.href));
   assert.deepEqual([...others].sort(), Object.entries(files).filter(([k]) => k !== key).map(([, url]) => url).sort(), `${label}: other platforms beside the button`);
-  assert.equal(await page.locator('#download [data-install-note]').first().getAttribute('data-install-note'), osOf(key), `${label}: ${name} notes first`);
   assert.equal(await page.locator('.site-footer a[data-download]').getAttribute('href'), files[key], `${label}: footer download link`);
 }
 

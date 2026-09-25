@@ -3,31 +3,22 @@
 import './fonts/fonts.css';
 import './styles.css';
 import { downloadButton, refineMacDownload, siteFooter, siteHeader } from './chrome';
-import { downloads, issues, kofi, primaryDownload, releases, support, version, type Download, type Os } from './content';
+import { downloads, installGuide, kofi, primaryDownload, releases, support, version } from './content';
 import { bindTidy, drawDoodle, folderMarks, folderNotes, foldersMarkup } from './folders';
 import { createInk } from './ink';
 import { bindNewSkills, newSkillMarks, newSkillNotes, newSkillsMarkup } from './new-skills';
 import { bindPanels } from './panel';
 import { heart } from './ui';
 
-/** What to do after downloading, per platform. The macOS and Linux builds are new and have not been tested on real machines. */
-const installNotes: Record<Os, (file: (key: Download['key']) => string) => string> = {
-  windows: () => '<b>Windows:</b> the installer is unsigned, so Windows SmartScreen may warn you before it runs. Choose <b>More info</b>, then <b>Run anyway</b>.',
-  mac: () => '<b>macOS</b> (new, untested): Kiln isn’t notarized by Apple, so macOS blocks the first launch. Drag Kiln to Applications, then right-click it and choose <b>Open</b>. On macOS 15 and later, choose <b>Open Anyway</b> in System Settings → Privacy &amp; Security instead. Or clear the quarantine flag in Terminal: <code>xattr -dr com.apple.quarantine /Applications/Kiln.app</code>.',
-  linux: file => `<b>Linux</b> (new, untested): make the AppImage executable with <code>chmod +x ${file('appimage')}</code> and run it; AppImages need FUSE 2 (<code>libfuse2</code>, or <code>libfuse2t64</code> on Ubuntu 24.04). Or install the package with <code>sudo apt install ./${file('deb')}</code>. Ubuntu 23.10 and later block the user namespaces Chromium’s sandbox uses, so there the AppImage starts itself with <code>--no-sandbox</code>; if it still stops with a sandbox error, pass <code>--no-sandbox</code> yourself. The .deb installs an AppArmor profile meant to keep the sandbox on.`,
-};
-
-/** The download: a button for the visitor's platform, the other files as links, and the install notes, this platform's first. */
+/** The download, kept short: a button for the visitor's platform, the other files as links, one honest line about the builds, and
+ * links to the install steps in the README and to every release. The detailed install notes live in the README and release notes. */
 function downloadBlock() {
   const primary = primaryDownload();
   const others = downloads.filter(d => d.key !== primary.key);
-  const order = [primary.os, ...(['windows', 'mac', 'linux'] as Os[]).filter(os => os !== primary.os)];
-  const fileOf = (key: Download['key']) => downloads.find(d => d.key === key)!.file;
   return `${downloadButton(primary, os => `Download Kiln ${version} for ${os}`)}
-      <p class="download-file" data-download-file>${primary.file} · ${primary.label}</p>
       <p class="download-others" aria-label="Other platforms">Also for ${others.map(d => `<a href="${d.url}" data-download-other="${d.key}">${d.label}${d.os === 'linux' ? ` (${d.detail})` : ''}</a>`).join('')}</p>
-      <p class="download-links"><a href="${releases}">All releases and release notes</a><a href="${support}">Support Kiln</a></p>
-      <div class="install-notes">${order.map(os => `<p class="fine" data-install-note="${os}">${installNotes[os](fileOf)}</p>`).join('')}</div>`;
+      <p class="fine" data-build-note>The Windows build isn’t signed yet, and the macOS and Linux builds are new and untested.</p>
+      <p class="download-links"><a href="${installGuide}">How to install</a><a href="${releases}">All releases</a><a href="${support}">Support Kiln</a></p>`;
 }
 
 /** Three real screenshots of the app, taped to the page, so the sheets above aren't the only picture of it. */
@@ -50,7 +41,7 @@ function closing() {
   const faq = [
     ['Do I need an API key?', 'No. Kiln drives the Codex or Claude Code you’re already signed into, on your ChatGPT or Claude plan. Its usage limits still apply. Editing, approving and installing never call a model.'],
     ['Will a test change my code?', 'No. Experiments are read-only, and the output is saved with the exact revision you ran.'],
-    ['Where does an approved skill live?', 'Approval pins that revision and publishes it to your own Kiln GitHub repository. On another machine, run <code>kiln skills sync</code>.'],
+    ['Where does an approved skill live?', 'In your own Kiln repository on GitHub, pinned to the revision you approved, so your other machines can sync it.'],
     ['Is Kiln free?', `Yes, and MIT licensed. I build it on my own; if it saves you time, you can <a href="${kofi}">support it on Ko-fi</a>. <a href="${support}">Other ways to help</a>.`],
   ];
   return `<section class="closing" id="download" aria-labelledby="download-title">
@@ -58,7 +49,6 @@ function closing() {
       <h2 id="download-title">Point it at your own skill folders.</h2>
       <p>Import what you have, switch off what you don’t use, and test the next prompt you save on your own repo.</p>
       ${downloadBlock()}
-      <p class="fine">Kiln is a desktop app for Windows, macOS and Linux with a CLI your agents can use, MIT licensed. It was built on Windows. The macOS and Linux builds are new in ${version} and haven’t been tested on real machines yet, so please <a href="${issues}">report what breaks</a>.</p>
     </div>
     <dl class="faq">${faq.map(([q, a]) => `<div><dt>${q}</dt><dd>${a}</dd></div>`).join('')}</dl>
   </section>`;

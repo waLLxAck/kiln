@@ -1,11 +1,13 @@
 // The facts and sample data the homepage shows. Everything on the panel, in the folders and in the test runs is a labelled
-// sample; product claims follow the root README.
+// sample; product claims follow the root README and docs/GUIDE.md.
 
 // ---------- links ----------
 // Every external link the site uses. To change where donations go, edit `kofi`.
 export const version = '0.18.2';
 export const repository = 'https://github.com/waLLxAck/kiln';
 export const releases = `${repository}/releases`;
+/** The install steps for every platform, in the README. */
+export const installGuide = `${repository}#download`;
 const assets = `${releases}/download/v${version}`;
 
 // ---------- downloads ----------
