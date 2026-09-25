@@ -24,6 +24,15 @@ export function claudeArguments(input: RunInput): string[] {
  * Uses the user's existing Claude Code sign-in; no API key is read or stored. The user's own settings, hooks and MCP servers are left out
  * so the run sees exactly the job folder. Claude Code keeps its own transcript under ~/.claude/projects, which is what `resume` continues.
  */
+/**
+ * The command line for running an npm `.cmd` shim through `cmd.exe /d /s /c`. Every argument is encoded the way MSVCRT
+ * parses argv, so JSON survives intact. The whole line is wrapped in one more pair of quotes because `/s` strips the first
+ * and last quote before running it; without them cmd would eat the quotes around the shim's own path.
+ */
+export function shimCommandLine(executable: string, args: string[]) {
+  const encode = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+  return `"${[executable, ...args].map(encode).join(' ')}"`;
+}
 export async function runClaude(input: RunInput): Promise<unknown> {
   input.onStatus?.('Locating Claude Code');
   const executable = detectProviders().find(p => p.id === 'claude')?.executable;
@@ -33,12 +42,10 @@ export async function runClaude(input: RunInput): Promise<unknown> {
   const args = claudeArguments(input);
   input.onStatus?.(input.resume ? 'Resuming Claude Code conversation' : 'Starting Claude Code conversation');
   const shim = /\.(cmd|bat)$/i.test(executable);
-  // npm shims need cmd.exe; every argument is then re-encoded the way MSVCRT parses argv so JSON survives intact.
-  const encode = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
   const prompt = input.images.length ? `${input.prompt}\n\nAttached images (view them with the Read tool):\n${input.images.map(file => path.relative(cwd, file)).join('\n')}` : input.prompt;
   const result = await new Promise<unknown>((resolve, reject) => {
     const child = shim
-      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `${encode(executable)} ${args.map(encode).join(' ')}`], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } })
+      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', shimCommandLine(executable, args)], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } })
       : spawn(executable, args, { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } });
     if (child.pid) input.onProcess?.(child.pid, true);
     let stderr = '', pending = '', bytes = 0, cancelled = false, final: { is_error?: boolean; result?: string; structured_output?: unknown } | null = null;

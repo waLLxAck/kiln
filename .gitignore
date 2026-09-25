@@ -7,3 +7,4 @@ playwright-report/
 *.log
 .env
 artifacts/
+.claude/
