@@ -8,18 +8,33 @@ A local desktop workbench for prompts and agent skills. Capture useful material,
 
 Kiln is for developers who want to keep useful agent workflows, understand which versions they have tested, and reuse approved skills across projects and machines. The desktop app and CLI share one library and the same approval rules. Kiln is free and MIT licensed; managed agent interactions use your installed, signed-in Codex or Claude Code CLI and its account usage.
 
-**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln.Setup.0.18.1.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
+**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln.Setup.0.18.2.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
+
+## Screenshots
+
+![Kiln showing the code-review skill: an install switch per folder, and the Claude copy flagged as edited outside Kiln](docs/screenshots/skill-installs.png)
+
+One skill, a switch per install location, and every folder it's in, including a copy edited outside Kiln.
+
+| | |
+| --- | --- |
+| ![A YouTube video distilled into a prompt, techniques, an insight and a tool](docs/screenshots/video-distilled.png) | ![A prompt tested read-only on a local project, with a pass verdict](docs/screenshots/experiment-result.png) |
+| A video distilled into a prompt, techniques, an insight and a tool, each linked to its minute. | The prompt tested read-only on your own project, with the agent's verdict for that exact revision. |
+| ![An older copy of a skill compared line by line with the approved version](docs/screenshots/drift-compare.png) | ![Agent instructions, permissions and hooks in one editor](docs/screenshots/config-files.png) |
+| An older copy found in another folder, compared with the approved version. | Agent instructions, permissions and hooks in one editor, with previous versions. |
+
+Screenshots of Kiln on Windows with a made-up library; the agent's replies in them are scripted. [All screenshots and how they're made](docs/screenshots/).
 
 ## Download
 
-Kiln 0.18.1 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`.
+Kiln 0.18.2 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`.
 
 | Platform | File | Status |
 | --- | --- | --- |
-| Windows (x64) | [`Kiln.Setup.0.18.1.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln.Setup.0.18.1.exe) | Supported |
-| macOS, Apple silicon | [`Kiln-0.18.1-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-arm64.zip)) | New, untested |
-| macOS, Intel | [`Kiln-0.18.1-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x64.zip)) | New, untested |
-| Linux (x64) | [`Kiln-0.18.1-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x86_64.AppImage) or [`kiln_0.18.1_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/kiln_0.18.1_amd64.deb) | New, untested |
+| Windows (x64) | [`Kiln.Setup.0.18.2.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln.Setup.0.18.2.exe) | Supported |
+| macOS, Apple silicon | [`Kiln-0.18.2-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-arm64.zip)) | New, untested |
+| macOS, Intel | [`Kiln-0.18.2-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-x64.zip)) | New, untested |
+| Linux (x64) | [`Kiln-0.18.2-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-x86_64.AppImage) or [`kiln_0.18.2_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/kiln_0.18.2_amd64.deb) | New, untested |
 
 "Untested" means the macOS and Linux builds are built, inspected and started once on GitHub's CI runners, but nobody has used them on a real Mac or Linux desktop yet. Please [report what breaks](https://github.com/waLLxAck/kiln/issues). If you would rather not run an unsigned build, [build Kiln from source](#build-from-source).
 
@@ -34,17 +49,17 @@ xattr -dr com.apple.quarantine /Applications/Kiln.app
 **Linux.** Either make the AppImage executable and run it (AppImages need FUSE 2: `libfuse2`, or `libfuse2t64` on Ubuntu 24.04):
 
 ```sh
-chmod +x Kiln-0.18.1-x86_64.AppImage
-./Kiln-0.18.1-x86_64.AppImage
+chmod +x Kiln-0.18.2-x86_64.AppImage
+./Kiln-0.18.2-x86_64.AppImage
 ```
 
 or install the Debian/Ubuntu package, which adds Kiln to the applications menu (the package is named `kiln-workbench`; remove it with `sudo apt remove kiln-workbench`):
 
 ```sh
-sudo apt install ./kiln_0.18.1_amd64.deb
+sudo apt install ./kiln_0.18.2_amd64.deb
 ```
 
-Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error, start it with `./Kiln-0.18.1-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
+Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error, start it with `./Kiln-0.18.2-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
 
 To use Kiln you also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in: first launch creates or opens your Kiln repository on GitHub. Managed runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH.
 
@@ -130,9 +145,9 @@ First launch walks through connecting GitHub and creating or opening your Kiln r
 
 ## Open the app
 
-After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage or your applications menu on Linux. If you built it yourself, run `release/0.18.1/win-unpacked/Kiln.exe` or install the setup executable from `release/0.18.1`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages. Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Kiln** there to exit, or Cmd+Q on macOS. Linux desktops without a tray (GNOME without an AppIndicator extension) show no icon: quit from **File → Quit** (press Alt to show the menu bar), and opening Kiln again brings the window back. The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
+After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage or your applications menu on Linux. If you built it yourself, run `release/0.18.2/win-unpacked/Kiln.exe` or install the setup executable from `release/0.18.2`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages. Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Kiln** there to exit, or Cmd+Q on macOS. Linux desktops without a tray (GNOME without an AppIndicator extension) show no icon: quit from **File → Quit** (press Alt to show the menu bar), and opening Kiln again brings the window back. The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.18.1](docs/releases/0.18.1.md).
+See [what changed in 0.18.2](docs/releases/0.18.2.md).
 
 ## Use a library
 
@@ -272,7 +287,7 @@ On macOS and Linux, Kiln doesn't update itself: Settings → Updates links to th
 
 Every build records where it was made. Kiln watches that repository's `release` folder (top level or one folder down) for a newer `Kiln Setup <version>.exe`. Checks run on startup and window focus. **Prepare update** copies the installer into Kiln's private update cache and verifies it while the app stays open. A progress indicator becomes **Restart to update** when ready. Preparation never launches the installer; closing Kiln normally does not install it, and the ready state survives reopening even if the original release folder disappears.
 
-Only **Restart to update** verifies the cached installer again, starts it silently for the current user, and quits Kiln so Windows can replace the running files. The installer then relaunches Kiln. Save your work before restarting. If verification or starting the installer fails, Kiln stays open and offers a retry. Settings → Updates can choose a different source folder or stop checking. Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they don't watch for local builds. Pushing a version tag such as `v0.18.1` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from `docs/releases/`. Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing. Updates started from an older Kiln release still follow that release's update flow; the two-step flow starts after installing 0.8.1.
+Only **Restart to update** verifies the cached installer again, starts it silently for the current user, and quits Kiln so Windows can replace the running files. The installer then relaunches Kiln. Save your work before restarting. If verification or starting the installer fails, Kiln stays open and offers a retry. Settings → Updates can choose a different source folder or stop checking. Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they don't watch for local builds. Pushing a version tag such as `v0.18.2` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from `docs/releases/`. Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing. Updates started from an older Kiln release still follow that release's update flow; the two-step flow starts after installing 0.8.1.
 
 ## Quick capture and agent runs
 

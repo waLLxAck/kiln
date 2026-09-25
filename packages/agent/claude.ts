@@ -24,6 +24,17 @@ export function claudeArguments(input: RunInput): string[] {
  * Uses the user's existing Claude Code sign-in; no API key is read or stored. The user's own settings, hooks and MCP servers are left out
  * so the run sees exactly the job folder. Claude Code keeps its own transcript under ~/.claude/projects, which is what `resume` continues.
  */
+/**
+ * The command line for running an npm `.cmd` shim through `cmd.exe /d /s /c`, escaped the way cross-spawn does it.
+ * Each argument is quoted for MSVCRT's argv parser, then every cmd metacharacter (quotes included) is caret-escaped, so
+ * cmd never enters quote mode and `&`, `|`, `%` or `(` in JSON or folder names stay literal. Arguments are escaped twice
+ * because the shim hands `%*` to a second round of cmd parsing. The outer quotes are the pair `/s` strips.
+ */
+export function shimCommandLine(executable: string, args: string[]) {
+  const meta = /([()\][%!^"`<>&|;, *?])/g;
+  const argument = (value: string) => `"${value.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"').replace(/(?=(\\+?)?)\1$/, '$1$1')}"`.replace(meta, '^$1').replace(meta, '^$1');
+  return `"${[executable.replace(meta, '^$1'), ...args.map(argument)].join(' ')}"`;
+}
 export async function runClaude(input: RunInput): Promise<unknown> {
   input.onStatus?.('Locating Claude Code');
   const executable = detectProviders().find(p => p.id === 'claude')?.executable;
@@ -33,12 +44,10 @@ export async function runClaude(input: RunInput): Promise<unknown> {
   const args = claudeArguments(input);
   input.onStatus?.(input.resume ? 'Resuming Claude Code conversation' : 'Starting Claude Code conversation');
   const shim = /\.(cmd|bat)$/i.test(executable);
-  // npm shims need cmd.exe; every argument is then re-encoded the way MSVCRT parses argv so JSON survives intact.
-  const encode = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
   const prompt = input.images.length ? `${input.prompt}\n\nAttached images (view them with the Read tool):\n${input.images.map(file => path.relative(cwd, file)).join('\n')}` : input.prompt;
   const result = await new Promise<unknown>((resolve, reject) => {
     const child = shim
-      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `${encode(executable)} ${args.map(encode).join(' ')}`], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } })
+      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', shimCommandLine(executable, args)], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } })
       : spawn(executable, args, { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } });
     if (child.pid) input.onProcess?.(child.pid, true);
     let stderr = '', pending = '', bytes = 0, cancelled = false, final: { is_error?: boolean; result?: string; structured_output?: unknown } | null = null;
