@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -29,3 +29,33 @@ jobs:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           TMPDIR: ${{ runner.temp }}
+
+  # The Electron desktop suite (tests/desktop, Playwright driving the real app) on a virtual X display.
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs; allow them on this runner rather than
+      # turning the sandbox off in the app.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: git config --global user.name "Kiln CI" && git config --global user.email "ci@users.noreply.github.com"
+      - run: npm run build
+      - run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npx playwright test
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-test-results
+          path: |
+            test-results/
+            artifacts/
+          if-no-files-found: ignore

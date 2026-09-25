@@ -1,23 +1,44 @@
 name: Release
 
-# Pushing a version tag (for example v0.18.0) builds the Windows installer on a Windows runner and publishes it
-# with that version's notes from docs/releases/. Public builds record no build folder (KILN_PUBLIC_BUILD=1).
+# Pushing a version tag (for example v0.18.1) builds Kiln for Windows, Linux and macOS, each on its own runner, and publishes
+# all of them in one release with that version's notes from docs/releases/ and a combined SHA256SUMS.txt. Public builds record no
+# build folder (KILN_PUBLIC_BUILD=1).
+#
+# Running it by hand (workflow_dispatch) is a dry run: it builds and inspects every installer and uploads them as workflow
+# artifacts, but publishes nothing.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            dist: dist:win
+          - os: ubuntu-latest
+            dist: dist:linux
+          - os: macos-latest
+            dist: dist:mac
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+      - name: Check the tag matches the version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
       - run: npm ci
       - run: npm run check
       # Tests make Git commits and temporary folders: give them an identity and a temp folder outside any repository.
@@ -26,20 +47,79 @@ jobs:
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-      # The next step publishes; stop electron-builder from publishing on its own when it sees a tag.
-      - run: npm run dist:win -- --publish never
+          TMPDIR: ${{ runner.temp }}
+      # The publish job uploads the files; stop electron-builder from publishing on its own when it sees a tag.
+      - run: npm run ${{ matrix.dist }} -- --publish never
         env:
           KILN_PUBLIC_BUILD: '1'
-      - name: Publish the release
+      - name: Collect the installers
         shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          mkdir upload
+          case "$RUNNER_OS" in
+            Windows)
+              cp "release/Kiln Setup $version.exe" "upload/Kiln.Setup.$version.exe"
+              cp "release/Kiln Setup $version.exe.blockmap" "upload/Kiln.Setup.$version.exe.blockmap" ;;
+            Linux)
+              cp "release/Kiln-$version-x86_64.AppImage" "release/kiln_${version}_amd64.deb" upload/ ;;
+            macOS)
+              cp "release/Kiln-$version-arm64.dmg" "release/Kiln-$version-x64.dmg" "release/Kiln-$version-arm64.zip" "release/Kiln-$version-x64.zip" upload/ ;;
+          esac
+          ls -l upload
+          file upload/* || true
+      - name: Inspect the Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          image="$PWD/release/Kiln-$version-x86_64.AppImage"
+          test -x "$image"
+          cd "$RUNNER_TEMP" && "$image" --appimage-extract > /dev/null
+          ls squashfs-root
+          test -x squashfs-root/kiln-workbench
+          cat squashfs-root/*.desktop
+          cd "$GITHUB_WORKSPACE"
+          dpkg-deb -I "release/kiln_${version}_amd64.deb"
+          dpkg-deb -c "release/kiln_${version}_amd64.deb" | grep -E 'opt/Kiln/(kiln-workbench|chrome-sandbox)$|\.desktop$|hicolor/.*/kiln'
+      - name: Inspect the macOS apps
+        if: runner.os == 'macOS'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          for arch in arm64 x64; do
+            mount="$RUNNER_TEMP/kiln-$arch"
+            hdiutil attach "release/Kiln-$version-$arch.dmg" -nobrowse -readonly -mountpoint "$mount"
+            app="$mount/Kiln.app"
+            lipo -archs "$app/Contents/MacOS/Kiln"
+            codesign -dv --verbose=2 "$app" 2>&1 | tee "$RUNNER_TEMP/codesign-$arch.txt"
+            grep -q 'Signature=adhoc' "$RUNNER_TEMP/codesign-$arch.txt"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            # Not notarized, so Gatekeeper is expected to reject it; print the verdict for the record.
+            spctl --assess --type execute --verbose=2 "$app" || true
+            hdiutil detach "$mount"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kiln-${{ runner.os }}
+          path: upload/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(node -p "require('./package.json').version")
           test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
-          cd release
-          cp "Kiln Setup $version.exe" "Kiln.Setup.$version.exe"
-          cp "Kiln Setup $version.exe.blockmap" "Kiln.Setup.$version.exe.blockmap"
-          sha256sum "Kiln.Setup.$version.exe" "Kiln.Setup.$version.exe.blockmap" > SHA256SUMS.txt
-          gh release create "v$version" --title "Kiln $version" --notes-file "../docs/releases/$version.md" \
-            "Kiln.Setup.$version.exe" "Kiln.Setup.$version.exe.blockmap" SHA256SUMS.txt
+          cd assets
+          sha256sum -- * > ../SHA256SUMS.txt && mv ../SHA256SUMS.txt .
+          cat SHA256SUMS.txt
+          gh release create "v$version" --title "Kiln $version" --notes-file "../docs/releases/$version.md" *
