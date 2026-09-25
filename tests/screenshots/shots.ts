@@ -32,7 +32,7 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await row('code-review').click();
   await detailTab('installs');
   await expect(page.getByRole('group', { name: 'Installed for' })).toBeVisible();
-  await shot('skill-installs', 'A skill and every folder it is installed in: one switch per location, plus copies in project folders.');
+  await shot('skill-installs', 'A skill with one install switch per location, and each folder it is in, including a copy edited outside Kiln.');
 
   // 2. A copy that differs from the approved version, compared file by file.
   await row('research').click();

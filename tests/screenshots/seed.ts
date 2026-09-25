@@ -103,7 +103,7 @@ export async function seed(call: Call, m: Machine) {
   await create({ title: skills.releaseNotes.title, kind: 'skill', content: skills.releaseNotes.content, collection: skills.releaseNotes.collection, tags: skills.releaseNotes.tags });
   const review = await create({ title: skills.codeReview.title, kind: 'skill', content: skills.codeReview.content, files: skills.codeReview.files, collection: skills.codeReview.collection, tags: skills.codeReview.tags });
   await approve(call, review);
-  for (const target of [agents, claude, game]) await install(review, target);
+  for (const target of [agents, claude]) await install(review, target);
   // Someone edited the personal Claude copy by hand afterwards.
   const edited = path.join(m.home, '.claude', 'skills', 'code-review', 'SKILL.md');
   fs.writeFileSync(edited, fs.readFileSync(edited, 'utf8').replace(skills.codeReview.handEdit.del, skills.codeReview.handEdit.add));
