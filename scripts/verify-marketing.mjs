@@ -34,11 +34,12 @@ const kofi = 'https://ko-fi.com/wallxack';
 const widths = [320, 390, 768, 1440, 2048];
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', headless: true });
 
-async function open(width, reducedMotion, url = base, { userAgent, userAgentData } = {}) {
+async function open(width, reducedMotion, url = base, { userAgent, userAgentData, init } = {}) {
   const touch = width < 600;
   const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 1000 }, hasTouch: touch, reducedMotion, ...(userAgent ? { userAgent } : {}) });
   // Stand in for the browser's userAgentData: `null` removes it (Safari, Firefox); an object reports that platform and chip.
   if (userAgentData !== undefined) await context.addInitScript(data => Object.defineProperty(Navigator.prototype, 'userAgentData', { configurable: true, get: () => data && { platform: data.platform, getHighEntropyValues: async () => ({ architecture: data.architecture }) } }), userAgentData);
+  if (init) await context.addInitScript(init);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -263,16 +264,64 @@ async function checkCaptureTestApprove(run) {
   assert.equal(await switchIn(library(page), 'fresh-eyes', 'claude').getAttribute('aria-checked'), 'true', `${label}: both panels agree`);
 }
 
+/**
+ * Runs in the page from before it renders: every animation frame, records the tidy-up state, how many skill rows of the library
+ * panel can be seen, and whether “Kiln hasn’t read your folders yet.” can be seen. Something counts as seen when neither it nor
+ * any ancestor up to the folders sheet is faded out or hidden.
+ */
+function sampleTidyFrames() {
+  const frames = (window.__tidyFrames = []);
+  const tick = () => {
+    const sheet = document.querySelector('#folders'), panel = sheet?.querySelector('[data-panel="library"]');
+    if (panel) {
+      const seen = el => { for (let e = el; e && e !== sheet; e = e.parentElement) { const style = getComputedStyle(e); if (Number(style.opacity) < .05 || style.visibility === 'hidden' || style.display === 'none') return false; } return true; };
+      const rows = [...panel.querySelectorAll('tbody tr')].filter(row => [...row.children].some(seen)).length;
+      const waiting = panel.querySelector('[data-waiting]');
+      frames.push({ t: Math.round(performance.now()), state: sheet.dataset.state, rows, waiting: Boolean(waiting && seen(waiting)) });
+    }
+    if (!window.__tidyStop) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/** The frames sampled so far: the panel starts empty, and the empty state and skill rows are never seen together. */
+async function checkTidyFrames({ page, label }, when) {
+  const frames = await page.evaluate(() => window.__tidyFrames);
+  assert.ok(frames.length > 0, `${label}: sampled the panel`);
+  const before = frames.slice(0, Math.max(1, frames.findIndex(frame => frame.state !== 'mess')));
+  assert.equal(frames[0].state, 'mess', `${label}: the page opens before the tidy-up`);
+  for (const frame of before) {
+    assert.equal(frame.rows, 0, `${label}: no skill rows before the tidy-up starts (${frame.rows} seen at ${frame.t}ms)`);
+    assert.ok(frame.waiting, `${label}: “Kiln hasn’t read your folders yet.” shows before the tidy-up starts (hidden at ${frame.t}ms)`);
+  }
+  const both = frames.find(frame => frame.rows > 0 && frame.waiting);
+  assert.equal(both, undefined, `${label}: the empty state and ${both?.rows} skill rows showed together at ${both?.t}ms (${both?.state}) ${when}`);
+}
+
 /** Full motion: the tidy-up animates once the panel is in view, sources fly and can be dragged, the skill name flies into its row. */
 async function checkMotion(run) {
   const { page, label } = run;
-  assert.equal(await page.locator('#folders').getAttribute('data-state'), 'mess', `${label}: waits for the visitor before tidying`);
   await page.locator('[data-folders-window]').scrollIntoViewIfNeeded();
   await tidyState(page, 'tidying').waitFor({ timeout: 8000 });
   await page.locator('.flight-layer > .flyer').first().waitFor({ state: 'attached', timeout: 2000 }); // files fly into the panel
   await tidyState(page, 'tidy').waitFor({ timeout: 12000 });
   await page.locator('[data-note="n-merge"].is-on').waitFor({ timeout: 8000 });
   assert.equal(await library(page).locator('tbody tr.is-in').count(), 5);
+  await checkTidyFrames(run, 'during the tidy-up');
+  // Put them back, then pop them in again: the panel empties before the empty state returns, and the replay starts from it.
+  const button = page.locator('[data-tidy]');
+  await press(run, button);
+  await tidyState(page, 'mess').waitFor({ timeout: 8000 });
+  await library(page).locator('[data-waiting]').evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+  assert.equal(await library(page).locator('tbody tr.is-in').count(), 0, `${label}: panel emptied`);
+  await press(run, button);
+  await tidyState(page, 'tidy').waitFor({ timeout: 12000 });
+  await page.evaluate(() => { window.__tidyStop = true; });
+  await checkTidyFrames(run, 'while putting them back and popping them in again');
+  const replay = await page.evaluate(() => window.__tidyFrames);
+  assert.ok(replay.some(frame => frame.state === 'messing') && replay.some((frame, i) => i > 0 && frame.state === 'mess' && replay[i - 1].state === 'messing'), `${label}: sampled the replay`);
+  const emptyAgain = replay.findIndex((frame, i) => i > 0 && frame.state === 'mess' && replay[i - 1].state === 'messing');
+  assert.equal(replay[emptyAgain].rows, 0, `${label}: the panel is empty when the folders are back`);
 
   const capture = page.locator('[data-zone="capture"]');
   const test = page.locator('[data-zone="test"]');
@@ -331,7 +380,7 @@ try {
   }
   await checkPlatforms();
   for (const width of [390, 1440]) {
-    const run = await open(width, 'no-preference');
+    const run = await open(width, 'no-preference', base, { init: sampleTidyFrames });
     await checkMotion(run);
     await assertFits(run, 'after the animated flows');
     assert.deepEqual(run.errors, [], `${run.label}: page errors`);

@@ -181,14 +181,19 @@ export function bindTidy(root: HTMLElement, panels: Panels, ink: Ink) {
     /** Approving a new skill needs the library panel filled; fill it at once if the visitor hasn't tidied up yet. */
     tidyNow() { if (sheet.dataset.state === 'mess' && !busy) { touched = true; instant(); } },
     start() {
-      // The doodle draws itself on load; the files tidy themselves into Kiln once the panel is mostly in view.
+      // The doodle draws itself on load; the files tidy themselves into Kiln once the panel is mostly in view and the doodle
+      // has finished drawing, so a visitor who lands with it in view sees the whole mess before it moves.
       const drawn = () => { doodleEl.classList.add('is-drawn'); ink.reach('drawn'); };
       if (prefersReducedMotion()) { drawn(); instant(); return; }
-      requestAnimationFrame(() => requestAnimationFrame(drawn));
+      const drawing = new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+        drawn();
+        Promise.all(doodleEl.getAnimations({ subtree: true }).map(a => a.finished.catch(() => undefined))).then(() => resolve());
+      })));
       const observer = new IntersectionObserver(entries => {
         if (!entries.some(entry => entry.isIntersecting)) return;
         observer.disconnect();
-        document.fonts.ready.then(() => setTimeout(() => { if (!touched) tidy(); }, 1100));
+        // A second or so to take in the mess, and a beat after the last pen stroke if it was still drawing.
+        Promise.all([document.fonts.ready, drawing.then(() => wait(300)), wait(1100)]).then(() => { if (!touched) tidy(); });
       }, { threshold: .7 });
       observer.observe(panelWindow);
     },

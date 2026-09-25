@@ -216,11 +216,11 @@ body { background: var(--desk); color: var(--text); font: 400 17px/1.6 var(--san
 .panel tbody th small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); line-height: 1.3; }
 .panel tbody tr.is-fresh th b::after { content: 'new'; margin-left: 7px; padding: 1px 6px; border-radius: 999px; background: var(--amber-soft); color: #8a4f00; font: 600 10px/1.4 var(--sans); vertical-align: 1px; }
 /* tidy-up states: until Kiln has read the folders, each slot waits empty and appears as its flyer lands */
-.folders [data-panel='p1'] :is([data-slot], tbody tr > *) { transition: opacity .28s ease; }
-.folders:not([data-state='tidy']) [data-panel='p1'] [data-slot]:not(.is-in),
-.folders:not([data-state='tidy']) [data-panel='p1'] tbody tr:not(.is-in) > * { opacity: 0; }
-.folders:not([data-state='tidy']) [data-panel='p1'] .switch-key,
-.folders:not([data-state='tidy']) [data-panel='p1'] .status { opacity: 0; }
+.folders [data-panel='library'] :is([data-slot], tbody tr > *) { transition: opacity .28s ease; }
+.folders:not([data-state='tidy']) [data-panel='library'] [data-slot]:not(.is-in),
+.folders:not([data-state='tidy']) [data-panel='library'] tbody tr:not(.is-in) > * { opacity: 0; }
+.folders:not([data-state='tidy']) [data-panel='library'] .switch-key,
+.folders:not([data-state='tidy']) [data-panel='library'] .status { opacity: 0; }
 .folders .switch-key, .folders .status { transition: opacity .4s ease; }
 .folders:not([data-state='tidy']) [data-mark^='n-'], .folders:not([data-state='tidy']) .pen-note { opacity: 0; transition: opacity .25s; }
 .folders [data-mark] { transition: opacity .4s ease; }
