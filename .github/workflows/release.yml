@@ -52,6 +52,15 @@ jobs:
       - run: npm run ${{ matrix.dist }} -- --publish never
         env:
           KILN_PUBLIC_BUILD: '1'
+      # Start each packaged build once and check its window opens (Linux under a virtual display, macOS from the arm64 dmg below).
+      - name: Start the packaged Windows app
+        if: runner.os == 'Windows'
+        run: node scripts/smoke-packaged.mjs release/win-unpacked/Kiln.exe
+      - name: Start the packaged Linux app
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          xvfb-run --auto-servernum node scripts/smoke-packaged.mjs release/linux-unpacked/kiln-workbench
       - name: Collect the installers
         shell: bash
         run: |
@@ -95,6 +104,9 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "$app"
             # Not notarized, so Gatekeeper is expected to reject it; print the verdict for the record.
             spctl --assess --type execute --verbose=2 "$app" || true
+            # The runner is Apple silicon: the arm64 app must start; the x64 one only can if Rosetta is installed.
+            if [ "$arch" = arm64 ]; then node scripts/smoke-packaged.mjs "$app/Contents/MacOS/Kiln"
+            else node scripts/smoke-packaged.mjs "$app/Contents/MacOS/Kiln" || echo "::warning::The x64 app did not start on this arm64 runner (Rosetta may be missing)"; fi
             hdiutil detach "$mount"
           done
       - uses: actions/upload-artifact@v4
@@ -102,6 +114,12 @@ jobs:
           name: kiln-${{ runner.os }}
           path: upload/*
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ runner.os }}
+          path: artifacts/smoke-*.png
+          if-no-files-found: ignore
 
   publish:
     needs: build
@@ -111,6 +129,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: kiln-*
           path: assets
           merge-multiple: true
       - name: Publish the release
