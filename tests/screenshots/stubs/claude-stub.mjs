@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const pace = Number(process.env.KILN_STUB_PACE_MS ?? 4000);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-if (process.argv.includes('--version')) { console.log('2.4.1 (Claude Code)'); process.exit(0); }
+if (process.argv.includes('--version')) { console.log('Claude Code'); process.exit(0); }
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const cwd = process.cwd();

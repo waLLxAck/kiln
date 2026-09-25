@@ -54,7 +54,7 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await row('Try it as a seven-year-old').click();
   await detailTab('trials');
   await expect(page.locator('.agent-result').first()).toBeVisible();
-  await shot('experiment-result', 'An experiment on a local project: the exact prompt revision, what the agent read, its output and a pass verdict.');
+  await shot('experiment-result', 'The distilled prompt tested read-only on a local project, with the agent’s output and a pass verdict for that exact revision.');
 
   // 5. The Test dialog with its project selector.
   await page.getByRole('button', { name: 'Test', exact: true }).click();
@@ -79,5 +79,5 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await chat.getByLabel('Your message').fill('What did they change between the first and the second run?');
   await chat.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(chat.locator('.chat-text')).toBeVisible({ timeout: 120_000 });
-  await shot('ask-agent-dark', 'Ask the agent about an entry: it answers from the video’s transcript and your library, here in the dark theme.');
+  await shot('ask-agent-dark', 'Asking the agent about a distilled prompt: it answers from the video’s transcript and your library. Dark theme.');
 }
