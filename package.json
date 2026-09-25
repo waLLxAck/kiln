@@ -1,6 +1,6 @@
 {
   "name": "kiln-workbench",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "description": "A local home for prompts, experiments, and approved agent skills",
   "author": "Kiln contributors",
@@ -32,6 +32,8 @@
     "cli": "tsx apps/cli/main.ts",
     "package": "npm run build && electron-builder --dir",
     "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
     "dev:marketing": "npm run dev --workspace @kiln/marketing",
     "build:marketing": "npm run build --workspace @kiln/marketing",
     "build:all": "npm run build && npm run build:marketing",
@@ -63,7 +65,8 @@
       "dist/cli/**/*",
       "dist/build-info.json",
       "package.json",
-      "assets/kiln.*"
+      "assets/kiln.*",
+      "assets/kilnTemplate*.png"
     ],
     "asar": true,
     "asarUnpack": [
@@ -77,6 +80,56 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/kiln.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "notarize": false,
+      "artifactName": "Kiln-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "icon": "assets/kiln-1024.png",
+      "maintainer": "Kiln contributors <15944458+waLLxAck@users.noreply.github.com>",
+      "synopsis": "A local workbench for prompts and agent skills"
+    },
+    "appImage": {
+      "artifactName": "Kiln-${version}-x86_64.${ext}"
+    },
+    "deb": {
+      "artifactName": "kiln_${version}_amd64.${ext}"
     }
   },
   "workspaces": [
