@@ -7,12 +7,8 @@ import { api } from './api';
 import { Badge, InlineError, Modal, providerName } from './components';
 import { FolderComparison } from './Compare';
 
-/** The personal environment for a provider: the personal-scope target rooted at the home folder, else the first personal-scope target. Mirrors DeploymentService.personalTarget. */
-export function personalTarget(targets: Target[], providers: Provider[], id: ProviderId, native = false) {
-  const home = providers.find(p => p.id === id)?.personalRoot.toLowerCase();
-  const personal = targets.filter(t => t.provider === id && t.scope === 'personal' && Boolean(t.skillFolder) === native);
-  return personal.find(t => t.root.toLowerCase() === home) ?? personal[0];
-}
+import { personalTarget } from './skill-folders';
+export { personalTarget };
 export type SkillState = 'off' | 'on' | 'linked' | 'found' | 'differs' | 'drifted';
 export function skillState(item: Item, target: Target, installations: Installation[]): { state: SkillState; installation?: Installation } {
   const installation = installations.find(i => i.itemId === item.id && i.targetId === target.id);

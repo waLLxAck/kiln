@@ -83,6 +83,7 @@ export class Router {
       case 'repository.migrate': { const a = z.object({ expect: z.string(), confirm: z.literal(true), source: z.string().min(1).optional() }).parse(args); return applyMigration(this.wb, a.expect, a.source); }
       case 'items.list': { const a = z.object({ query: z.string().default(''), archived: z.boolean().default(false) }).parse(args); return this.wb.search(a.query, a.archived); }
       case 'items.read': return this.wb.detail(z.object({ id: idSchema }).parse(args).id);
+      case 'items.origins': return this.wb.origins(args);
       case 'items.revision': { const a = z.object({ id: idSchema, revision: hashSchema }).parse(args); return this.wb.getRevision(a.id, a.revision); }
       case 'items.create': return this.wb.create(args);
       case 'items.update': return this.updateItem(args);

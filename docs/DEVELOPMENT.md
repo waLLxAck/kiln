@@ -46,7 +46,7 @@ The CLI runs with `npm run cli -- <command>`; after building, `npm link` makes `
 
 ## Run a local build
 
-On Windows, run `release/0.19.0/win-unpacked/Kiln.exe` or install the setup executable from `release/0.19.0`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages.
+On Windows, run `release/0.19.1/win-unpacked/Kiln.exe` or install the setup executable from `release/0.19.1`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages (on Linux, the AppImage, the .deb and a `tar.gz` of that same folder).
 
 ## In-app updates for local builds
 
@@ -58,9 +58,13 @@ Only **Restart to update** verifies the cached installer again, starts it silent
 
 Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they don't watch for local builds.
 
+## Build-time switches
+
+`KILN_PUBLIC_BUILD=1` also hides unfinished sections in the renderer. `apps/desktop/build-flags.ts` turns the environment into constants that `vite.config.ts` bakes in with `define` (read through `apps/desktop/src/features.ts`); they are not runtime settings. Today there is one: **Machines** shows a "Coming soon" page in public builds, and links into it are reworded. `npm run dev`, local `npm run build` / `npm start` and the desktop tests keep the full section. `KILN_SHOW_MACHINES=1` shows it in a public build as well, and `KILN_SHOW_MACHINES=0` shows the public page in a local build. `tests/desktop/machines.spec.ts` checks both.
+
 ## Releases
 
-Pushing a version tag such as `v0.19.0` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
+Pushing a version tag such as `v0.19.1` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
 
 ## Performance diagnostics
 

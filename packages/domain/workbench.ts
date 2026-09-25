@@ -297,6 +297,26 @@ export class Workbench {
       ...readRecords(path.join(this.local, 'private-revisions', id), value => revisionSchema.parse(value), this.warnings)]
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
+  /**
+   * Where items came from on this machine. The shared source of an imported item is only its folder name (see privacy.ts), so
+   * two skills with one name read the same; the full source kept privately at import tells them apart. Items without one are left out.
+   */
+  origins(input: unknown): Record<string, string> {
+    const { ids } = z.object({ ids: z.array(idSchema).max(5000) }).parse(input);
+    const result: Record<string, string> = {};
+    for (const id of new Set(ids)) {
+      const folder = path.join(this.local, 'private-sources', id);
+      let newest: { at: number; source: string } | null = null;
+      try {
+        for (const name of fs.readdirSync(folder)) {
+          const file = path.join(folder, name), at = fs.statSync(file).mtimeMs, source = (readJson(file) as { source?: unknown }).source;
+          if (typeof source === 'string' && source && (!newest || at > newest.at)) newest = { at, source };
+        }
+      } catch { /* Nothing private recorded for this item on this machine. */ }
+      if (newest) result[id] = newest.source;
+    }
+    return result;
+  }
   detail(id: string): ItemDetail {
     const item = this.getItem(id), revision = this.getRevision(id);
     const contentHash = digest(revision.content);

@@ -10,8 +10,8 @@ const short = (message: string) => message.replace(/^[A-Z_]+: /, '');
 export type Migration = { unchanged: number; conflicts: number; pending: number; hash: string; count: number; importable: number; totalBytes: number; entries: MigrationEntry[]; source: string };
 type Repo = { nameWithOwner: string; url: string; isPrivate: boolean; description: string };
 
-/** Skills already installed for Codex or Claude Code on this machine, offered for import as drafts. */
-export function LocalSkillsDialog({ onClose, onDone }: { onClose: () => void; onDone: (summary: string) => void | Promise<void> }) {
+/** Skills already installed for Codex or Claude Code on this machine, offered for import as drafts. `onDone` also gets the folders that were imported or were already in the library. */
+export function LocalSkillsDialog({ onClose, onDone }: { onClose: () => void; onDone: (summary: string, sources: string[]) => void | Promise<void> }) {
   const [scan, setScan] = useState<{ roots: string[]; entries: LocalSkill[] } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   useEffect(() => { void api<{ roots: string[]; entries: LocalSkill[] }>('skills.scanLocal').then(result => { setScan(result); setChosen(new Set(result.entries.filter(e => e.hasSkillFile && !e.imported && !e.error).map(e => e.path))); }).catch(e => setError(short(String(e)))); }, []);
@@ -20,8 +20,9 @@ export function LocalSkillsDialog({ onClose, onDone }: { onClose: () => void; on
   const run = async () => {
     setBusy(true); setError('');
     try {
-      const result = await api<{ imported: string[]; unchanged: string[]; failed: { path: string; error: string }[] }>('skills.importLocal', { paths: [...chosen], confirm: true });
-      await onDone(`${result.imported.length} skill${result.imported.length === 1 ? '' : 's'} imported as drafts${result.unchanged.length ? `, ${result.unchanged.length} already in the library` : ''}${result.failed.length ? `, ${result.failed.length} failed: ${result.failed.map(f => short(f.error)).join('; ')}` : ''}.`);
+      const paths = [...chosen], result = await api<{ imported: string[]; unchanged: string[]; failed: { path: string; error: string }[] }>('skills.importLocal', { paths, confirm: true });
+      const failed = new Set(result.failed.map(f => f.path));
+      await onDone(`${result.imported.length} skill${result.imported.length === 1 ? '' : 's'} imported as drafts${result.unchanged.length ? `, ${result.unchanged.length} already in the library` : ''}${result.failed.length ? `, ${result.failed.length} failed: ${result.failed.map(f => short(f.error)).join('; ')}` : ''}.`, paths.filter(p => !failed.has(p)));
     } catch (e) { setError(short(e instanceof Error ? e.message : String(e))); setBusy(false); }
   };
   return <Modal title="Import my installed skills" subtitle="Skills your agents already use on this machine, copied into the library as drafts. The folders stay where they are." onClose={() => { if (!busy) onClose(); }} wide>

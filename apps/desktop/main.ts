@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { AgentConsent, usesAgent } from './agent-consent';
+import { AgentConsent, agentConsentDetail, usesAgent } from './agent-consent';
 import { Backend } from './backend';
 import { createDiagnostics } from './diagnostics';
 import type { Revision, UpdateStatus } from '../../packages/protocol/schema';
@@ -98,7 +98,7 @@ function checkUpdate(): UpdateStatus {
 async function desktopCall(method: string, args: unknown, sender: BrowserWindow) {
   if (usesAgent(method, args)) await agentConsent.require(() => dialog.showMessageBox(sender, {
     type: 'warning', title: 'Using your agent CLI', message: 'Allow Kiln to run your installed agent CLI?',
-    detail: 'Kiln uses your signed-in Codex or Claude Code CLI and sends the selected content and your instructions to that provider. Your account limits and any charges apply.\n\nChat runs with read/write access and can execute commands. On Windows, Codex chat runs without a sandbox; Claude chat can use Bash, Write and Edit. Access is not confined to this item or to Kiln’s library. The agent can change or delete files your account can access. Imported content may contain misleading instructions.\n\nKiln asks the agent to make library edits through its CLI so they become revisions, but this is an instruction, not an enforced restriction. Capture, distillation and tests request read-only access. Raw conversations stay on this machine unless you explicitly export them.\n\nContinue only if you accept these conditions. You can restore this warning in Settings.',
+    detail: agentConsentDetail(),
     buttons: ['Cancel', 'Agree and continue'], defaultId: 0, cancelId: 0, checkboxLabel: "Don’t show again", checkboxChecked: false,
   }));
   switch (method) {

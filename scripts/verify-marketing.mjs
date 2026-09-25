@@ -11,7 +11,7 @@ import { chromium } from '@playwright/test';
 const base = (process.env.MARKETING_URL ?? 'http://127.0.0.1:5174').replace(/\/?$/, '/');
 const supportUrl = new URL('support/', base).href;
 const repository = 'https://github.com/waLLxAck/kiln';
-const version = '0.19.0';
+const version = '0.19.1';
 const assets = `${repository}/releases/download/v${version}`;
 /** Every file the site offers, by the key the page uses in data-download. */
 const files = {
@@ -20,6 +20,7 @@ const files = {
   'mac-x64': `${assets}/Kiln-${version}-x64.dmg`,
   appimage: `${assets}/Kiln-${version}-x86_64.AppImage`,
   deb: `${assets}/kiln_${version}_amd64.deb`,
+  targz: `${assets}/Kiln-${version}-x64.tar.gz`,
 };
 const agents = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
