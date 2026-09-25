@@ -25,13 +25,15 @@ export function claudeArguments(input: RunInput): string[] {
  * so the run sees exactly the job folder. Claude Code keeps its own transcript under ~/.claude/projects, which is what `resume` continues.
  */
 /**
- * The command line for running an npm `.cmd` shim through `cmd.exe /d /s /c`. Every argument is encoded the way MSVCRT
- * parses argv, so JSON survives intact. The whole line is wrapped in one more pair of quotes because `/s` strips the first
- * and last quote before running it; without them cmd would eat the quotes around the shim's own path.
+ * The command line for running an npm `.cmd` shim through `cmd.exe /d /s /c`, escaped the way cross-spawn does it.
+ * Each argument is quoted for MSVCRT's argv parser, then every cmd metacharacter (quotes included) is caret-escaped, so
+ * cmd never enters quote mode and `&`, `|`, `%` or `(` in JSON or folder names stay literal. Arguments are escaped twice
+ * because the shim hands `%*` to a second round of cmd parsing. The outer quotes are the pair `/s` strips.
  */
 export function shimCommandLine(executable: string, args: string[]) {
-  const encode = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
-  return `"${[executable, ...args].map(encode).join(' ')}"`;
+  const meta = /([()\][%!^"`<>&|;, *?])/g;
+  const argument = (value: string) => `"${value.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"').replace(/(?=(\\+?)?)\1$/, '$1$1')}"`.replace(meta, '^$1').replace(meta, '^$1');
+  return `"${[executable.replace(meta, '^$1'), ...args.map(argument)].join(' ')}"`;
 }
 export async function runClaude(input: RunInput): Promise<unknown> {
   input.onStatus?.('Locating Claude Code');

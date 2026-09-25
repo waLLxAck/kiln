@@ -6,11 +6,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { shimCommandLine } from '../packages/agent/claude';
 
-const args = ['-p', '--output-format', 'stream-json', '--json-schema', JSON.stringify({ type: 'object', properties: { note: { type: 'string', description: 'say "hi" (x & y)' } } }), '--add-dir', 'C:\\Users\\dev\\my project\\'];
+const args = ['-p', '--output-format', 'stream-json', '--json-schema', JSON.stringify({ type: 'object', properties: { note: { type: 'string', description: 'say "hi" (x & y)' } } }), '--add-dir', 'C:\\Users\\dev\\my project\\', 'R&D (2026) 50% ^caret! |pipe| <in> "q"'];
 
-test('an npm .cmd shim command line is wrapped in the extra quotes cmd /s strips', () => {
-  const line = shimCommandLine('C:\\Program Files\\nodejs\\claude.cmd', ['-p', 'a "quoted" word']);
-  assert.equal(line, '""C:\\Program Files\\nodejs\\claude.cmd" "-p" "a \\"quoted\\" word""');
+test('an npm .cmd shim command line caret-escapes every cmd metacharacter, twice for arguments', () => {
+  assert.equal(shimCommandLine('C:\\Program Files\\nodejs\\claude.cmd', ['-p', 'R&D']), '"C:\\Program^ Files\\nodejs\\claude.cmd ^^^"-p^^^" ^^^"R^^^&D^^^""');
 });
 
 test('a real .cmd shim in a folder with spaces receives every argument intact', { skip: process.platform !== 'win32' && 'cmd.exe only exists on Windows' }, () => {
