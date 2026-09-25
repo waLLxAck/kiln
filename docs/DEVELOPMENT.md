@@ -46,7 +46,7 @@ The CLI runs with `npm run cli -- <command>`; after building, `npm link` makes `
 
 ## Run a local build
 
-On Windows, run `release/0.18.2/win-unpacked/Kiln.exe` or install the setup executable from `release/0.18.2`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages.
+On Windows, run `release/0.19.0/win-unpacked/Kiln.exe` or install the setup executable from `release/0.19.0`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages.
 
 ## In-app updates for local builds
 
@@ -60,7 +60,7 @@ Build a newer installer with `npm run dist:win` after increasing `version` in `p
 
 ## Releases
 
-Pushing a version tag such as `v0.18.2` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
+Pushing a version tag such as `v0.19.0` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
 
 ## Performance diagnostics
 

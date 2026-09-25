@@ -11,7 +11,7 @@ import { chromium } from '@playwright/test';
 const base = (process.env.MARKETING_URL ?? 'http://127.0.0.1:5174').replace(/\/?$/, '/');
 const supportUrl = new URL('support/', base).href;
 const repository = 'https://github.com/waLLxAck/kiln';
-const version = '0.18.2';
+const version = '0.19.0';
 const assets = `${repository}/releases/download/v${version}`;
 /** Every file the site offers, by the key the page uses in data-download. */
 const files = {

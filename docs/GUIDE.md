@@ -65,17 +65,17 @@ xattr -dr com.apple.quarantine /Applications/Kiln.app
 **Linux.** Either make the AppImage executable and run it (AppImages need FUSE 2: `libfuse2`, or `libfuse2t64` on Ubuntu 24.04):
 
 ```sh
-chmod +x Kiln-0.18.2-x86_64.AppImage
-./Kiln-0.18.2-x86_64.AppImage
+chmod +x Kiln-0.19.0-x86_64.AppImage
+./Kiln-0.19.0-x86_64.AppImage
 ```
 
 or install the Debian/Ubuntu package, which adds Kiln to the applications menu (the package is named `kiln-workbench`; remove it with `sudo apt remove kiln-workbench`):
 
 ```sh
-sudo apt install ./kiln_0.18.2_amd64.deb
+sudo apt install ./kiln_0.19.0_amd64.deb
 ```
 
-Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error, start it with `./Kiln-0.18.2-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
+Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error, start it with `./Kiln-0.19.0-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
 
 **Requirements.** Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in: first launch creates or opens your Kiln repository on GitHub. Managed runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH.
 
@@ -99,7 +99,7 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.18.2](releases/0.18.2.md).
+See [what changed in 0.19.0](releases/0.19.0.md).
 
 ## Set up a library
 

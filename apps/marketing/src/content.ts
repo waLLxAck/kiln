@@ -3,7 +3,7 @@
 
 // ---------- links ----------
 // Every external link the site uses. To change where donations go, edit `kofi`.
-export const version = '0.18.2';
+export const version = '0.19.0';
 export const repository = 'https://github.com/waLLxAck/kiln';
 export const releases = `${repository}/releases`;
 /** The install steps for every platform, in the README. */
