@@ -1,0 +1,13 @@
+{
+  "name": "@kiln/cli",
+  "version": "0.18.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx main.ts",
+    "build": "npm --prefix ../.. run build"
+  },
+  "dependencies": {
+    "@kiln/core": "*"
+  }
+}

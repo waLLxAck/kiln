@@ -1,0 +1,17 @@
+{
+  "name": "@kiln/core",
+  "version": "0.18.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared Kiln product domain and services; TypeScript source bundled by app builds",
+  "exports": {
+    "./*": "./*.ts"
+  },
+  "dependencies": {
+    "diff": "^8.0.2",
+    "jsonc-parser": "^3.3.1",
+    "smol-toml": "^1.8.0",
+    "yaml": "^2.8.1",
+    "zod": "^4.3.6"
+  }
+}

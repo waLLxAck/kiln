@@ -1,0 +1,86 @@
+{
+  "name": "kiln-workbench",
+  "version": "0.18.0",
+  "private": true,
+  "description": "A local home for prompts, experiments, and approved agent skills",
+  "author": "Kiln contributors",
+  "license": "MIT",
+  "homepage": "https://wallxack.github.io/kiln/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/waLLxAck/kiln.git"
+  },
+  "bugs": {
+    "url": "https://github.com/waLLxAck/kiln/issues"
+  },
+  "type": "module",
+  "main": "dist/desktop/main.cjs",
+  "bin": {
+    "kiln": "dist/cli/workbench.cjs",
+    "workbench": "dist/cli/workbench.cjs"
+  },
+  "engines": {
+    "node": ">=22.16"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "npm run build && electron .",
+    "build": "tsc --noEmit && node scripts/build.mjs && vite build",
+    "check": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:desktop": "npm run build && playwright test",
+    "cli": "tsx apps/cli/main.ts",
+    "package": "npm run build && electron-builder --dir",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dev:marketing": "npm run dev --workspace @kiln/marketing",
+    "build:marketing": "npm run build --workspace @kiln/marketing",
+    "build:all": "npm run build && npm run build:marketing",
+    "preview:marketing": "npm run preview --workspace @kiln/marketing"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/diff": "^7.0.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "44.2.0",
+    "electron-builder": "^26.8.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
+  },
+  "build": {
+    "appId": "ai.kiln.workbench",
+    "productName": "Kiln",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/desktop/**/*",
+      "dist/renderer/**/*",
+      "dist/cli/**/*",
+      "dist/build-info.json",
+      "package.json",
+      "assets/kiln.*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "dist/cli/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/kiln.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages"
+  ]
+}

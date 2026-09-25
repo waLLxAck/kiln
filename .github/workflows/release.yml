@@ -1,0 +1,39 @@
+name: Release
+
+# Pushing a version tag (for example v0.18.0) builds the Windows installer on a Windows runner and publishes it
+# with that version's notes from docs/releases/. Public builds record no build folder (KILN_PUBLIC_BUILD=1).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run dist:win
+        env:
+          KILN_PUBLIC_BUILD: '1'
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
+          cd release
+          cp "Kiln Setup $version.exe" "Kiln.Setup.$version.exe"
+          cp "Kiln Setup $version.exe.blockmap" "Kiln.Setup.$version.exe.blockmap"
+          sha256sum "Kiln.Setup.$version.exe" "Kiln.Setup.$version.exe.blockmap" > SHA256SUMS.txt
+          gh release create "v$version" --title "Kiln $version" --notes-file "../docs/releases/$version.md" \
+            "Kiln.Setup.$version.exe" "Kiln.Setup.$version.exe.blockmap" SHA256SUMS.txt

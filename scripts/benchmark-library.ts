@@ -1,0 +1,11 @@
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import { Workbench } from '../packages/domain/workbench';import { DeploymentService } from '../packages/deployment/service';import { defaultLibrary,privateRoot } from '../packages/storage/config';import { digest } from '../packages/storage/files';
+const source=defaultLibrary(), temp=fs.mkdtempSync(path.join(os.tmpdir(),'kiln-library-benchmark-')), root=path.join(temp,'library');
+fs.cpSync(path.join(source,'workbench'),path.join(root,'workbench'),{recursive:true});
+const wb=new Workbench(root,path.join(temp,'private'));
+const previous=path.join(privateRoot(),digest(path.resolve(source)).slice(0,24));
+for(const name of ['targets','receipts'])if(fs.existsSync(path.join(previous,name)))fs.cpSync(path.join(previous,name),path.join(wb.local,name),{recursive:true});
+const measure=(action:()=>unknown)=>{const before=performance.now();action();return Math.round(performance.now()-before);};
+const service=new DeploymentService(wb);const item=wb.listItems().find(i=>i.kind==='skill')!;
+const result={skills:wb.listItems().filter(i=>i.kind==='skill').length,targets:wb.targets().length,selectedInstallationMs:measure(()=>service.installations(item.id)),allInstallationsMs:measure(()=>service.installations()),selectionMs:measure(()=>wb.detail(item.id)),coldSnapshotMs:measure(()=>wb.snapshot()),warmSnapshotMs:measure(()=>wb.snapshot())};
+wb.close();fs.writeFileSync('artifacts/real-library-performance.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));

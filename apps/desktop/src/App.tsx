@@ -1,0 +1,412 @@
+import { useViewMemory, useScrollMemory } from './view-memory';
+import { UndoToast } from './UndoToast';
+import { BulkRemovalDialog } from './BulkLibrary';
+import { activeFilterCount, emptyLibraryFilters, filterDimensions, matchesLibraryFilters, type LibraryFilterKey, type LibraryFilters } from './library-filters';
+import { primarySkillLabel } from '../../../packages/providers/skill-locations';
+import { SkillLocationSettings } from './Skills';
+import { useCallback, useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
+import { Activity, Archive, ArrowDown, ArrowRight, ArrowUp, Check, ChevronRight, Copy, Download, ExternalLink, FileCog, FileText, FlaskConical, Folder, FolderGit2, FolderOpen, FolderX, Github, MessageSquare, Pencil, Layers3, Loader2, Monitor, Moon, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Sun, Terminal, Trash2, Undo2, Upload, X } from 'lucide-react';
+import { Setup, type PreviousLibrary } from './Setup';
+import { ChatPopover } from './Chat';
+import { CollectionsDialog } from './Collections';
+import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
+import { columns, inTab, ItemRow, KINDS, LibraryTabs, LibraryTools, nextSort, passesInstallFilter, RowHead, sortItems, type FilterOption, type InstallFilter, type LibraryTab, type Sort } from './Library';
+import type { Installation, Item, ItemDetail, Provider, ProviderId, Receipt, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
+import { api, date, shortHash, variablesIn } from './api';
+import { Badge, ContextMenu, Empty, Field, KilnMark, KindIcon, Modal, providerName, shortcutEntry, statusHelp, type MenuEntry } from './components';
+import { SwipeToArchive } from './Swipe';
+import { DeployDialog, ResultDialog, TargetDialog, TrialDialog, VariablesDialog } from './dialogs';
+import { Detail } from './Detail';
+import { RepositoryPanel } from './RepositoryPanel';
+import { Installations } from './Installations';
+import { ResizeHandle, usePanelWidth } from './ResizeHandle';
+import { QuickCapture, type CaptureSeed } from './QuickCapture';
+import { AgentTrialDialog, CreateSkillDialog } from './AgentPanel';
+import { personalTarget, ScanDialog, SkillInstallDialog, skillState } from './Skills';
+import { CompareDialog } from './Compare';
+import { HomeFilesView } from './HomeFiles';
+import { UpdateAction, UpdatesPanel } from './Updates';
+import type { AgentJob } from '../../../packages/agent/service';
+import type { CodexModel } from '../../../packages/agent/codex';
+
+type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string } | null;
+const navItems = [{ id: 'library', label: 'Library', icon: Layers3 }, { id: 'experiments', label: 'Experiments', icon: FlaskConical }, { id: 'home', label: 'Config files', icon: FileCog }, { id: 'machines', label: 'Machines', icon: Monitor }, { id: 'activity', label: 'Activity', icon: Activity }];
+const hidden = ['archived', 'rejected'];
+/** "owner/name" from a GitHub remote URL, for display. */
+const repoName = (remote: string) => remote.replace(/^(https:\/\/github\.com\/|git@github\.com:)/, '').replace(/\.git$/, '') || 'GitHub remote';
+
+export default function App() {
+  const sidebar = usePanelWidth('kiln-sidebar-width', 250, 180, 360);
+  // The list column keeps a fixed share of the window; the detail pane always has the rest, so selecting never reflows the rows.
+  const skillList = usePanelWidth('kiln-list-width', 620, 380, 1100);
+  const [captureSeed, setCaptureSeed] = useState<CaptureSeed>();
+  const [jobs,setJobs] = useState<AgentJob[]>([]);
+  const [agentSyncError, setAgentSyncError] = useState('');
+  const knownJobs = useRef<Map<string,string> | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [installations, setInstallations] = useState<Installation[]>([]);
+  const { section, tab, selected, query, filter, collection, sort, installFilter, advancedFilters, key: viewKey,
+    setSection, setTab, setSelected, setQuery, setFilter, setCollection, setSort, setInstallFilter, setAdvancedFilters } = useViewMemory();
+  const [detail, setDetail] = useState<ItemDetail | null>(null);
+  const [searchIds, setSearchIds] = useState<string[] | null>(null);
+  const searchSet = useMemo(() => searchIds && new Set(searchIds), [searchIds]);
+  const listScroll = useScrollMemory(`list:${viewKey}`, Boolean(snapshot) && (!query.trim() || searchIds !== null), `${snapshot?.items.length}:${searchIds?.join(',') ?? ''}`);
+  /** Rows picked with Ctrl-click, Shift-click or Ctrl+A. `selected` stays the focused row; two or more picked rows make right-click act on all of them. */
+  const [bulkIds, setBulkIds] = useState<string[]>([]); const bulkRef = useRef<string[]>([]); bulkRef.current = bulkIds;
+  const [bulkReview, setBulkReview] = useState<string[] | null>(null);
+  useEffect(() => { setBulkIds([]); }, [query, filter, collection, tab, section, installFilter, advancedFilters, snapshot?.root]);
+  useEffect(() => { setBulkReview(null); }, [snapshot?.root]);
+  const [dialog, setDialog] = useState<Dialog>(null); const [providers, setProviders] = useState<Provider[]>([]);
+  const [models, setModels] = useState<CodexModel[] | null>(null);
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const checkUpdate = useCallback(() => api<UpdateStatus>('desktop.updateCheck').then(setUpdate).catch(() => undefined), []);
+  useEffect(() => { void checkUpdate(); const onFocus = () => void checkUpdate(); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [checkUpdate]);
+  useEffect(() => { if (update?.stage.state !== 'preparing') return; const timer = setInterval(() => void checkUpdate(), 500); return () => clearInterval(timer); }, [update?.stage.state, checkUpdate]);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: Item[] } | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  // Right-click menu on a collection in the sidebar.
+  const [collectionMenu, setCollectionMenu] = useState<{ x: number; y: number; name: string } | null>(null);
+  // The last archive that can still be undone. Replaced by the next archive, dropped after a short pause.
+  const [undo, setUndo] = useState<{ item: Item; previous: Item['status'] } | null>(null);
+  const [message, setMessage] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const [drift, setDrift] = useState<(Receipt & { drifted: boolean; checkedAt: string; error?: string })[]>([]);
+  const [inventory, setInventory] = useState<{ root: string; resources: string[]; totalFiles: number; branch: string; changes: string[] } | null>(null);
+  const [gitPreview, setGitPreview] = useState('');
+  const [syncReport, setSyncReport] = useState<{ itemId: string; provider: ProviderId | 'codex-native'; result: string }[] | null>(null);
+  const [conflicts, setConflicts] = useState<{ paths: string[]; items: { id: string; ours: Item | null; theirs: Item | null; baseText: string; oursText: string; theirsText: string }[]; otherPaths: string[] } | null>(null);
+  const [theme, setTheme] = useState(localStorage.getItem('kiln-theme'));
+  // Setup stays open after the repository is attached so the optional import step can run; "Connect a different repository" reopens it.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const previousLibrary = useRef<PreviousLibrary>(null);
+  const toggleTheme = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; setTheme(next); localStorage.setItem('kiln-theme', next); void api('desktop.theme', { theme: next }).catch(e => setError(String(e))); };
+  const refresh = useCallback(async () => { setSnapshot(await api<Snapshot>('snapshot')); }, []);
+  useEffect(() => {
+    let active = true, pending = false, again = false, lastPoll = 0;
+    const poll = async () => {
+      if (pending) { again = true; return; }
+      pending = true; lastPoll = Date.now();
+      try {
+        const current = await api<AgentJob[]>('agent.jobs'); if (!active) return;
+        const changed = knownJobs.current && current.some(j => knownJobs.current!.get(j.id) !== j.status && j.status !== 'running');
+        knownJobs.current = new Map(current.map(j => [j.id,j.status])); setJobs(current); setAgentSyncError('');
+        if (changed) await refresh();
+      } catch (e) { if (active) setAgentSyncError(`Agent updates disconnected. Retrying… ${String(e)}`); }
+      finally { pending = false; if (active && again) { again = false; void poll(); } }
+    };
+    void poll(); const timer = setInterval(() => { if (!pending && ([...(knownJobs.current?.values() ?? [])].includes('running') || Date.now() - lastPoll >= 5000)) void poll(); },1000);
+    const start = () => void poll(); window.addEventListener('kiln:agent-started',start); window.addEventListener('kiln:agent-refresh',start);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('kiln:agent-started',start); window.removeEventListener('kiln:agent-refresh',start); };
+  },[refresh,snapshot?.root]);
+  useEffect(() => {
+    const paste = (event: ClipboardEvent) => { if ((event.target as Element)?.closest('input,textarea,[contenteditable],.modal')) return; const files = Array.from(event.clipboardData?.files ?? []); const text = event.clipboardData?.getData('text/plain') ?? ''; if (files.length || text) { event.preventDefault(); setCaptureSeed({ files, text }); setDialog({ name: 'capture' }); } };
+    const over = (event: DragEvent) => { if (event.dataTransfer?.types.includes('Files')) event.preventDefault(); };
+    const drop = (event: DragEvent) => { if ((event.target as Element)?.closest('.modal')) return; event.preventDefault(); setCaptureSeed({ files: Array.from(event.dataTransfer?.files ?? []), text: event.dataTransfer?.getData('text/plain') }); setDialog({ name: 'capture' }); };
+    window.addEventListener('paste',paste); window.addEventListener('dragover',over); window.addEventListener('drop',drop); return () => { window.removeEventListener('paste',paste); window.removeEventListener('dragover',over); window.removeEventListener('drop',drop); };
+  },[]);
+  const perform = async (action: () => Promise<unknown>, success = '') => { setError(''); setBusy(true); const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null; button?.setAttribute('aria-busy','true'); try { await action(); if (success) setMessage(success); } catch (e) { const message = e instanceof Error ? e.message : String(e); setError(message); window.dispatchEvent(new CustomEvent('kiln:error', { detail: message })); } finally { setBusy(false); button?.removeAttribute('aria-busy'); } };
+  useEffect(() => { void perform(refresh); void api<Provider[]>('providers.detect').then(setProviders).catch(e => setError(String(e))); }, []);
+  useEffect(() => { if (section === 'settings' && models === null) void api<CodexModel[]>('agent.models').then(setModels).catch(() => setModels([])); }, [section, models]);
+  useEffect(() => { const onFocus = () => void refresh().catch(e => setError(String(e))); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [refresh]);
+  useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(''), 6000); return () => clearTimeout(timer); }, [message]);
+  // Remember the library Kiln started with when it is not a ready repository, so setup can offer to carry its items over.
+  useEffect(() => { if (snapshot && !snapshot.repository.ready && !previousLibrary.current) previousLibrary.current = { root: snapshot.root, items: snapshot.items.filter(i => !i.deletedAt).length, standard: snapshot.repository.standard, dedicated: snapshot.repository.dedicated }; }, [snapshot]);
+  // While an approval is being committed or pushed, poll so the item shows when it reached GitHub.
+  useEffect(() => { if (!snapshot?.publish.some(j => !['done', 'failed'].includes(j.status))) return; const timer = setTimeout(() => void refresh().catch(() => undefined), 1500); return () => clearTimeout(timer); }, [snapshot, refresh]);
+  useEffect(() => {
+    if (!selected) { setDetail(null); return; }
+    let active = true;
+    // A selection remembered from another library (or a purged item) is simply dropped; every other failure is shown.
+    void api<ItemDetail>('items.read', { id: selected }).then(data => { if (active) setDetail(data); }).catch(e => { if (!active) return; setDetail(null); if (/ITEM_NOT_FOUND/.test(String(e))) { setSelected(''); localStorage.removeItem('kiln-selected'); } else setError(String(e)); });
+    localStorage.setItem('kiln-selected', selected); return () => { active = false; };
+  }, [selected, snapshot]);
+  // Installation state for every skill: drives the toggles in the header and the small marks on list cards.
+  useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
+  useEffect(() => {
+    if (!query.trim()) { setSearchIds(null); return; }
+    let active = true;
+    const timer = setTimeout(() => { void api<Item[]>('items.list', { query, archived: true }).then(items => { if (active) setSearchIds(items.map(i => i.id)); }).catch(e => { if (active) setError(String(e)); }); }, 180);
+    return () => { active = false; clearTimeout(timer); };
+  }, [query, snapshot?.items.length]);
+  useEffect(() => {
+    const chosenTheme = theme ?? snapshot?.settings.theme;
+    document.documentElement.dataset.theme = chosenTheme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : chosenTheme ?? 'light';
+  }, [snapshot?.settings.theme, theme]);
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => { if (event.key === 'Escape' && !document.querySelector('dialog[open], .context-menu, .chat-popover') && !(event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]'))) { if (bulkRef.current.length) setBulkIds([]); else setSelected(''); return; } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); void api('desktop.palette'); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); setDialog({ name: 'capture' }); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { const search = document.querySelector<HTMLInputElement>('input[aria-label="Search library"]'); if (search) { event.preventDefault(); search.focus(); search.select(); } } };
+    window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener);
+  }, []);
+  const navigate = (name: string) => { if (name === 'library' && section === 'library' && collection) setCollection(''); else setSection(name); };
+  /** A collection from the sidebar filters the library in place; the current tab stays. */
+  const openCollection = (name: string) => { setSection('library'); chooseCollection(name); };
+  /** Sets the collection filter; a tab that would be empty in that collection falls back to Recent rather than showing nothing. */
+  const chooseCollection = (name: string) => {
+    setCollection(name);
+    if (tab !== 'recent' && snapshot && !snapshot.items.some(i => !i.deletedAt && !hidden.includes(i.status) && (!name || i.collection === name) && inTab(i, tab))) { setTab('recent'); setSort(null); }
+  };
+  const select = (id: string) => { setSelected(id); setBulkIds([]); };
+  const revealItem = (id: string, destination = 'library') => { setSection(destination); setCollection(''); setTab('recent'); setQuery(''); setFilter('all'); setInstallFilter('any'); setAdvancedFilters(emptyLibraryFilters); select(id); };
+  useEffect(() => { const open = () => { const id = new URLSearchParams(location.hash.slice(1)).get('item'); if (id) { revealItem(id); history.replaceState(null, '', location.pathname + location.search); } }; open(); window.addEventListener('hashchange', open); return () => window.removeEventListener('hashchange', open); }, []);
+  const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
+  const copyItem = async (item: Item) => {
+    const data = await api<ItemDetail>('items.read', { id: item.id });
+    if (variablesIn(data.revision.content).length) { select(item.id); setDetail(data); setDialog({ name: 'variables' }); return; }
+    await api('desktop.copy', { id: item.id, revision: item.revision }); await refresh(); setMessage('Copied to clipboard');
+  };
+  const archiveItem = (item: Item) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, status: 'archived' }); await refresh(); setMessage(''); setUndo({ item, previous: item.status }); });
+  const undoArchive = () => { const last = undo; if (!last) return; setUndo(null); void perform(async () => { await api('items.meta', { id: last.item.id, expect: last.item.revision, status: last.previous }); await refresh(); }, `${last.item.title} is back in ${last.previous}`); };
+  /** Records approval of the current revision; the router then commits and pushes it to the Kiln repo. */
+  const approveCurrent = async (target: ItemDetail) => {
+    const evidence = target.trials.filter(t => t.revision === target.item.revision && t.status === 'completed');
+    const complete = ['typical', 'boundary'].every(testCase => evidence.some(t => t.case === testCase && t.judgement === 'pass'));
+    await api('approvals.approve', { id: target.item.id, revision: target.item.revision, reviewer: 'Local user', scope: 'Current revision', note: 'Approved by clicking Approve in Kiln.', evidence: evidence.map(t => t.id), waivedChecks: complete ? '' : 'Manual approval without requiring passing typical and boundary trials.' });
+  };
+  const action = (name: string, trial?: Trial) => {
+    if (name === 'delete-trial' && trial) {
+      if (busy) return;
+      void perform(async () => { await api('trials.delete', { id: trial.id }); setJobs(await api<AgentJob[]>('agent.jobs')); await refresh(); }, 'Experiment deleted');
+      return;
+    }
+    if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }
+    if (name === 'unapprove' && detail) {
+      if (busy) return;
+      void perform(async () => { await api('approvals.unapprove', { id: detail.item.id, revision: detail.item.revision }); await refresh(); }, 'Approval removed');
+      return;
+    }
+    if (name === 'approve' && detail) {
+      if (busy) return;
+      void perform(async () => { await approveCurrent(detail); await refresh(); }, 'Approved. Committing and pushing to GitHub in the background.');
+      return;
+    }
+    if (name === 'approve-install' && detail) {
+      // Approve, then install into every configured skill location. The push to GitHub runs in the background meanwhile.
+      if (busy) return;
+      void perform(async () => {
+        const isApproved = detail.approvals.some(a => a.revision === detail.item.revision && a.trust === 'local');
+        if (!isApproved) await approveCurrent(detail);
+        const locations = providers.filter(p => detail.item.kind === 'agent' ? p.id === detail.item.agent?.provider : p.id !== 'copilot').map(p => ({ provider: p, target: snapshot && personalTarget(snapshot.targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: NonNullable<ReturnType<typeof personalTarget>> }[];
+        const done: string[] = [], failed: string[] = [];
+        for (const { provider, target } of locations) {
+          try { await api('skills.install', { itemId: detail.item.id, targetId: target.id, confirm: true }); done.push(detail.item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id)); }
+          catch (e) { failed.push(`${provider.label}: ${(e instanceof Error ? e.message : String(e)).replace(/^[A-Z_]+: /, '')}`); }
+        }
+        await refresh();
+        if (failed.length) throw new Error(`${done.length ? `Installed for ${done.join(', ')}. ` : ''}Not installed for ${failed.join('; ')}`);
+        setMessage(`${isApproved ? 'Installed' : 'Approved and installed'} for ${done.join(' and ')}. Start a new agent session to use it.`);
+      });
+      return;
+    }
+    if (name === 'copy' && detail && variablesIn(detail.revision.content).length === 0) { void perform(async () => { await api('desktop.copy', { id: detail.item.id, revision: detail.item.revision }); await refresh(); }, 'Copied to clipboard'); return; }
+    if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }
+    setDialog({ name: name === 'copy' ? 'variables' : name, trial });
+  };
+  const updateAction = (restart: boolean) => void perform(async () => {
+    if (updating) return; setUpdating(true);
+    try { if (restart) await api('desktop.updateRestart'); else setUpdate(await api<UpdateStatus>('desktop.updatePrepare', { version: update?.available?.version })); }
+    finally { setUpdating(false); await checkUpdate(); }
+  });
+  const toggleInstall = (itemId: string, provider: ProviderId, targetId?: string) => { const target = snapshot && (targetId ? snapshot.targets.find(t => t.id === targetId) : personalTarget(snapshot.targets, providers, provider)); if (!target) { navigate('settings'); return; } setDialog({ name: 'skill-install', itemId, provider, targetId: target.id }); };
+  const setLocation = (provider: Provider, on: boolean, native = false) => void perform(async () => {
+    const existing = snapshot && personalTarget(snapshot.targets, providers, provider.id, native);
+    if (on && !existing) await api('targets.enroll', { name: `${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills`, root: provider.personalRoot, provider: provider.id, scope: 'personal', profile: 'Personal', ...(native ? { skillFolder: '.codex/skills' } : {}) });
+    if (!on && existing) await api('targets.remove', { id: existing.id, confirm: true });
+    await refresh();
+  }, on ? `${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills folder is now managed by Kiln. Nothing was installed yet.` : `Kiln stopped managing the ${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills folder. Installed files were left in place.`);
+  if (!snapshot) return <div className="startup"><span className="brand-symbol"><KilnMark /></span><h1>Kiln</h1><p>{error || 'Opening your workbench…'}</p>{error && <button className="button" onClick={() => void perform(refresh)}>Retry</button>}</div>;
+  // Kiln only works on a Kiln repository connected to GitHub. Anything else lands here until one is connected.
+  if (!snapshot.repository.ready || setupOpen) return <Setup snapshot={snapshot} previous={previousLibrary.current} onAttach={async root => { await api('desktop.attach', { root }); setSelected(''); await refresh(); setSetupOpen(true); }} onDone={() => { setSetupOpen(false); navigate('library'); }} />;
+  const live = snapshot.items.filter(i => !i.deletedAt);
+  const inLibrary = live.filter(i => !hidden.includes(i.status)).length;
+  // Each list filter is a predicate, so a filter's menu can count items under all the *other* filters and never loses its options.
+  const inSection = (i: Item, includeSearch = true) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? hidden.includes(i.status) : section === 'trash' || !hidden.includes(i.status)) && (!includeSearch || !query.trim() || Boolean(searchSet?.has(i.id)));
+  const byCollection = (i: Item) => !collection || i.collection === collection;
+  const byStatus = (i: Item) => filter === 'all' || i.status === filter;
+  const locationsConfigured = providers.map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: NonNullable<ReturnType<typeof personalTarget>> }[];
+  const byAdvanced = (i: Item) => matchesLibraryFilters(i, installations, advancedFilters);
+  const byInstall = (i: Item) => passesInstallFilter(installFilter, i, locationsConfigured, installations) && byAdvanced(i);
+  // `pool` feeds the tab counts: the section, search and collection narrow it; the tab, status and install filters do not.
+  const pool = snapshot.items.filter(i => inSection(i) && byCollection(i));
+  // Recent shows everything newest first; the other tabs keep the library's own order so items can be arranged by hand.
+  const tabbed = pool.filter(i => inTab(i, tab) && byStatus(i) && byInstall(i));
+  const matching = sortItems(tabbed, sort ?? (tab === 'recent' ? { key: 'updatedAt', dir: 'desc' } : null));
+  const bulkItems = matching.filter(item => bulkIds.includes(item.id));
+  /** What right-click and the single-key shortcuts act on: the picked rows when there are several, otherwise the focused row. */
+  const chosen = bulkItems.length > 1 ? bulkItems : matching.filter(i => i.id === selected);
+  /** Plain click focuses one row. Ctrl-click toggles a row in the selection; Shift-click extends it from the focused row, like a file manager. */
+  const clickRow = (event: MouseEvent, item: Item) => {
+    const ids = matching.map(i => i.id);
+    if (event.shiftKey && ids.includes(selected)) { const [a, b] = [ids.indexOf(selected), ids.indexOf(item.id)]; setBulkIds(ids.slice(Math.min(a, b), Math.max(a, b) + 1)); return; }
+    if (event.ctrlKey || event.metaKey) {
+      const base = bulkItems.length > 1 ? bulkIds : ids.includes(selected) ? [selected] : [];
+      const next = base.includes(item.id) ? base.filter(id => id !== item.id) : [...base, item.id];
+      if (next.length <= 1) { setSelected(next[0] ?? ''); setBulkIds([]); } else { setBulkIds(next); if (!ids.includes(selected)) setSelected(item.id); }
+      return;
+    }
+    select(item.id);
+  };
+  // Tabs remain reachable while searching inside another view.
+  const tabPool = snapshot.items.filter(i => inSection(i, false) && byCollection(i));
+  const tabCounts: Record<string, number> = { recent: tabPool.length, favourites: tabPool.filter(i => i.favourite).length, ...Object.fromEntries(KINDS.map(k => [k, tabPool.filter(i => i.kind === k).length])) };
+  // Filter menus: every value present in this tab is offered; its count is what choosing it would show under the other filters.
+  const facet = snapshot.items.filter(i => inSection(i) && inTab(i, tab));
+  const facetOptions = (key: (i: Item) => string, narrowed: Item[], label: (v: string) => string, hint?: (v: string) => string): FilterOption[] => [...new Set(facet.map(key))].sort((a, b) => a.localeCompare(b)).map(v => ({ value: v, label: label(v), count: narrowed.filter(i => key(i) === v).length, hint: hint?.(v) }));
+  const statusOrder = ['captured', 'testing', 'approved', 'rejected', 'archived'];
+  const statusOptions = facetOptions(i => i.status, facet.filter(i => byCollection(i) && byInstall(i)), v => v[0].toUpperCase() + v.slice(1), v => statusHelp[v]).sort((a, b) => statusOrder.indexOf(a.value) - statusOrder.indexOf(b.value));
+  const installFacet = facet.filter(i => byCollection(i) && byStatus(i) && byAdvanced(i));
+  const installOptions: FilterOption[] | null = facet.some(i => ['skill', 'agent'].includes(i.kind)) ? [{ value: 'installed', label: 'Installed' }, { value: 'none', label: 'Not installed' }].map(o => ({ ...o, count: installFacet.filter(i => passesInstallFilter(o.value as InstallFilter, i, locationsConfigured, installations)).length })) : null;
+  const advancedFacet = facet.filter(i => byCollection(i) && byStatus(i) && passesInstallFilter(installFilter, i, locationsConfigured, installations));
+  const advancedOptions = (key: LibraryFilterKey): FilterOption[] => { const values = key === 'tag' ? [...new Set(facet.flatMap(i => i.tags))].sort((a, b) => a.localeCompare(b)).map(tag => ({ value: tag, label: tag })) : filterDimensions.find(d => d.key === key)!.options; return values.map(o => ({ ...o, count: advancedFacet.filter(i => matchesLibraryFilters(i, installations, { ...advancedFilters, [key]: o.value })).length })); };
+  const clearFilters = (clearSearch = false) => { setCollection(''); setQuery(clearSearch ? '' : query); setFilter('all'); setInstallFilter('any'); setAdvancedFilters(emptyLibraryFilters); };
+  const filtering = Boolean(query) || Boolean(collection) || filter !== 'all' || installFilter !== 'any' || activeFilterCount(advancedFilters) > 0;
+  const sectionName = collection || navItems.find(n => n.id === section)?.label || ({ settings: 'Settings', archive: 'Archive', trash: 'Trash' } as Record<string, string>)[section] || 'Library';
+  const libraryView = ['library', 'archive', 'trash'].includes(section);
+  const locations = providers.map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) }));
+  const configured = locations.filter(l => l.target);
+  const openTrialItem = (itemId: string) => {
+    const item = snapshot.items.find(i => i.id === itemId);
+    revealItem(itemId, item?.deletedAt ? 'trash' : item?.status === 'archived' || item?.status === 'rejected' ? 'archive' : 'library');
+  };
+  const reorderSelected = (direction: number) => { const ids = matching.map(i => i.id), at = ids.indexOf(selected), to = at + direction; if (at < 0 || to < 0 || to >= ids.length) return; [ids[at], ids[to]] = [ids[to], ids[at]]; void perform(async () => { await api('items.reorder', { ids }); await refresh(); }); };
+  /** Right-click on a picked row acts on the whole selection; on any other row it focuses that row first, as a file manager would. */
+  const openMenu = (event: MouseEvent, item: Item) => { event.preventDefault(); const many = bulkItems.length > 1 && bulkIds.includes(item.id); if (!many) select(item.id); setMenu({ x: event.clientX, y: event.clientY, items: many ? bulkItems : [item] }); };
+  const statusKeys: Record<string, string> = { captured: '1', testing: '2', approved: '3', rejected: '4', archived: 'A' };
+  const capital = (word: string) => word[0].toUpperCase() + word.slice(1);
+  const hasCopies = (item: Item) => ['skill', 'agent'].includes(item.kind) && installations.some(i => i.itemId === item.id);
+  const menuEntries = (items: Item[]): MenuEntry[] => items.length === 1 ? singleEntries(items[0]) : bulkEntries(items);
+  /** The same menu as for one item, with the actions that make sense for many. Each action runs over every picked item, then the selection clears. */
+  const bulkEntries = (items: Item[]): MenuEntry[] => {
+    const each = (patch: (item: Item) => Record<string, unknown> | null, note: string) => () => void perform(async () => { for (const item of items) { const change = patch(item); if (change) await api('items.meta', { id: item.id, expect: item.revision, ...change }); } setBulkIds([]); await refresh(); }, note);
+    const label = `${items.length} items`, allFavourite = items.every(i => i.favourite), trashed = items.some(i => i.deletedAt);
+    const entries: MenuEntry[] = [{ heading: `${label} selected` }, { label: allFavourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: each(i => i.favourite === !allFavourite ? null : { favourite: !allFavourite }, allFavourite ? `${label} removed from favourites` : `${label} added to favourites`) }];
+    if (!trashed) {
+      entries.push('separator', { heading: 'Status' });
+      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived']) { const all = items.every(i => i.status === status); entries.push({ label: capital(status), checked: all, disabled: status === 'approved' || all, shortcut: statusKeys[status], hint: status === 'approved' ? 'Approve items one at a time; approval always names an exact revision.' : statusHelp[status], onSelect: each(i => i.status === status ? null : { status }, `${label} moved to ${status}`) }); }
+      if (items.some(hasCopies)) entries.push('separator', { label: 'Remove local copies…', icon: <FolderX />, shortcut: 'L', hint: 'Preview and remove every installed copy of the picked skills and agents, in every configured folder. Library items stay.', onSelect: () => setBulkReview(items.map(i => i.id)) });
+    }
+    entries.push('separator');
+    if (trashed) entries.push({ label: 'Restore from trash', icon: <RotateCcw />, shortcut: 'R', onSelect: each(() => ({ deleted: false }), `${label} restored`) }, { label: 'Delete permanently…', icon: <Trash2 />, danger: true, shortcut: 'D', onSelect: () => setDialog({ name: 'purge-many', itemIds: items.map(i => i.id) }) });
+    else entries.push({ label: 'Move to trash', icon: <Trash2 />, danger: true, shortcut: 'D', hint: 'Recoverable from Trash. Installed copies are untouched.', onSelect: each(() => ({ deleted: true }), `${label} moved to Trash. Restore them any time.`) });
+    return entries;
+  };
+  const singleEntries = (item: Item): MenuEntry[] => {
+    const meta = (patch: Record<string, unknown>, note: string) => () => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...patch }); await refresh(); }, note);
+    const entries: MenuEntry[] = [
+      { label: 'Open', icon: <ArrowRight />, shortcut: 'O', onSelect: () => select(item.id) },
+      { label: 'Copy', icon: <Copy />, shortcut: 'C', onSelect: () => void perform(() => copyItem(item)) },
+      { label: item.favourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: meta({ favourite: !item.favourite }, item.favourite ? 'Removed from favourites' : 'Added to favourites') },
+      { label: item.kind === 'link' ? 'Open link in browser' : ['file', 'image', 'reference'].includes(item.kind) ? 'Reveal stored file' : 'Open stored file', icon: <ExternalLink />, shortcut: 'E', onSelect: () => void perform(() => api('desktop.openItem', { id: item.id })) },
+    ];
+    if (!item.deletedAt) {
+      entries.push('separator', { heading: 'Status' });
+      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived']) entries.push({ label: status[0].toUpperCase() + status.slice(1), checked: item.status === status, disabled: status === 'approved' || item.status === status, shortcut: statusKeys[status], hint: status === 'approved' ? 'Use Approve on the item; approval always names an exact revision.' : status === 'archived' ? `${statusHelp[status]} Swipe the item sideways to archive it too.` : statusHelp[status], onSelect: status === 'archived' ? () => archiveItem(item) : meta({ status }, `Moved to ${status}`) });
+      if (['skill', 'agent'].includes(item.kind) && configured.length) {
+        entries.push('separator', { heading: 'Installed for' });
+        for (const { provider, target } of configured.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot') as { provider: Provider; target: NonNullable<ReturnType<typeof personalTarget>> }[]) { const { state } = skillState(item, target, installations); entries.push({ label: `${item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id)}${state === 'off' || state === 'on' ? '' : ` · ${state}`}`, icon: <Download />, checked: state !== 'off', onSelect: () => toggleInstall(item.id, provider.id) }); }
+      }
+      if (hasCopies(item)) entries.push('separator', { label: 'Remove local copies…', icon: <FolderX />, shortcut: 'L', hint: 'Preview and remove every installed copy in every configured folder, including other providers. The library item stays.', onSelect: () => setBulkReview([item.id]) });
+    }
+    entries.push('separator');
+    if (item.deletedAt) entries.push({ label: 'Restore from trash', icon: <RotateCcw />, shortcut: 'R', onSelect: meta({ deleted: false }, 'Item restored') }, { label: 'Delete permanently…', icon: <Trash2 />, danger: true, shortcut: 'D', onSelect: () => setDialog({ name: 'purge', itemId: item.id }) });
+    else entries.push({ label: 'Move to trash', icon: <Trash2 />, danger: true, shortcut: 'D', hint: 'Recoverable from Trash. Installed copies are untouched.', onSelect: meta({ deleted: true }, 'Moved to Trash. Restore it any time.') });
+    return entries;
+  };
+  /** Right-click menu for a sidebar collection. Deleting asks first; the items inside go to the trash rather than being lost. */
+  const collectionEntries = (name: string): MenuEntry[] => {
+    const inside = live.filter(i => i.collection === name).length;
+    return [
+      { label: 'Show in library', icon: <Folder />, shortcut: 'O', onSelect: () => openCollection(name) },
+      { label: 'Rename…', icon: <Pencil />, shortcut: 'R', hint: 'Moves every item in it to the new name.', onSelect: () => setDialog({ name: 'collections', collection: name }) },
+      { label: 'Manage collections…', icon: <Settings />, onSelect: () => setDialog({ name: 'collections' }) },
+      'separator',
+      { label: 'Delete collection…', icon: <Trash2 />, danger: true, shortcut: 'D', hint: inside ? `Moves its ${inside} item${inside === 1 ? '' : 's'} to the trash. They can be restored from there.` : 'Removes this empty collection from the sidebar.', onSelect: () => setDialog({ name: 'delete-collection', collection: name }) },
+    ];
+  };
+  const showDetail = Boolean(detail && detail.item.id === selected && matching.some(i => i.id === selected));
+  /** Approved and pushed: the last publish job for this item finished, or there is none and nothing waits to be pushed. */
+  const published = (item: Item) => { if (item.status !== 'approved') return false; const job = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision); return job ? job.status === 'done' : snapshot.git.ahead === 0; };
+  const purgeTarget = dialog?.name === 'purge' ? snapshot.items.find(i => i.id === dialog.itemId) : undefined;
+  const installTarget = dialog?.name === 'skill-install' ? { item: snapshot.items.find(i => i.id === dialog.itemId), provider: providers.find(p => p.id === dialog.provider), target: snapshot.targets.find(t => t.id === dialog.targetId) } : null;
+  // The chat is about the open item. A video, or an entry distilled from one, brings the transcript along; the video is recognised by the tags prepareVideo adds.
+  const isVideo = (i: Item | undefined) => Boolean(i && i.kind === 'link' && i.tags.includes('youtube'));
+  const openItem = libraryView ? snapshot.items.find(i => i.id === selected && !i.deletedAt) ?? null : null;
+  const videoBehind = !openItem ? null : isVideo(openItem) ? openItem : (() => { const origin = openItem.origin ? snapshot.items.find(i => i.id === openItem.origin!.itemId) : undefined; return isVideo(origin) ? origin! : null; })();
+  return <div className="app-shell">
+    <aside className="sidebar" style={sidebar.style}><div className="brand-row"><button className="brand" onClick={() => navigate('library')}><span className="brand-symbol"><KilnMark /></span><span>Kiln</span></button><button className="icon-button" aria-label="Toggle theme" title="Switch between light and dark" onClick={toggleTheme}>{(theme ?? snapshot.settings.theme) === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</button></div><button className="quick-search" onClick={() => void api('desktop.palette')}><Search size={15} /><span>Quick search</span><kbd>Ctrl K</kbd></button>
+      <div className="sidebar-label">WORKSPACE</div><nav aria-label="Main navigation">{navItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigate(id)} className={`nav-item ${section === id && !collection ? 'active' : ''}`}><Icon size={17} /><span>{label}</span>{id === 'library' && inLibrary > 0 && <span className="nav-count" aria-hidden="true" title={`${inLibrary} items in the library. Archived, rejected and trashed items are not counted.`}>{inLibrary}</span>}</button>)}</nav>
+      <div className="sidebar-label collection-label">COLLECTIONS<button className="icon-button" aria-label="Manage collections" onClick={() => setDialog({ name: 'collections' })}><Plus size={13} /></button></div>{snapshot.collections.map(c => <button className={`nav-item ${collection === c && libraryView ? 'active' : ''}`} key={c} onClick={() => openCollection(c)} onContextMenu={event => { event.preventDefault(); setCollectionMenu({ x: event.clientX, y: event.clientY, name: c }); }} title={`Show only “${c}” in the library`}><Folder size={16} /><span>{c}</span><small>{live.filter(i => i.collection === c && !hidden.includes(i.status)).length}</small></button>)}<button className={`nav-item ${section === 'archive' ? 'active' : ''}`} onClick={() => navigate('archive')}><Archive size={16} /><span>Archive</span><small aria-hidden="true">{live.filter(i => hidden.includes(i.status)).length || ''}</small></button><button className={`nav-item ${section === 'trash' ? 'active' : ''}`} onClick={() => navigate('trash')}><Trash2 size={16} /><span>Trash</span><small aria-hidden="true">{snapshot.items.filter(i => i.deletedAt).length || ''}</small></button>
+      <div className="sidebar-bottom"><button className={`nav-item ${section === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={17} /><span>Settings & repository</span></button><div className="sidebar-foot"><span title={update?.packaged === false ? 'Running from source' : 'Installed version'}>v{update?.current ?? '…'}</span><UpdateAction update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} compact /></div></div>
+    </aside><ResizeHandle panel={sidebar} label="Resize sidebar" />
+    <main className="main-workspace"><header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><b>{sectionName}</b></div><div className="topbar-right">{jobs.some(j => j.status === 'running') && (() => { const running = jobs.filter(j => j.status === 'running'); return <button className="agent-running" title={`${running.map(j => snapshot.items.find(i => i.id === j.itemId)?.title ?? j.kind).join(', ')} · click to open`} onClick={() => running[0].itemId ? openTrialItem(running[0].itemId) : setChatOpen(true)}><Loader2 className="spin" size={13} />{[...new Set(running.map(j => providerName[j.provider]))].join(' & ')} working{running.length > 1 ? ` · ${running.length}` : ''}</button>; })()}{busy && <Loader2 className="spin" size={15} />}<span className="git-indicator"><span className={`live-dot ${snapshot.git.attached ? '' : 'neutral'}`} />{snapshot.git.attached ? snapshot.git.branch || 'Git attached' : 'Local library'}</span><button className="button primary" onClick={() => setDialog({ name: 'capture' })}><Plus size={16} />Capture <kbd>Ctrl N</kbd></button><button type="button" className={`chat-toggle ${chatOpen && openItem ? 'open' : ''}`} aria-label="Ask the agent" aria-pressed={chatOpen && Boolean(openItem)} disabled={!openItem} title={openItem ? `Ask the agent about “${openItem.title}”` : 'Open an item to ask the agent about it'} onClick={() => setChatOpen(open => !open)}><MessageSquare size={16} />{jobs.some(j => j.kind === 'chat' && j.status === 'running') && <span className="live-dot" aria-hidden="true" />}</button></div></header>
+      {error && <div className="global-error" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={17} /></button></div>}
+      {agentSyncError && <p role="alert" className="error-box">{agentSyncError}</p>}
+      {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
+      {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? <div className="library-layout"><section className="library-list" style={{ ...skillList.style, maxWidth: 'calc(100% - 380px)' }}><div className="list-heading"><div><h2>{sectionName} <span>{matching.length}</span></h2></div><span className="inline">{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div><div className="list-controls">
+        <LibraryTabs tab={tab} counts={tabCounts} onChange={setTab} />
+        <LibraryTools query={query} onQuery={setQuery} onSearchDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); } if (e.key === 'ArrowDown' && matching.length) { e.preventDefault(); select(matching[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); } }} status={filter} statuses={statusOptions} onStatus={setFilter} install={installFilter} installOptions={installOptions} onInstall={setInstallFilter} advanced={advancedFilters} onAdvanced={setAdvancedFilters} advancedOptions={advancedOptions} onClear={clearFilters} shown={matching.length} chosen={bulkItems.length} onClearChosen={() => setBulkIds([])} canReorder={bulkItems.length < 2 && tab !== 'recent' && !sort} reorder={reorderSelected} reorderDisabled={[!selected || matching.findIndex(i => i.id === selected) <= 0, !selected || matching.findIndex(i => i.id === selected) === matching.length - 1]} />
+        <p className="muted small lib-hint">{section === 'trash' ? 'Right-click to restore or delete permanently. Ctrl-click picks several items at once.' : section === 'archive' ? 'Right-click to change status or move to trash. Ctrl-click picks several items at once.' : 'Right-click for actions and their shortcuts. Ctrl-click or Shift-click picks several items at once. Swipe sideways to archive.'}</p></div>
+        {tab === 'skill' && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
+        <div className="item-list" {...listScroll} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); if (matching.length > 1) { setBulkIds(matching.map(item => item.id)); if (!matching.some(i => i.id === selected)) setSelected(matching[0].id); } return; } if (menu || !(e.target instanceof HTMLElement) || !e.target.classList.contains('item-card')) return; if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') { const hit = chosen.length > 0 && shortcutEntry(menuEntries(chosen), e.nativeEvent); if (hit) { e.preventDefault(); hit.onSelect?.(); } return; } const index = matching.findIndex(i => i.id === selected); const next = matching[index + (e.key === 'ArrowDown' ? 1 : -1)]; if (!next) return; e.preventDefault(); select(next.id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }}>{matching.length > 0 && <RowHead tab={tab} sort={sort ?? (tab === 'recent' ? { key: 'updatedAt', dir: 'desc' } : null)} onSort={key => setSort(current => nextSort(current ?? (tab === 'recent' ? { key: 'updatedAt', dir: 'desc' } : null), key))} />}{matching.map(item => <SwipeToArchive key={item.id} enabled={bulkItems.length < 2 && !item.deletedAt && item.status !== 'archived'} label="Archive" onArchive={() => archiveItem(item)}><button className={`item-card lib-row cols-${columns(tab).length} ${selected === item.id ? 'selected' : ''} ${bulkItems.length > 1 && bulkIds.includes(item.id) ? 'picked' : ''}`} aria-pressed={bulkItems.length > 1 ? bulkIds.includes(item.id) : undefined} onClick={event => clickRow(event, item)} onContextMenu={event => openMenu(event, item)}><ItemRow item={item} tab={tab} collectionShown={Boolean(collection)} locations={locationsConfigured} installations={installations} published={published(item)} /></button></SwipeToArchive>)}{!matching.length && <div className="list-empty"><Search size={22} /><p>{filtering ? 'No items match these filters.' : section === 'trash' ? 'The trash is empty.' : section === 'archive' ? 'Nothing archived or rejected.' : 'Nothing here yet.'}</p>{filtering ? <button className="text-button" onClick={() => clearFilters(true)}>Clear search and filters <X size={13} /></button> : section !== 'trash' && section !== 'archive' && <button className="text-button" onClick={() => setDialog({ name: 'capture' })}>Capture your first item <Plus size={13} /></button>}{!live.length && section === 'library' && <div className="welcome-import"><h2>Already have skills?</h2><p>Bring them in as drafts, then approve the ones you want in your Kiln repository. Nothing is moved where it lives now.</p><div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'import-local' })}><Download size={15} />Import my installed skills</button><button className="button" onClick={() => setDialog({ name: 'import-repo' })}><Upload size={15} />Import from a skills repository…</button></div></div>}</div>}</div>
+      </section><ResizeHandle panel={skillList} label="Resize skill list" />{bulkItems.length > 1 ? <div className="detail-empty selection-summary" aria-label={`${bulkItems.length} items selected`}><p><b>{bulkItems.length} items selected</b></p><small>{Object.entries(bulkItems.reduce<Record<string, number>>((acc, i) => ({ ...acc, [i.kind]: (acc[i.kind] ?? 0) + 1 }), {})).map(([kind, n]) => `${n} ${kind}${n === 1 ? '' : 's'}`).join(' · ')}</small><small>Right-click a picked row for actions · Ctrl-click adds or removes · Esc clears</small></div> : showDetail && detail ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={name => { navigate('library'); chooseCollection(name); }} /> : <div className="detail-empty" aria-label="No item selected"><p>{matching.length ? 'Select an item to see its content, history, trials and installs.' : live.length ? 'Nothing matches here.' : 'Capture or import something to get started.'}</p><small>↑ ↓ move · Enter or click opens · right-click for actions</small></div>}</div> : <div className="page-scroll">
+        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'target' })}><Plus size={16} />Enroll project folder</button>}</div>
+        {section === 'experiments' && <>{snapshot.trials.length ? <div className="experiments-table"><div className="table-head"><span>Resource / trial</span><span>Agent</span><span>Revision</span><span>Result</span><span /></div>{[...snapshot.trials].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(t => <div className="table-row" key={t.id}><div><button className="text-button table-title" title="Open the item this experiment tests" onClick={() => openTrialItem(t.itemId)}>{snapshot.items.find(i => i.id === t.itemId)?.title ?? t.itemId}</button><small>{t.case} case · {date(t.createdAt)}</small></div><span>{t.provider === 'manual' ? 'Manual' : providerName[t.provider]}</span><code>{shortHash(t.revision)}</code><Badge status={t.judgement ?? t.status} /><div className="wrap-actions"><button className="text-button" onClick={() => { if (t.status === 'prepared') setDialog({ name: 'result', trial: t }); else openTrialItem(t.itemId); }}>{t.status === 'prepared' ? 'Record result' : 'Open item'} <ArrowRight size={13} /></button><button className="text-button danger-text" disabled={busy} onClick={() => action('delete-trial', t)}><Trash2 size={14} />Delete experiment</button></div></div>)}</div> : <Empty icon={<FlaskConical size={30} />} title="A good prompt earns your trust." action={<button className="button" onClick={() => navigate('library')}>Choose an item to test <ArrowRight size={15} /></button>}>Start with a typical task. Add a boundary case. Record what happened.</Empty>}</>}
+        {section === 'machines' && <><div className="machine-banner"><div className="machine-icon"><Monitor size={30} /></div><div><h3>This machine</h3><p>Local execution · {snapshot.targets.length} enrolled environments</p><small>Personal skill folders are set up in Settings. Project folders are enrolled here.</small></div><button className="button" onClick={() => void perform(async () => { setDrift(await api('deploy.drift')); await refresh(); }, 'Installed files checked')}><RefreshCw size={15} />Check drift</button></div><div className="cards-grid">{snapshot.targets.map(t => <div className="environment-card" key={t.id}><div className="section-heading"><div className={`provider-mark ${t.provider}`}><Terminal size={20} /></div><Badge status={t.scope} /></div><h3>{t.name}</h3><p>{providerName[t.provider]} · {t.scope === 'project' ? 'project folder' : 'personal folder'}{t.profile && t.profile.toLowerCase() !== t.scope ? ` · ${t.profile}` : ''}</p><code className="path-text">{t.root}</code><div className="environment-footer"><span>{snapshot.receipts.filter(r => r.targetId === t.id && r.status === 'applied').length} install receipts</span><span>{providers.find(p => p.id === t.provider)?.available ? 'Client detected' : 'Client not on PATH'}</span></div><div className="wrap-actions"><button className="button danger-text" onClick={() => void perform(async () => { await api('targets.remove', { id: t.id, confirm: true }); await refresh(); }, 'Environment removed; installed files were left in place')}>Stop managing</button></div></div>)}</div>{!snapshot.targets.length && <Empty icon={<Monitor size={28} />} title="Choose where approved skills belong." action={<button className="button" onClick={() => navigate('settings')}>Set up skill locations</button>}>Personal skill folders for Codex, Claude Code and Copilot are one click away in Settings. Project folders can be enrolled here.</Empty>}{drift.length > 0 && <section className="settings-card"><h3>Live destination checks</h3>{drift.map(d => <div className="drift-row" key={d.id}><code className="path-text">{d.destination}</code><Badge status={d.drifted ? 'drifted' : 'current'} />{d.drifted && snapshot.items.find(i => i.id === d.itemId)?.kind === 'skill' && <button className="button" title="See which files differ and how" onClick={() => setDialog({ name: `compare:${d.itemId}:${d.targetId}` })}>Compare</button>}<small>{date(d.checkedAt)}</small></div>)}</section>}<Installations snapshot={snapshot} installations={installations} onUninstall={id => setDialog({ name: 'uninstall:' + id })} onCompare={i => setDialog({ name: `compare:${i.itemId}:${i.targetId}` })} /><div className="notice"><b>Remote environments</b><p>SSH execution and reconnect recovery are not implemented yet. This release never falls back from a remote request to this machine.</p></div><button className="button" onClick={() => void perform(async () => { const result = await api('deploy.recover'); setMessage(JSON.stringify(result)); await refresh(); })}>Recover interrupted local installs</button></>}
+        {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => { navigate('library'); select(a.itemId!); }}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
+        {section === 'settings' && <div className="settings-grid"><RepositoryPanel root={snapshot.root} perform={perform} refresh={refresh} onSetup={() => setSetupOpen(true)} onMessage={setMessage} />
+          <section className="settings-card"><div className="section-heading"><h3><Download size={18} />Skill &amp; agent locations</h3><Badge status={configured.length ? 'ready' : 'not set up'} /></div><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={setLocation} onScan={(provider, target) => setDialog({ name: 'scan', provider, targetId: target.id })} />
+            <div className="wrap-actions"><button className="button" disabled={!configured.length || !Object.keys(snapshot.installs).length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library</span></div>
+            <p className="muted small">The library records which skills you installed (workbench/installs.json). After cloning it on another machine, turn on the locations above and press the button, or run <code>workbench skills sync</code>.</p>
+            {syncReport && <details open><summary>Sync result</summary><div className="file-preview-list">{syncReport.map((r, i) => <div key={i}><span>{snapshot.items.find(it => it.id === r.itemId)?.title ?? r.itemId} · {r.provider === 'codex-native' ? 'Codex-specific' : primarySkillLabel(r.provider)}</span><span className="muted">{r.result}</span></div>)}{!syncReport.length && <div><span className="muted">Nothing marked for install.</span></div>}</div></details>}
+          </section>
+          <section className="settings-card"><div className="section-heading"><h3><FolderGit2 size={18} />Kiln repository</h3><Badge status={snapshot.git.ahead ? 'review' : 'connected'} /></div><p>Everything you approve is committed here and pushed to GitHub straight away. Drafts stay in this folder on this machine until you approve them. Search indexes, private trial inputs and install ownership live outside it.</p><code className="path-text">{snapshot.root}</code>
+            <div className="connected-repo"><Github size={18} /><div><b>{repoName(snapshot.git.remote)}</b><small>{snapshot.git.branch} · {shortHash(snapshot.git.commit)} · {snapshot.git.ahead ? `${snapshot.git.ahead} commit${snapshot.git.ahead === 1 ? '' : 's'} not on GitHub yet` : 'up to date with GitHub'}</small></div>{snapshot.git.ahead > 0 && <button className="button primary" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button>}</div>
+            {snapshot.publish.some(j => j.status === 'failed') && <div className="notice warning"><b>Some approvals did not reach GitHub</b>{snapshot.publish.filter(j => j.status === 'failed').slice(0, 5).map(j => <p key={j.id}>{j.title}: {j.error} <button className="text-button" onClick={() => void perform(async () => { await api('publish.retry', { id: j.id }); await refresh(); })}>Retry</button></p>)}</div>}
+            <p className="muted small">{snapshot.git.changes.length ? `${snapshot.git.changes.length} draft file${snapshot.git.changes.length === 1 ? '' : 's'} changed only on this machine. Approving an item sends its files to GitHub.` : 'No draft changes waiting on this machine.'}</p>
+            <div className="wrap-actions"><button className="button" disabled={!snapshot.git.changes.length} onClick={() => void perform(async () => { setGitPreview(await api('git.diff')); setDialog({ name: 'git-diff' }); })}>View draft changes</button><button className="button" onClick={() => void perform(async () => { await api('git.sync', { action: 'fetch' }); await refresh(); }, 'Fetched from GitHub')}>Fetch from GitHub</button><button className="button" onClick={() => void perform(async () => { await api('git.sync', { action: 'pull' }); await refresh(); }, 'Pulled from GitHub')}>Pull from GitHub</button><button className="button" onClick={() => void perform(async () => { setConflicts(await api('git.merge')); setDialog({ name: 'conflicts' }); await refresh(); })}>Merge from GitHub</button><button className="button" onClick={() => void perform(async () => { setConflicts(await api('git.conflicts')); setDialog({ name: 'conflicts' }); })}>Resolve conflicts</button><button className="button" onClick={() => void perform(async () => { const root = await api<string | null>('desktop.chooseDirectory'); if (root) setInventory(await api('git.inventory', { root })); })}><FolderOpen size={15} />Inspect a repository</button><button className="button" onClick={() => setSetupOpen(true)}>Connect a different repository…</button></div>
+            <details><summary>Draft paths on this machine</summary><pre>{snapshot.git.changes.join('\n') || 'None'}</pre></details></section>
+          <section className="settings-card"><h3>Desktop preferences</h3><form onSubmit={event => { event.preventDefault(); const v = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { const settings = await api<Snapshot['settings']>('desktop.settings', { shortcut: v.shortcut, theme: v.theme, launchAtLogin: v.launchAtLogin === 'on', agentProvider: v.agentProvider }); setTheme(v.theme); localStorage.setItem('kiln-theme', v.theme); setSnapshot(current => current ? { ...current, settings } : current); }, 'Preferences saved'); }}><Field label="Default agent for capture, experiments and skill drafts" hint="Every run dialog still lets you pick the other one."><select name="agentProvider" defaultValue={snapshot.settings.agentProvider}>{providers.filter(p => p.id !== 'copilot').map(p => <option key={p.id} value={p.id}>{p.label}{p.available ? '' : ' · not detected'}</option>)}</select></Field><Field label="Global quick-search shortcut"><input name="shortcut" defaultValue={snapshot.settings.shortcut} required /></Field><Field label="Theme"><select name="theme" defaultValue={snapshot.settings.theme}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Follow system</option></select></Field><label className="check-row"><input name="launchAtLogin" type="checkbox" defaultChecked={snapshot.settings.launchAtLogin} /><span>Launch Kiln when I sign in</span></label><p className="muted small">Closing the window keeps Kiln in the tray. Use the tray menu to quit.</p><button className="button" type="submit">Save preferences</button></form></section>
+          <section className="settings-card"><h3>Official agents</h3>{providers.map(p => <div className="provider-row" key={p.id}><div className={`provider-mark ${p.id}`}><Terminal size={18} /></div><div><b>{p.label}</b><small>{p.version}</small><code className="path-text">{p.executable ?? 'Not detected on PATH'}</code></div><Badge status={p.available ? 'detected' : 'unavailable'} /></div>)}<p className="muted small">Runs use each client’s own sign-in. Kiln never asks for an API key.</p><button className="button" onClick={() => void perform(async () => setProviders(await api('providers.detect')))}>Detect again</button>
+            {(() => { const chosen = models?.find(m => m.slug === snapshot.settings.codexModel) ?? models?.[0]; const commitChosen = models?.find(m => m.slug === snapshot.settings.commitModel); const save = (patch: Partial<Pick<typeof snapshot.settings, 'codexModel' | 'codexEffort' | 'commitModel' | 'commitEffort'>>) => void perform(async () => { await api('desktop.agentSettings', { codexModel: snapshot.settings.codexModel, codexEffort: snapshot.settings.codexEffort, commitModel: snapshot.settings.commitModel, commitEffort: snapshot.settings.commitEffort, ...patch }); await refresh(); }); return <form className="form-grid agent-model-form" onSubmit={e => e.preventDefault()}>
+              <Field label="Codex model" hint={models === null ? 'Reading the catalog from the installed CLI…' : models.length ? chosen?.description : 'Catalog unavailable. Runs use the CLI default and record what was used.'}><select aria-label="Codex model" value={snapshot.settings.codexModel} disabled={!models?.length} onChange={e => save({ codexModel: e.target.value, codexEffort: '' })}><option value="">Catalog default{models?.[0] ? ` (${models[0].name})` : ''}</option>{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
+              <Field label="Reasoning effort" hint="Shown on every run alongside the model, thread id and token counts."><select aria-label="Reasoning effort" value={snapshot.settings.codexEffort} disabled={!chosen} onChange={e => save({ codexEffort: e.target.value })}><option value="">Model default{chosen?.defaultEffort ? ` (${chosen.defaultEffort})` : ''}</option>{chosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>
+              <Field label="CLI commit messages" hint="Used for generated notes when running Kiln’s CLI directly. Desktop saves, approvals and installs use plain notes without invoking a model."><select aria-label="Commit message model" value={snapshot.settings.commitModel} disabled={!models?.length} onChange={e => save({ commitModel: e.target.value, commitEffort: '' })}>{snapshot.settings.commitModel && !commitChosen && <option value={snapshot.settings.commitModel}>{snapshot.settings.commitModel}</option>}{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
+              <Field label="Commit message effort"><select aria-label="Commit message effort" value={snapshot.settings.commitEffort} disabled={!commitChosen} onChange={e => save({ commitEffort: e.target.value })}><option value="">Model default{commitChosen?.defaultEffort ? ` (${commitChosen.defaultEffort})` : ''}</option>{commitChosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>
+            </form>; })()}</section>
+          <section className="settings-card"><h3>Performance logs</h3><p>Local logs record operation timings, slow requests, window freezes, crashes, CPU and memory. Logs rotate automatically at 5 MB; one previous file is kept. No skill content or request inputs are recorded.</p><button className="button" onClick={() => void perform(() => api('desktop.openLogs'))}>Open performance logs</button></section>
+          <UpdatesPanel update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} onCheck={() => void perform(async () => { await checkUpdate(); }, 'Checked for updates')} onSource={value => void perform(async () => setUpdate(await api('desktop.updateSource', value)))} />
+          <section className="settings-card"><h3>Export & recovery</h3><button className="button" onClick={() => void perform(() => api('desktop.resetAgentConsent'), 'Agent access warning will appear before the next interaction')}>Show agent access warnings again</button><p>Export content, bundled assets, revisions, and trial summaries to a readable JSON file. Private inputs, local paths, and credentials are excluded.</p><div className="wrap-actions"><button className="button" onClick={() => void perform(async () => { const result = await api<{ destination: string } | null>('desktop.export'); if (result) setMessage(`Exported to ${result.destination}`); })}><Download size={15} />Export library</button><button className="button" onClick={() => void perform(async () => { const result = await api<{ imported: number; conflicts: string[] } | null>('desktop.importBundle'); if (result) { await refresh(); setMessage(`Imported ${result.imported}; ${result.conflicts.length} diverging items retained in History.`); } })}><Upload size={15} />Restore export</button></div><p className="muted small">Imports are repeatable. Diverging revisions are retained. Imported approvals require a fresh human review.</p></section></div>}
+      </div>}
+    </main>
+    {undo ? <UndoToast key={undo.item.id} title={undo.item.title} onUndo={undoArchive} onExpire={() => setUndo(null)} /> : message && <div className="toast" role="status"><Check size={17} />{message}</div>}
+    {chatOpen && openItem && <ChatPopover jobs={jobs} item={openItem} video={videoBehind} provider={snapshot.settings.agentProvider} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} />}
+    {menu && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries(menu.items)} onClose={() => setMenu(null)} />}
+    {collectionMenu && <ContextMenu x={collectionMenu.x} y={collectionMenu.y} entries={collectionEntries(collectionMenu.name)} onClose={() => setCollectionMenu(null)} />}
+    {dialog?.name === 'capture' && <QuickCapture seed={captureSeed} provider={snapshot.settings.agentProvider} onClose={() => { setDialog(null); setCaptureSeed(undefined); }} onDone={id => { setCaptureSeed(undefined); void completed(id); }} />}
+    {dialog?.name === 'collections' && <CollectionsDialog names={snapshot.collections} items={snapshot.items} renaming={dialog.collection} onClose={() => setDialog(null)} onDone={async () => { const renamed = dialog.collection && collection === dialog.collection; await refresh(); if (renamed) setCollection(''); }} onDelete={name => setDialog({ name: 'delete-collection', collection: name })} onOpen={openCollection} />}
+    {dialog?.name === 'delete-collection' && dialog.collection && (() => { const name = dialog.collection, inside = live.filter(i => i.collection === name), count = `${inside.length} item${inside.length === 1 ? '' : 's'}`; return <Modal title={`Delete “${name}”?`} subtitle={inside.length ? `${count} will move to the trash.` : 'This collection is empty.'} onClose={() => setDialog(null)}><p>{inside.length ? 'The items keep their content, history and approvals and can be restored from Trash; restoring one brings the collection back. Installed copies in agent folders are not touched.' : 'The collection disappears from the sidebar. Assigning it to an item again recreates it.'}</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('collections.delete', { name, confirm: true }); if (collection === name) setCollection(''); if (inside.some(i => i.id === selected)) setSelected(''); await completed(); }, inside.length ? `Deleted “${name}”; ${count} moved to the trash` : `Deleted “${name}”`)}><Trash2 size={14} />Delete collection</button></div></Modal>; })()}
+    {detail && dialog?.name === 'variables' && <VariablesDialog detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); setMessage('Copied with your inputs'); void refresh(); }} />}
+    {detail && dialog?.name === 'trial' && <AgentTrialDialog itemId={detail.item.id} providers={providers} targets={snapshot.targets} initialWorkspace={jobs.find(j => j.itemId === detail.item.id && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} />}
+    {detail && dialog?.name === 'manual-trial' && <TrialDialog detail={detail} providers={providers} targets={snapshot.targets} initialWorkspace={dialog.workspace} onClose={() => { setDialog(null); void refresh(); }} onDone={() => void completed()} />}
+    {dialog?.name === 'result' && dialog.trial && <ResultDialog trial={dialog.trial} onClose={() => setDialog(null)} onDone={() => void completed()} />}
+    {detail && dialog?.name === 'derive' && <CreateSkillDialog itemId={detail.item.id} title={detail.item.title} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} />}
+    {detail && dialog?.name === 'deploy' && <DeployDialog detail={detail} snapshot={snapshot} onClose={() => setDialog(null)} onDone={() => void completed()} />}
+    {dialog?.name === 'target' && <TargetDialog onClose={() => setDialog(null)} onDone={() => void completed()} />}
+    {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {dialog?.name === 'scan' && dialog.provider && (() => { const provider = providers.find(p => p.id === dialog.provider), target = snapshot.targets.find(t => t.id === dialog.targetId); return provider && target ? <ScanDialog provider={provider} target={target} onClose={() => setDialog(null)} onImported={refresh} /> : null; })()}
+    {purgeTarget && <Modal title="Delete permanently?" subtitle={purgeTarget.title} onClose={() => setDialog(null)}><p>This removes the item, all its revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold it.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('items.purge', { id: purgeTarget.id, confirm: true }); if (selected === purgeTarget.id) setSelected(''); await completed(); }, 'Deleted permanently')}><Trash2 size={14} />Delete permanently</button></div></Modal>}
+    {dialog?.name === 'purge-many' && dialog.itemIds && <Modal title="Delete permanently?" subtitle={`${dialog.itemIds.length} items`} onClose={() => setDialog(null)}><p>This removes these items, all their revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold them.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => { const ids = dialog.itemIds!; void perform(async () => { for (const id of ids) await api('items.purge', { id, confirm: true }); if (ids.includes(selected)) setSelected(''); setBulkIds([]); await completed(); }, `${ids.length} items deleted permanently`); }}><Trash2 size={14} />Delete {dialog.itemIds.length} items</button></div></Modal>}
+    {bulkReview && <BulkRemovalDialog itemIds={bulkReview} onClose={() => { setBulkReview(null); setBulkIds([]); }} onDone={async () => { await refresh(); setInstallations(await api<Installation[]>('deploy.installations')); }} />}
+    {dialog?.name === 'empty-trash' && <Modal title="Empty the trash?" subtitle={`${matching.length} item${matching.length === 1 ? '' : 's'} will be deleted permanently.`} onClose={() => setDialog(null)}><p>Revisions, approvals and experiment records of these items are removed from the library folder. Installed copies in agent folders stay as they are.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { for (const item of matching) await api('items.purge', { id: item.id, confirm: true }); setSelected(''); await completed(); }, 'Trash emptied')}><Trash2 size={14} />Delete {matching.length} item{matching.length === 1 ? '' : 's'}</button></div></Modal>}
+    {dialog?.name.startsWith('rollback:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Reverse this install?" subtitle="Installed files will be checked again before rollback." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>{receipt.previousRevision ? `Restore approved revision ${shortHash(receipt.previousRevision)}.` : 'Remove the snapshot Kiln created. There was no previous file at this destination.'}</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.rollback', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Install reversed')}>Confirm rollback</button></div></Modal> : null; })()}
+    {dialog?.name.startsWith('compare:') && (() => { const [, itemId, targetId] = dialog.name.split(':'); const item = snapshot.items.find(i => i.id === itemId), installation = installations.find(i => i.itemId === itemId && i.targetId === targetId); return item ? <CompareDialog itemId={itemId} targetId={targetId} title={item.title} destination={installation?.destination ?? snapshot.receipts.find(r => r.itemId === itemId && r.targetId === targetId)?.destination ?? ''} onClose={() => setDialog(null)} /> : null; })()}
+    {dialog?.name.startsWith('uninstall:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Remove this skill?" subtitle="Only the matching Kiln-owned folder will be removed." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>The skill stays in your library, with its approvals and history. You can install it again later.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.uninstall', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Skill removed; library retained')}>Confirm removal</button></div></Modal> : null; })()}
+    {inventory && <Modal title="Repository inventory" subtitle="Read-only inspection complete. No history or existing files changed." onClose={() => setInventory(null)} wide><code className="path-text">{inventory.root}</code><p>{inventory.totalFiles} tracked files · {inventory.resources.length} candidate resources · branch {inventory.branch}</p><div className="inventory-list">{inventory.resources.map(relative => <div key={relative}><code>{relative}</code><button className="text-button" onClick={() => void perform(async () => { const item = await api<Item>('desktop.importResource', { root: inventory.root, relative }); await refresh(); setSelected(item.id); }, 'Imported as an unapproved resource')}>Import copy</button></div>)}</div><p>Attaching creates a separate workbench folder. Existing dotfile installers and agent files keep their current ownership. Import selected resources deliberately.</p><div className="modal-actions"><button className="button" onClick={() => setInventory(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('desktop.attach', { root: inventory.root }); setInventory(null); setSelected(''); await refresh(); }, 'Repository attached')}>Attach this repository</button></div></Modal>}
+    {dialog?.name === 'import-local' && <LocalSkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}
+    {dialog?.name === 'import-repo' && <RepositorySkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}
+    {dialog?.name === 'git-diff' && <Modal title="Draft changes on this machine" subtitle="Not on GitHub yet. Approving an item commits and pushes its files." onClose={() => setDialog(null)} wide><pre className="prompt-preview">{gitPreview || 'No changes to tracked files. Brand-new drafts are listed under “Draft paths on this machine”.'}</pre></Modal>}
+    {dialog?.name === 'conflicts' && conflicts && <Modal title="Resolve library differences" subtitle="Both sides stay in history. Select deliberately, then finish the merge." onClose={() => setDialog(null)} wide>
+      {conflicts.items.map(c => <section className="content-section" key={c.id}><h3>{c.ours?.title ?? c.theirs?.title ?? c.id}</h3><details><summary>Common ancestor</summary><pre>{c.baseText}</pre></details><div className="form-grid"><div><b>This machine</b><pre className="prompt-preview">{c.oursText}</pre></div><div><b>GitHub</b><pre className="prompt-preview">{c.theirsText}</pre></div></div><div className="wrap-actions">{(['ours', 'theirs', 'both'] as const).map(choice => <button className="button" key={choice} disabled={!c.ours || !c.theirs} onClick={() => void perform(async () => { setConflicts(await api('git.resolve', { id: c.id, choice })); await refresh(); })}>{choice === 'ours' ? 'Keep this machine’s' : choice === 'theirs' ? 'Take GitHub’s' : 'Keep both revisions'}</button>)}</div></section>)}
+      {conflicts.otherPaths.length > 0 && <div className="notice warning"><b>Resolve these paths in your normal Git editor</b><pre>{conflicts.otherPaths.join('\n')}</pre><p>Kiln does not choose how to resolve unrelated content or approval records.</p></div>}
+      {!conflicts.paths.length && <p>No unresolved paths. Finish an in-progress merge to create its checkpoint.</p>}<div className="modal-actions"><button className="button" onClick={() => void perform(async () => setConflicts(await api('git.conflicts')))}>Refresh conflicts</button><button className="button primary" disabled={conflicts.paths.length > 0} onClick={() => void perform(async () => { await api('git.finishMerge'); await completed(); }, 'Merge completed')}>Finish merge</button></div>
+    </Modal>}
+  </div>;
+}
