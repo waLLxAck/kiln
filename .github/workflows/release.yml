@@ -52,7 +52,8 @@ jobs:
       - run: npm run ${{ matrix.dist }} -- --publish never
         env:
           KILN_PUBLIC_BUILD: '1'
-      # Start each packaged build once and check its window opens (Linux under a virtual display, macOS from the arm64 dmg below).
+      # Start each packaged build once and check its window opens (Linux under a virtual display, again from the tar.gz below; macOS
+      # from the arm64 dmg below).
       - name: Start the packaged Windows app
         if: runner.os == 'Windows'
         run: node scripts/smoke-packaged.mjs release/win-unpacked/Kiln.exe
@@ -71,7 +72,7 @@ jobs:
               cp "release/Kiln Setup $version.exe" "upload/Kiln.Setup.$version.exe"
               cp "release/Kiln Setup $version.exe.blockmap" "upload/Kiln.Setup.$version.exe.blockmap" ;;
             Linux)
-              cp "release/Kiln-$version-x86_64.AppImage" "release/kiln_${version}_amd64.deb" upload/ ;;
+              cp "release/Kiln-$version-x86_64.AppImage" "release/kiln_${version}_amd64.deb" "release/Kiln-$version-x64.tar.gz" upload/ ;;
             macOS)
               cp "release/Kiln-$version-arm64.dmg" "release/Kiln-$version-x64.dmg" "release/Kiln-$version-arm64.zip" "release/Kiln-$version-x64.zip" upload/ ;;
           esac
@@ -90,6 +91,12 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           dpkg-deb -I "release/kiln_${version}_amd64.deb"
           dpkg-deb -c "release/kiln_${version}_amd64.deb" | grep -E 'opt/Kiln/(kiln-workbench|chrome-sandbox)$|\.desktop$|hicolor/.*/kiln'
+          # The tar.gz needs no FUSE: unpack it and start the app from there too.
+          mkdir "$RUNNER_TEMP/targz" && tar -xzf "release/Kiln-$version-x64.tar.gz" -C "$RUNNER_TEMP/targz"
+          ls "$RUNNER_TEMP/targz"
+          executable=$(find "$RUNNER_TEMP/targz" -maxdepth 2 -type f -name kiln-workbench | head -1)
+          test -x "$executable"
+          xvfb-run --auto-servernum node scripts/smoke-packaged.mjs "$executable"
       - name: Inspect the macOS apps
         if: runner.os == 'macOS'
         run: |

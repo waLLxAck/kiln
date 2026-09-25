@@ -61,11 +61,15 @@ export function scanLocalSkills(wb: Workbench, roots = [...new Set([...localSkil
   for (const item of wb.listItems().filter(i => i.kind === 'skill')) { try { known.add(contentKey(wb.getRevision(item.id))); } catch { /* A damaged item cannot be matched; it is reported elsewhere. */ } }
   const seen = new Set<string>(); const entries: LocalSkill[] = [];
   const visited = new Set<string>();
-  const visit = (root: string, depth = 0) => {
-    if (!fs.existsSync(root) || depth > 12) return;
+  /** Lists the folders under `root` and returns whether any skill was found beneath it. A folder without SKILL.md that only holds
+   * skills (such as `.system` or `synced/<id>`) is a container, not a skipped skill, so it is left out once its skills are listed;
+   * an empty or broken folder is still reported. */
+  const visit = (root: string, depth = 0): boolean => {
+    if (!fs.existsSync(root) || depth > 12) return false;
     const identity = fs.realpathSync(root);
-    if (visited.has(identity)) return;
+    if (visited.has(identity)) return false;
     visited.add(identity);
+    let found = false;
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       if (['.git', 'node_modules', '__pycache__'].includes(entry.name) || (!entry.isDirectory() && !entry.isSymbolicLink())) continue;
       const full = path.join(root, entry.name);
@@ -76,12 +80,14 @@ export function scanLocalSkills(wb: Workbench, roots = [...new Set([...localSkil
       const hasSkillFile = !error && fs.existsSync(path.join(realPath, 'SKILL.md'));
       let imported = false, fileCount = 0, validation: string[] = [];
       if (hasSkillFile) {
+        found = true;
         try { const bundle = skillBundle(realPath, `local:${full}`); imported = known.has(contentKey(bundle)); fileCount = Object.keys(bundle.files).length + 1; validation = validateContent(bundle); }
         catch (e) { error = e instanceof Error ? e.message : String(e); }
       }
-      if (!hasSkillFile && !error) visit(full, depth + 1);
+      if (!hasSkillFile && !error && visit(full, depth + 1)) { found = true; continue; }
       entries.push({ root, name: entry.name, path: full, realPath, linked: entry.isSymbolicLink(), hasSkillFile, imported, fileCount, validation, error });
     }
+    return found;
   };
   for (const root of roots) visit(root);
   return { roots, entries: entries.sort((a, b) => a.name.localeCompare(b.name)) };

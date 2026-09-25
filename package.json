@@ -1,6 +1,6 @@
 {
   "name": "kiln-workbench",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "private": true,
   "description": "A local home for prompts, experiments, and approved agent skills",
   "author": "Kiln contributors",
@@ -118,8 +118,15 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
         }
       ],
+      "artifactName": "Kiln-${version}-${arch}.${ext}",
       "category": "Development",
       "icon": "assets/kiln-1024.png",
       "maintainer": "Kiln contributors <15944458+waLLxAck@users.noreply.github.com>",

@@ -112,3 +112,31 @@ test('default discovery includes configured homes, projects and nested skill gro
     assert.equal(result.failed.length, 0);
   } finally { if (previousHome === undefined) delete process.env.KILN_HOME; else process.env.KILN_HOME = previousHome; f.close(); }
 });
+
+test('local scan leaves out folders that only hold other skills, and still reports empty and broken leaves', () => {
+  const f = fixture();
+  try {
+    const codex = path.join(f.home, '.codex', 'skills');
+    writeSkill(path.join(codex, '.system', 'skill-creator'), 'skill-creator');
+    writeSkill(path.join(f.claude, 'synced', '0c6f2e1a', 'skill-creator'), 'skill-creator');
+    fs.mkdirSync(path.join(f.claude, 'synced', 'empty-sync'), { recursive: true });
+    fs.mkdirSync(path.join(f.claude, 'drafts', 'nothing-yet'), { recursive: true });
+    fs.mkdirSync(path.join(f.claude, 'broken'));
+    fs.writeFileSync(path.join(f.claude, 'broken', 'SKILL.md'), '---\nname: broken\n---\n');
+    fs.writeFileSync(path.join(f.claude, 'broken', 'huge.bin'), ''); fs.truncateSync(path.join(f.claude, 'broken', 'huge.bin'), 26 * 1024 * 1024);
+    const scan = scanLocalSkills(f.wb, [f.claude, f.agents, codex]);
+    const listed = scan.entries.map(e => path.relative(f.home, e.path).split(path.sep).join('/')).sort();
+    assert.deepEqual(listed, ['.claude/skills/broken', '.claude/skills/drafts', '.claude/skills/drafts/nothing-yet', '.claude/skills/synced/0c6f2e1a/skill-creator', '.claude/skills/synced/empty-sync', '.codex/skills/.system/skill-creator'],
+      '.system, synced and synced/<id> hold skills, so they are not listed as skipped; empty folders are');
+    assert.equal(scan.entries.filter(e => e.hasSkillFile && !e.error).length, 2);
+    assert.match(scan.entries.find(e => e.name === 'broken')!.error ?? '', /exceeds 25 MB/, 'a broken skill is still reported');
+    assert.equal(scan.entries.find(e => e.name === 'empty-sync')!.hasSkillFile, false);
+    const creators = scan.entries.filter(e => e.name === 'skill-creator').map(e => e.path);
+    fs.appendFileSync(path.join(codex, '.system', 'skill-creator', 'SKILL.md'), 'Codex edition.\n');
+    const result = importLocalSkills(f.wb, { paths: creators, confirm: true });
+    assert.equal(result.imported.length, 2, 'different content under one name is not merged');
+    const items = f.wb.listItems();
+    assert.deepEqual(items.map(i => i.source), ['local-import:skill-creator', 'local-import:skill-creator'], 'the shared source keeps only the folder name');
+    assert.deepEqual(Object.values(f.wb.origins({ ids: items.map(i => i.id) })).sort(), creators.map(p => `local:${p}`).sort(), 'the full folders stay on this machine');
+  } finally { f.close(); }
+});

@@ -1,6 +1,6 @@
 {
   "name": "@kiln/core",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "private": true,
   "type": "module",
   "description": "Shared Kiln product domain and services; TypeScript source bundled by app builds",

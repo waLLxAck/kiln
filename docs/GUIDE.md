@@ -52,7 +52,7 @@ What ships today:
 
 Downloads are listed in the README's [Download](../README.md#download) section and on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`.
 
-"Untested" means the macOS and Linux builds are built, inspected and started once on GitHub's CI runners, but nobody has used them on a real Mac or Linux desktop yet. Please [report what breaks](https://github.com/waLLxAck/kiln/issues). If you would rather not run an unsigned build, [build Kiln from source](DEVELOPMENT.md).
+"Untested" means the macOS builds are built, inspected and started once on GitHub's CI runners, but nobody has used them on a real Mac yet. The Linux build has been tried on one Arch Linux desktop (Hyprland on Wayland) as well. Please [report what breaks](https://github.com/waLLxAck/kiln/issues). If you would rather not run an unsigned build, [build Kiln from source](DEVELOPMENT.md).
 
 **Windows.** The installer is unsigned, so Windows SmartScreen may warn you before it runs: choose **More info**, then **Run anyway**. It installs per user and lets you choose the installation folder.
 
@@ -62,20 +62,33 @@ Downloads are listed in the README's [Download](../README.md#download) section a
 xattr -dr com.apple.quarantine /Applications/Kiln.app
 ```
 
-**Linux.** Either make the AppImage executable and run it (AppImages need FUSE 2: `libfuse2`, or `libfuse2t64` on Ubuntu 24.04):
+**Linux.** There are three files. The AppImage is one executable file:
 
 ```sh
-chmod +x Kiln-0.19.0-x86_64.AppImage
-./Kiln-0.19.0-x86_64.AppImage
+chmod +x Kiln-0.19.1-x86_64.AppImage
+./Kiln-0.19.1-x86_64.AppImage
 ```
 
-or install the Debian/Ubuntu package, which adds Kiln to the applications menu (the package is named `kiln-workbench`; remove it with `sudo apt remove kiln-workbench`):
+AppImages need FUSE 2. If it fails with `dlopen(): error loading libfuse.so.2`, install it (`sudo pacman -S fuse2` on Arch, `sudo apt install libfuse2` on Debian and older Ubuntu, `sudo apt install libfuse2t64` on Ubuntu 24.04 and later), or run it without FUSE:
 
 ```sh
-sudo apt install ./kiln_0.19.0_amd64.deb
+./Kiln-0.19.1-x86_64.AppImage --appimage-extract-and-run
 ```
 
-Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error, start it with `./Kiln-0.19.0-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
+The tar.gz is the same app as a plain folder and needs no FUSE. Unpack it anywhere and run `kiln-workbench` inside:
+
+```sh
+tar -xzf Kiln-0.19.1-x64.tar.gz
+./Kiln-0.19.1-x64/kiln-workbench
+```
+
+The Debian/Ubuntu package adds Kiln to the applications menu (the package is named `kiln-workbench`; remove it with `sudo apt remove kiln-workbench`):
+
+```sh
+sudo apt install ./kiln_0.19.1_amd64.deb
+```
+
+Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error (the AppImage or the tar.gz), start it with `--no-sandbox`, for example `./Kiln-0.19.1-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
 
 **Requirements.** Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in: first launch creates or opens your Kiln repository on GitHub. Managed runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH.
 
@@ -93,21 +106,21 @@ Setup checks the signed-in GitHub CLI account for `my-kiln` and offers **Use thi
 
 ## Open the app
 
-After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage or your applications menu on Linux. (For builds you made yourself, see [DEVELOPMENT.md](DEVELOPMENT.md#run-a-local-build).)
+After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage, the unpacked tar.gz or your applications menu on Linux. (For builds you made yourself, see [DEVELOPMENT.md](DEVELOPMENT.md#run-a-local-build).)
 
 Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Kiln** there to exit, or Cmd+Q on macOS. Linux desktops without a tray (GNOME without an AppIndicator extension) show no icon: quit from **File → Quit** (press Alt to show the menu bar), and opening Kiln again brings the window back.
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.19.0](releases/0.19.0.md).
+See [what changed in 0.19.1](releases/0.19.1.md).
 
 ## Set up a library
 
-1. On first launch, sign in with the official `gh` CLI and create a Kiln repository on GitHub (or open one Kiln created earlier). The same screen offers **Import my installed skills** (the folders Codex and Claude Code already read on this machine) and **Import from a skills repository** (a clone or one of your GitHub repositories); everything arrives as drafts with supporting and linked files, and nothing is moved. **Settings & repository** has the same tools later, including **Connect a different repository**.
+1. On first launch, sign in with the official `gh` CLI and create a Kiln repository on GitHub (or open one Kiln created earlier). The same screen offers **Import my installed skills** (the folders Codex and Claude Code already read on this machine) and **Import from a skills repository** (a clone or one of your GitHub repositories); everything arrives as drafts with supporting and linked files, and nothing is moved. Folders that only hold other skills (such as `~/.codex/skills/.system`) are not listed on their own; empty or broken folders are. If the skills came from a personal folder Kiln does not manage yet, setup offers **Manage the … folders** so the copies already there show as found instead of "Not installed"; managing a folder only records it, and installs or changes nothing. Two different skills with the same name stay separate items, and the list and the item header show which folder each came from (the full folder is kept on this machine only; the library stores just the folder name). **Settings & repository** has the same tools later, including **Connect a different repository**.
 2. In **Settings → Skill & agent locations**, choose **Agents** (`~/.agents/skills`, shared by Codex, Copilot and other clients) and **Claude** (`~/.claude/skills`). Both skill and client-specific agent-definition paths are shown. **Find skills and agents not in the library** imports existing items as drafts and offers safe cleanup of broken links or empty folders. Optional `.codex/skills` and `.copilot/skills` copies are under **Client-specific locations**; Copilot project copies use `.github/skills`. An installed item shows **Installed** in its header. Click it to manage or remove individual copies in **Installs**, where Agents and Claude locations are grouped together and client-specific copies are in a disclosure. See [verified compatibility and sources](SKILL_LOCATIONS.md).
 3. Browse **Library** or **Skills**. The lifecycle chips (Captured, Testing, Approved) filter and count items; **Archive** holds rejected and archived items. Right-click any item for status, favourite, install and trash actions. Right-click a collection in the sidebar to delete it; the items inside move to Trash. Items in **Trash** can be restored or deleted permanently.
 4. **Test** runs an experiment with Codex or Claude Code (or a manual handoff); output and the agent assessment are saved automatically against the exact revision. **Create skill** asks the chosen agent to draft a SKILL.md from a prompt, image or note using Kiln's bundled writing-for-agents guidance; the draft arrives as a new unapproved skill linked to its source.
-5. Every skill shows one toggle per configured location. **Install** copies the approved version into the agent's skills folder (approving the current draft first if needed); new agent sessions see it. **Approve & install** does both for every configured location in one click. **Remove** deletes only that copy. An identical folder Kiln did not create is adopted rather than rewritten; a junction is replaced by a real copy; a differing folder is set aside under Kiln's private data only after you confirm. Project folders are enrolled in **Machines** and installed to from an item's Installs tab.
+5. Every skill shows one toggle per configured location. **Install** copies the approved version into the agent's skills folder (approving the current draft first if needed); new agent sessions see it. **Approve & install** does both for every configured location in one click. **Remove** deletes only that copy. An identical folder Kiln did not create is adopted rather than rewritten; a junction is replaced by a real copy; a differing folder is set aside under Kiln's private data only after you confirm. Project folders are enrolled in **Machines** and installed to from an item's Installs tab. Machines is not reliable yet, so release builds show it as **Coming soon** (see [Machines](#machines)); builds from source still have it.
 6. Installed skills are recorded in `workbench/installs.json` inside the library. On another machine, clone the library, turn on the same locations and press **Install everything marked for this machine**, or run `workbench skills sync`. Sync installs the latest locally trusted approved revision, even when a newer draft exists. It never creates an approval; missing or imported-only approvals are reported for review.
 7. **Approve** commits that item (and only that item) and pushes it to GitHub in the background; the desktop uses a plain "Approve …" commit message without invoking an agent. Automatic approval publishing commits only the exact reviewed snapshot, excluding earlier private drafts and edits made while publishing. Explicit CLI Git checkpoints still commit all managed working files. If a push fails, the item says so and offers **Retry**; **Settings → Kiln repository** shows anything still waiting.
 
@@ -152,7 +165,7 @@ Capture runs use an isolated working folder; experiments can use a selected loca
 
 Before each agent interaction, a warning explains what is sent, account usage, and access to files and commands. **Agree and continue** starts the operation; **Cancel** sends nothing. **Don't show again** remembers acceptance on this machine. **Settings → Show agent access warnings again** restores the warning.
 
-Capture, distillation and trials request read-only access. Chat retains broad read/write access: Windows Codex chat runs without a sandbox, and Claude chat allows Bash, Write and Edit. The instruction to edit library entries through Kiln's CLI is not a security boundary. Ordinary desktop actions such as Install, Save, Approve and Retry are programmatic and do not invoke an agent or show this warning.
+Capture, distillation and trials request read-only access. Chat retains broad read/write access and can run commands. On macOS and Linux, Codex chat runs in Codex's workspace-write sandbox: it can read what your account can read, but writes only to the library, the chat's working folder and temporary folders. On Windows, where Codex has no such sandbox, Codex chat runs without one. Claude chat allows Bash, Write and Edit and is not confined on any platform; the warning names only the caveats of the platform it is shown on. The instruction to edit library entries through Kiln's CLI is not a security boundary. Ordinary desktop actions such as Install, Save, Approve and Retry are programmatic and do not invoke an agent or show this warning.
 
 ## Asking the agent
 
@@ -268,6 +281,10 @@ For another machine, open the Kiln repository there, configure its locations, re
 
 Distilling a captioned YouTube video creates a collection of reusable entries with timestamped source links and the transcript attached to the source item. Ask the agent about an entry with that source context already available. Plain text, screenshots and files can also be captured for later analysis; Save only preserves the material without calling a model.
 
+## Machines
+
+**Machines** is where project folders are enrolled and every installed copy is checked for drift. It is not reliable yet, so release builds (the downloads) show it as **Coming soon**, with a short note on what it will do, and nothing else in the app links into it: an item's Installs tab offers **Install a specific revision…** for the folders Kiln manages. Personal skill folders are still chosen in **Settings**, and the install toggles show each folder's live state. Builds from source (`npm run dev`, `npm start`) keep the full section; to see it in a release-style build, build with `KILN_SHOW_MACHINES=1` (see [DEVELOPMENT.md](DEVELOPMENT.md)).
+
 ## Product boundaries
 
 - The library is local, but desktop onboarding requires a Kiln-created repository connected to GitHub. Approval publishes the reviewed snapshot; this is not an account-free, offline-only product.
@@ -275,7 +292,7 @@ Distilling a captioned YouTube video creates a collection of reusable entries wi
 - Automated capture and experiments request read-only access. Item chat has broader file and command access. Agent interactions use the official clients and show a consent notice; normal editing, approval and installation do not invoke a model.
 - Local run folders hold private inputs and transcripts. Normal export/publishing excludes reserved session data and machine-specific paths; authored text and arbitrary attachments are not automatically secret-redacted.
 - External client hooks can be edited in Config files; Kiln does not execute them itself.
-- SSH execution, remote deployment and a remote machine dashboard are not implemented. Windows installers are unsigned and the full Windows release matrix is not certified. macOS builds are ad-hoc signed and not notarized; the macOS and Linux builds are new in 0.18.1 and have not been tested on real machines.
+- SSH execution, remote deployment and a remote machine dashboard are not implemented. Windows installers are unsigned and the full Windows release matrix is not certified. macOS builds are ad-hoc signed and not notarized; the macOS and Linux builds are new in 0.18.1; the macOS builds have not been tested on a real Mac, and the Linux build has been tried on one Arch Linux desktop.
 
 This is the local workflow release, with GitHub onboarding and standardized migration. See [implementation and verification](IMPLEMENTATION.md) for what has been checked and what remains.
 
