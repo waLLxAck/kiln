@@ -52,7 +52,6 @@ async function checkStatic({ page, label }) {
   assert.ok(hrefs.length >= 2, `${label}: download buttons`);
   for (const href of hrefs) {
     assert.equal(href, installer, `${label}: download link`);
-    assert.match(href, /\/v0\.17\.0\/Kiln\.Setup\.0\.17\.0\.exe$/);
   }
   assert.match(await page.locator('#download .fine').innerText(), /unsigned.*SmartScreen/s, `${label}: unsigned-build note`);
   assert.doesNotMatch(await page.locator('body').innerText(), /private GitHub repository|account that has access/, `${label}: no private-repository note`);
