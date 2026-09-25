@@ -72,7 +72,7 @@ export class HomeFiles {
     return this.profiles;
   }
   private async entries(): Promise<Omit<HomeFile, 'exists' | 'size' | 'modifiedAt' | 'hash' | 'error'>[]> {
-    const fixed = configCatalog(this.home, this.projects(), this.options.env ?? (this.options.home || process.env.KILN_HOME ? {} : process.env));
+    const fixed = configCatalog(this.home, this.projects(), this.options.env ?? (this.options.home || process.env.KILN_HOME ? {} : process.env), this.platform);
     const profiles = await this.shellProfiles();
     const shells = (Object.entries(profiles) as [Shell, { host: string; all: string }][]).flatMap(([shell, paths]) => [
       { key: `${shell}-host`, kind: 'powershell' as const, label: `${shellLabel[shell]} profile`, description: `Runs every time ${shellLabel[shell]} starts in the console: aliases, functions, prompt and PATH changes.`, path: paths.host, removable: false },

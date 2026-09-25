@@ -1,4 +1,5 @@
-import { Download, FolderOpen, Loader2, RefreshCw } from 'lucide-react';
+import { Download, ExternalLink, FolderOpen, Loader2, RefreshCw } from 'lucide-react';
+import { api } from './api';
 import type { UpdateStatus } from '../../../packages/protocol/schema';
 
 type Actions = { update: UpdateStatus | null; working: boolean; onPrepare: () => void; onRestart: () => void };
@@ -11,7 +12,14 @@ export function UpdateAction({ update, working, onPrepare, onRestart, compact = 
   return <button className={compact ? 'icon-button update-available' : 'button primary'} disabled={working} aria-label="Prepare update" title={`Prepare Kiln ${update.available.version} while you keep working`} onClick={onPrepare}><Download size={15} />{!compact && (stage.state === 'failed' ? 'Retry update' : `Prepare ${update.available.version}`)}</button>;
 }
 
+/** Where macOS and Linux builds are updated from. */
+const releasesPage = 'https://github.com/waLLxAck/kiln/releases';
 export function UpdatesPanel({ update, working, onPrepare, onRestart, onCheck, onSource }: Actions & { onCheck: () => void; onSource: (value?: { clear?: boolean; off?: boolean }) => void }) {
+  // The in-app updater runs the Windows installer; other platforms get a pointer to the releases page instead of controls that cannot work.
+  if (update?.supported === false) return <section className="settings-card"><h3>Updates</h3>
+    <p>Kiln {update.current} is running. On macOS and Linux, updates come from the releases page: download the newer version there and replace this one. Kiln does not update itself on these platforms.</p>
+    <div className="wrap-actions"><button className="button" onClick={() => void api('desktop.openUrl', { url: releasesPage })}><ExternalLink size={15} />Open the releases page</button></div>
+  </section>;
   return <section className="settings-card"><h3>Updates</h3>
     <p>Prepare an update while you keep working. When it is ready, click <b>Restart to update</b> to apply it. Kiln stays open until you choose to restart.</p>
     {update?.stage.state === 'preparing' && <p role="status">Preparing Kiln {update.stage.version}… {update.stage.progress}%</p>}

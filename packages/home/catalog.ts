@@ -4,7 +4,13 @@ import { digest, noLinks } from '../storage/files';
 
 export type ConfigKind = 'claude' | 'agents' | 'codex' | 'copilot' | 'vscode';
 export type ConfigEntry = { key: string; kind: ConfigKind; label: string; description: string; path: string; removable: boolean; scope: string; template: string; instruction: boolean };
-export function configCatalog(home: string, projects: string[], env: NodeJS.ProcessEnv): ConfigEntry[] {
+/** The folder that holds VS Code's `Code/User` settings: %APPDATA% on Windows, Application Support on macOS, the XDG config folder elsewhere. */
+export function editorConfigRoot(home: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | null {
+  if (platform === 'win32') return env.APPDATA || null;
+  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support');
+  return env.XDG_CONFIG_HOME || path.join(home, '.config');
+}
+export function configCatalog(home: string, projects: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): ConfigEntry[] {
   const entries: ConfigEntry[] = [];
   const add = (key: string, kind: ConfigKind, root: string, relative: string, description: string, scope = 'Personal', template?: string) => {
     const file = path.join(root, relative), instruction = file.endsWith('.md');
@@ -37,7 +43,8 @@ export function configCatalog(home: string, projects: string[], env: NodeJS.Proc
   add('copilot-permissions', 'copilot', copilot, 'permissions-config.json', 'Saved tool and directory permissions per project. Close Copilot sessions before changing this file.');
   add('copilot-mcp', 'copilot', copilot, 'mcp-config.json', 'Personal MCP servers for Copilot CLI.');
   add('copilot-lsp', 'copilot', copilot, 'lsp-config.json', 'Personal language-server configuration for Copilot CLI.');
-  if (env.APPDATA) add('vscode-settings', 'vscode', env.APPDATA, 'Code/User/settings.json', 'VS Code user settings, including Copilot access and tool settings. Named profiles and other editors can be added separately.');
+  const editorRoot = editorConfigRoot(home, env, platform);
+  if (editorRoot) add('vscode-settings', 'vscode', editorRoot, 'Code/User/settings.json', 'VS Code user settings, including Copilot access and tool settings. Named profiles and other editors can be added separately.');
   discover('codex', codex, '.', /\.config\.toml$/, 'Named Codex configuration profile.', 'Personal');
   discover('codex', codex, 'rules', /\.rules$/, 'Codex command execution rules.', 'Personal');
   discover('claude', claude, 'rules', /\.md$/, 'Claude instruction rules.', 'Personal');
