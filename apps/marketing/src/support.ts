@@ -2,7 +2,7 @@
 // as the homepage, with the pen marks drawn once on load.
 import './fonts/fonts.css';
 import './styles.css';
-import { siteFooter, siteHeader } from './chrome';
+import { refineMacDownload, siteFooter, siteHeader } from './chrome';
 import { home, issues, kofi, repository } from './content';
 import { prefersReducedMotion } from './motion';
 import { ellipse, line, reseed } from './rough';
@@ -66,6 +66,7 @@ function markup() {
 
 const root = document.querySelector<HTMLElement>('#app')!;
 root.innerHTML = markup();
+refineMacDownload(root);
 drawPens(root);
 document.fonts?.ready.then(() => drawPens(root));
 addEventListener('resize', () => drawPens(root));
