@@ -92,3 +92,23 @@ test('inspecting a folder before creating tells apart nothing, a reusable Kiln r
     assert.ok(created.committed, 'a missing parent folder is created');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('default discovery includes configured homes, projects and nested skill groups without following cycles', () => {
+  const f = fixture(), previousHome = process.env.KILN_HOME;
+  process.env.KILN_HOME = f.home;
+  try {
+    const custom = path.join(f.root, 'custom-home'), project = path.join(f.root, 'project');
+    fs.mkdirSync(custom); fs.mkdirSync(project);
+    f.wb.enroll({ name: 'Custom Claude', provider: 'claude', root: custom, scope: 'personal' });
+    f.wb.enroll({ name: 'Project Copilot', provider: 'copilot', root: project, scope: 'project' });
+    writeSkill(path.join(f.agents, '.system', 'nested'), 'nested');
+    writeSkill(path.join(custom, '.claude/skills/custom'), 'custom');
+    writeSkill(path.join(project, '.github/skills/project'), 'project');
+    fs.symlinkSync(f.agents, path.join(f.agents, '.system', 'loop'), 'junction');
+    const scan = scanLocalSkills(f.wb);
+    assert.deepEqual(scan.entries.filter(e => e.hasSkillFile).map(e => e.name).sort(), ['custom', 'nested', 'project']);
+    const result = importLocalSkills(f.wb, { paths: scan.entries.filter(e => e.hasSkillFile).map(e => e.path), confirm: true });
+    assert.equal(result.imported.length, 3);
+    assert.equal(result.failed.length, 0);
+  } finally { if (previousHome === undefined) delete process.env.KILN_HOME; else process.env.KILN_HOME = previousHome; f.close(); }
+});

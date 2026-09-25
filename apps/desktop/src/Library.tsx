@@ -14,7 +14,7 @@ export const tabLabel: Record<LibraryTab, string> = { recent: 'All', favourites:
 export const inTab = (item: Item, tab: LibraryTab) => tab === 'recent' || (tab === 'favourites' ? item.favourite : item.kind === tab);
 
 export function LibraryTabs({ tab, counts, onChange }: { tab: LibraryTab; counts: Record<string, number>; onChange: (tab: LibraryTab) => void }) {
-  const tabs: LibraryTab[] = ['recent', ...(counts.favourites || tab === 'favourites' ? ['favourites' as const] : []), ...KINDS.filter(k => counts[k] || tab === k)];
+  const tabs: LibraryTab[] = ['recent', ...(counts.favourites || tab === 'favourites' ? ['favourites' as const] : []), ...KINDS.filter(k => counts[k])];
   return <div className="lib-tabs" role="tablist" aria-label="Library views">{tabs.map(t => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => onChange(t)}>{t === 'favourites' ? <Star size={13} /> : t !== 'recent' ? <KindIcon kind={t} size={13} /> : null}{tabLabel[t]}<small>{counts[t] ?? 0}</small></button>)}</div>;
 }
 

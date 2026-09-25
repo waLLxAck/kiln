@@ -9,6 +9,7 @@ import { invariant } from './errors';
 import { revisionHash, validateContent } from './content';
 import { authoringSchema, type Authoring } from '../protocol/schema';
 import { bundleFiles, digest, safeRelative } from '../storage/files';
+import { targetSkillsFolder } from '../providers/skill-locations';
 import { providerIds, skillsFolder } from '../providers/service';
 
 const LIMIT = MAX_ATTACHMENT_BYTES;
@@ -50,19 +51,23 @@ export function skillBundle(folder: string, source: string, extra: Partial<Pick<
 export const contentKey = (value: { content: string; files: Record<string, string> }) => digest({ content: value.content.replace(/\r\n/g, '\n'), files: value.files });
 
 /** Folders where installed agents look for skills on this machine. */
-export function localSkillRoots(home = os.homedir()) {
+export function localSkillRoots(home = process.env.KILN_HOME ?? os.homedir()) {
   return [...new Set([...providerIds.map(id => path.join(home, ...skillsFolder(id).split('/'))), path.join(home, '.codex', 'skills')])];
 }
 export type LocalSkill = { root: string; name: string; path: string; realPath: string; linked: boolean; hasSkillFile: boolean; /** True when the library already holds identical content. */ imported: boolean; fileCount: number; validation: string[]; error: string | null };
 /** Every skill folder in the local agent folders, once each even when one folder is a link to another, marked when the library already has it. */
-export function scanLocalSkills(wb: Workbench, roots = localSkillRoots()): { roots: string[]; entries: LocalSkill[] } {
+export function scanLocalSkills(wb: Workbench, roots = [...new Set([...localSkillRoots(), ...wb.targets().map(t => path.join(t.root, targetSkillsFolder(t)))])]): { roots: string[]; entries: LocalSkill[] } {
   const known = new Set<string>();
   for (const item of wb.listItems().filter(i => i.kind === 'skill')) { try { known.add(contentKey(wb.getRevision(item.id))); } catch { /* A damaged item cannot be matched; it is reported elsewhere. */ } }
   const seen = new Set<string>(); const entries: LocalSkill[] = [];
-  for (const root of roots) {
-    if (!fs.existsSync(root)) continue;
+  const visited = new Set<string>();
+  const visit = (root: string, depth = 0) => {
+    if (!fs.existsSync(root) || depth > 12) return;
+    const identity = fs.realpathSync(root);
+    if (visited.has(identity)) return;
+    visited.add(identity);
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      if (['.git', 'node_modules', '__pycache__'].includes(entry.name) || (!entry.isDirectory() && !entry.isSymbolicLink())) continue;
       const full = path.join(root, entry.name);
       let realPath = full; let error: string | null = null;
       try { realPath = fs.realpathSync(full); } catch { error = 'The link points at a folder that no longer exists.'; }
@@ -74,9 +79,11 @@ export function scanLocalSkills(wb: Workbench, roots = localSkillRoots()): { roo
         try { const bundle = skillBundle(realPath, `local:${full}`); imported = known.has(contentKey(bundle)); fileCount = Object.keys(bundle.files).length + 1; validation = validateContent(bundle); }
         catch (e) { error = e instanceof Error ? e.message : String(e); }
       }
+      if (!hasSkillFile && !error) visit(full, depth + 1);
       entries.push({ root, name: entry.name, path: full, realPath, linked: entry.isSymbolicLink(), hasSkillFile, imported, fileCount, validation, error });
     }
-  }
+  };
+  for (const root of roots) visit(root);
   return { roots, entries: entries.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 /** Copies the chosen local skill folders into the library as drafts. Folders stay where they are; identical content is not duplicated. */

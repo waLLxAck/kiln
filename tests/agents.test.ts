@@ -76,3 +76,20 @@ test('agents import as drafts, retain native content, install for their own clie
     assert.equal(configCatalog(home, [], {}).some(e => e.path.includes(`${path.sep}agents${path.sep}`)), false);
   } finally { wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('agent discovery includes configured personal homes and projects once each', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-agent-discovery-'));
+  const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
+  const previousHome = process.env.KILN_HOME; process.env.KILN_HOME = path.join(root, 'empty-home');
+  try {
+    const home = path.join(root, 'custom'), project = path.join(root, 'project');
+    for (const [base, folder] of [[home, '.claude/agents'], [project, '.github/agents']]) {
+      fs.mkdirSync(path.join(base, folder), { recursive: true });
+      fs.writeFileSync(path.join(base, folder, 'review.md'), '---\nname: review\ndescription: Review code\n---\nReview.');
+    }
+    wb.enroll({ name: 'Claude', root: home, provider: 'claude', scope: 'personal' });
+    wb.enroll({ name: 'Copilot project', root: project, provider: 'copilot', scope: 'project' });
+    const entries = scanAgents(wb, {});
+    assert.deepEqual(entries.map(e => e.provider).sort(), ['claude', 'copilot']);
+  } finally { if (previousHome === undefined) delete process.env.KILN_HOME; else process.env.KILN_HOME = previousHome; wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
