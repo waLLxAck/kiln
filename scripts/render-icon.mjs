@@ -1,5 +1,7 @@
-// Renders assets/kiln.svg into assets/kiln.png (256 px) and assets/kiln.ico (16–256 px). Each icon size is rendered from the
-// vector separately rather than downscaled, so small sizes stay crisp. Needs `rsvg-convert` (librsvg) and ImageMagick `magick`.
+// Renders assets/kiln.svg into assets/kiln.png (256 px) and assets/kiln.ico (16–256 px) for Windows, assets/kiln-1024.png for
+// Linux, assets/kiln.icns for macOS (the mark inset on Apple's 1024 px icon grid) and assets/kilnTemplate.png / @2x for the macOS
+// menu bar (a black silhouette that macOS tints). Each icon size is rendered from the vector separately rather than downscaled, so
+// small sizes stay crisp. Needs `rsvg-convert` (librsvg) and ImageMagick `magick`.
 //   node scripts/render-icon.mjs
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -42,7 +44,30 @@ try {
     offset += data.length;
   });
   fs.writeFileSync(path.resolve('assets/kiln.ico'), Buffer.concat([header, ...images.map(image => image.data)]));
+
+  const render = (source, size, output) => { execFileSync('rsvg-convert', ['--width', String(size), '--height', String(size), '--output', output, source]); return fs.readFileSync(output); };
+  render(svg, 1024, path.resolve('assets/kiln-1024.png'));
+
+  // macOS icons sit inside Apple's grid: an 824 px body centred on a 1024 px canvas, so Kiln is not oversized in the Dock.
+  const mark = fs.readFileSync(svg, 'utf8').replace(/^<svg[^>]*>|<\/svg>\s*$/g, '');
+  const macSvg = path.join(temp, 'kiln-mac.svg');
+  fs.writeFileSync(macSvg, `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><g transform="translate(100 100) scale(25.75)">${mark}</g></svg>`);
+  // ICNS: 'icns', total length, then one entry per size (type, entry length, PNG bytes). All lengths are big-endian.
+  const icnsTypes = [['icp4', 16], ['icp5', 32], ['ic11', 32], ['ic12', 64], ['ic07', 128], ['ic13', 256], ['ic08', 256], ['ic14', 512], ['ic09', 512], ['ic10', 1024]];
+  const entries = icnsTypes.map(([type, size]) => {
+    const png = render(macSvg, size, path.join(temp, `mac-${type}.png`)), head = Buffer.alloc(8);
+    head.write(type, 0, 'ascii'); head.writeUInt32BE(png.length + 8, 4);
+    return Buffer.concat([head, png]);
+  });
+  const icnsHead = Buffer.alloc(8); icnsHead.write('icns', 0, 'ascii'); icnsHead.writeUInt32BE(8 + entries.reduce((sum, entry) => sum + entry.length, 0), 4);
+  fs.writeFileSync(path.resolve('assets/kiln.icns'), Buffer.concat([icnsHead, ...entries]));
+
+  // Menu bar: the arch with its fire opening cut out, black on transparent. The "Template" suffix tells Electron to let macOS tint it.
+  const template = path.join(temp, 'template.svg');
+  fs.writeFileSync(template, '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M3 14V8a5 5 0 0 1 10 0v6zM6 14v-2.5a2 2 0 0 1 4 0V14z" fill="#000"/></svg>');
+  render(template, 16, path.resolve('assets/kilnTemplate.png'));
+  render(template, 32, path.resolve('assets/kilnTemplate@2x.png'));
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`Rendered assets/kiln.png and assets/kiln.ico (${sizes.join(', ')} px)`);
+console.log(`Rendered assets/kiln.png and assets/kiln.ico (${sizes.join(', ')} px), assets/kiln-1024.png, assets/kiln.icns and the macOS menu bar template`);
