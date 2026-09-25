@@ -8,7 +8,7 @@ import { bindTidy, drawDoodle, folderMarks, folderNotes, foldersMarkup } from '.
 import { createInk } from './ink';
 import { bindNewSkills, newSkillMarks, newSkillNotes, newSkillsMarkup } from './new-skills';
 import { bindPanels } from './panel';
-import { windows } from './ui';
+import { heart, windows } from './ui';
 
 function closing() {
   const faq = [
@@ -38,6 +38,7 @@ export function renderHome(root: HTMLElement) {
         <div class="hero-side">
           <p>Kiln is a Windows app for Codex, Claude Code and Copilot. It shows every skill your agents load, one switch per folder, and lets you test a new prompt on your own repo before it becomes one.</p>
           <div class="hero-actions"><a class="download-button" href="${installer}">${windows}<span>Download for Windows</span></a><a class="text-link" href="#folders">See my folders</a></div>
+          <p class="hero-sponsor"><a href="${kofi}">${heart(15)}<span>Kiln is free. If it saves you time, <u>sponsor it on Ko-fi</u>.</span></a></p>
         </div>
       </section>
       ${foldersMarkup()}

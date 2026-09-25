@@ -58,7 +58,9 @@ async function checkStatic({ page, label }) {
   assert.ok(await page.locator(`#download a[href="${repository}/releases"]`).count() >= 1, `${label}: link to all releases`);
   assert.ok(await page.locator(`a[href="${kofi}"]`).count() >= 1, `${label}: Ko-fi link`);
   const supportLinks = await page.locator('a[href$="support/"]').evaluateAll(links => links.map(link => link.href));
-  assert.ok(supportLinks.length >= 3, `${label}: support page linked from the header, the download section and the footer`);
+  assert.ok(supportLinks.length >= 2, `${label}: support page linked from the download section and the footer`);
+  assert.equal(await page.locator('.site-header a.header-sponsor').getAttribute('href'), kofi, `${label}: header sponsor button`);
+  assert.equal(await page.locator('.hero-sponsor a').getAttribute('href'), kofi, `${label}: hero sponsor link`);
   for (const href of supportLinks) assert.equal(href, supportUrl, `${label}: support link resolves under the base path`);
   assert.equal(await page.locator('.site-footer').count(), 1, `${label}: footer`);
 }
@@ -77,7 +79,7 @@ async function checkSupport(run) {
   assert.equal(await page.locator('.help-list li').count(), 3, `${label}: three other ways to help`);
   assert.equal(await page.locator(`.help-list a[href="${repository}"]`).count(), 1, `${label}: star the repository`);
   assert.equal(await page.locator(`.help-list a[href="${repository}/issues"]`).count(), 1, `${label}: report issues`);
-  assert.equal(await page.locator('.site-header [aria-current="page"]').innerText(), 'Support');
+  assert.equal(await page.locator('.site-header a.header-sponsor').getAttribute('href'), kofi, `${label}: header sponsor button`);
   assert.equal(await page.locator('.site-footer').count(), 1, `${label}: footer`);
   assert.equal(await page.locator('a.brand').first().evaluate(link => link.href), base, `${label}: brand links home`);
   const back = page.locator('.site-header a.header-download');

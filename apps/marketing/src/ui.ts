@@ -31,3 +31,6 @@ export const editor = (file: string, versions: string, lineNo: number, del: stri
   <p class="diff-del"><i>${lineNo}</i><span>- ${del}</span></p>
   <p class="diff-add"><i>${lineNo}</i><span>+ ${add}</span></p>
 </div>`;
+
+/** The conventional sponsor heart. */
+export const heart = (size = 16) => `<svg class="heart" viewBox="0 0 16 16" width="${size}" height="${size}" aria-hidden="true"><path fill="currentColor" d="M8 14.2 6.9 13.2C3 9.7.5 7.4.5 4.6.5 2.3 2.3.5 4.6.5c1.3 0 2.5.6 3.4 1.6C8.9 1.1 10.1.5 11.4.5c2.3 0 4.1 1.8 4.1 4.1 0 2.8-2.5 5.1-6.4 8.6Z"/></svg>`;

@@ -42,6 +42,16 @@ body { background: var(--desk); color: var(--text); font: 400 17px/1.6 var(--san
 .site-header nav a:hover { text-decoration: underline; text-underline-offset: .25em; }
 .site-header nav a[aria-current='page'] { text-decoration: underline; text-decoration-color: var(--red); text-decoration-thickness: 2px; text-underline-offset: .3em; }
 .header-download { padding: 8px 14px; border: 1px solid #1f1c1833; border-radius: 8px; background: var(--window); }
+/* The sponsor heart, styled the way GitHub's Sponsor button is so people recognise it. */
+.heart { flex: none; color: #d6336c; transition: transform .2s cubic-bezier(.3, 1.6, .5, 1); }
+.header-sponsor { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 1px solid #1f1c1833; border-radius: 8px; background: var(--window); }
+.header-sponsor:hover, .hero-sponsor a:hover { text-decoration: none !important; }
+.header-sponsor:hover .heart, .hero-sponsor a:hover .heart, .site-footer a:hover .heart { transform: scale(1.22); }
+.hero-sponsor { margin-top: 18px; font-size: 14.5px; }
+.hero-sponsor .heart { margin-top: .2em; }
+.hero-sponsor a { display: inline-flex; align-items: flex-start; gap: 8px; color: inherit; text-decoration: none; }
+.hero-sponsor u { text-decoration-color: #d6336c; text-decoration-thickness: 1.5px; text-underline-offset: .22em; }
+.site-footer nav .heart { vertical-align: -2px; }
 .hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px 64px; align-items: end; max-width: 1360px; margin: 0 auto; padding: 14px 0 30px; }
 .hero h1 { font-size: clamp(38px, 4.5vw, 66px); line-height: 1; font-weight: 700; max-width: 19ch; }
 .hero-side p { max-width: 50ch; font-size: 17px; }
@@ -540,7 +550,7 @@ a.timestamp:hover { background: #fbe0e0; }
 @media (max-width: 640px) {
   body { font-size: 16px; }
   .site-header nav { gap: 16px; }
-  .site-header nav a:not(.header-download):not(.header-support) { display: none; }
+  .site-header nav a:not(.header-download):not(.header-sponsor) { display: none; }
   .hero { padding-bottom: 24px; }
   .sheet { padding: 28px 12px 30px; }
   .sheet + .sheet { margin-top: 56px; }

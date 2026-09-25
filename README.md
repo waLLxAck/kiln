@@ -1,12 +1,14 @@
 <p align="center"><img src="assets/kiln.svg" width="96" height="96" alt="Kiln logo: a cream kiln arch with an orange fire opening on a dark rounded square"></p>
 
+<p align="center"><a href="https://ko-fi.com/wallxack"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Kiln on Ko-fi" height="36"></a></p>
+
 # Kiln
 
 A local desktop workbench for prompts and agent skills. Capture useful material, test an exact revision, record a decision, and install an approved snapshot into Codex, Claude Code or GitHub Copilot. Windows is the current packaged release target.
 
 Kiln is for developers who want to keep useful agent workflows, understand which versions they have tested, and reuse approved skills across projects and machines. The desktop app and CLI share one library and the same approval rules. Kiln is free and MIT licensed; managed agent interactions use your installed, signed-in Codex or Claude Code CLI and its account usage.
 
-**[Website](https://wallxack.github.io/kiln/)** · **[Download for Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.0/Kiln.Setup.0.18.0.exe)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · [Support Kiln](https://ko-fi.com/wallxack)
+**[Website](https://wallxack.github.io/kiln/)** · **[Download for Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.0/Kiln.Setup.0.18.0.exe)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
 
 ## Download
 
