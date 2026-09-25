@@ -1,6 +1,7 @@
 // Checks the marketing homepage in Chromium: no page errors or failed requests, no horizontal overflow, and the key flows
 // driven through their keyboard and tap fallbacks with reduced motion emulated (calm end states), then once more with full
-// motion (animated tidy-up, flights and pointer drags). It also checks the support page and the links between the pages. Run it
+// motion (animated tidy-up, flights and pointer drags). It also checks the support page, the links between the pages, and that the
+// download button offers the right file for spoofed Windows, macOS, Linux and phone user agents. Run it
 // against `npm run dev:marketing` or a served build, including one served under a base path such as GitHub Pages' /kiln/:
 //   MARKETING_URL=http://127.0.0.1:4174 node scripts/verify-marketing.mjs
 //   MARKETING_URL=http://127.0.0.1:4175/kiln/ node scripts/verify-marketing.mjs
@@ -10,14 +11,34 @@ import { chromium } from '@playwright/test';
 const base = (process.env.MARKETING_URL ?? 'http://127.0.0.1:5174').replace(/\/?$/, '/');
 const supportUrl = new URL('support/', base).href;
 const repository = 'https://github.com/waLLxAck/kiln';
-const installer = `${repository}/releases/download/v0.18.0/Kiln.Setup.0.18.0.exe`;
+const version = '0.18.1';
+const assets = `${repository}/releases/download/v${version}`;
+/** Every file the site offers, by the key the page uses in data-download. */
+const files = {
+  windows: `${assets}/Kiln.Setup.${version}.exe`,
+  'mac-arm64': `${assets}/Kiln-${version}-arm64.dmg`,
+  'mac-x64': `${assets}/Kiln-${version}-x64.dmg`,
+  appimage: `${assets}/Kiln-${version}-x86_64.AppImage`,
+  deb: `${assets}/kiln_${version}_amd64.deb`,
+};
+const agents = {
+  windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  mac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15',
+  linux: 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:143.0) Gecko/20100101 Firefox/143.0',
+  phone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+};
+/** The file the page should offer for a user agent, mirroring detectOs in apps/marketing/src/content.ts. */
+const expectedFor = userAgent => /iPhone|iPad|iPod|Android/i.test(userAgent) ? 'windows' : /Windows/i.test(userAgent) ? 'windows' : /Macintosh|Mac OS X/i.test(userAgent) ? 'mac-arm64' : /Linux|X11|CrOS/i.test(userAgent) ? 'appimage' : 'windows';
+const osOf = key => key === 'windows' ? 'windows' : key.startsWith('mac') ? 'mac' : 'linux';
 const kofi = 'https://ko-fi.com/wallxack';
 const widths = [320, 390, 768, 1440, 2048];
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', headless: true });
 
-async function open(width, reducedMotion, url = base) {
+async function open(width, reducedMotion, url = base, { userAgent, userAgentData } = {}) {
   const touch = width < 600;
-  const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 1000 }, hasTouch: touch, reducedMotion });
+  const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 1000 }, hasTouch: touch, reducedMotion, ...(userAgent ? { userAgent } : {}) });
+  // Stand in for the browser's userAgentData: `null` removes it (Safari, Firefox); an object reports that platform and chip.
+  if (userAgentData !== undefined) await context.addInitScript(data => Object.defineProperty(Navigator.prototype, 'userAgentData', { configurable: true, get: () => data && { platform: data.platform, getHighEntropyValues: async () => ({ architecture: data.architecture }) } }), userAgentData);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -42,18 +63,29 @@ async function assertFits({ page, label }, when) {
   assert.ok(scroll <= viewport, `${label}: horizontal overflow ${when} (${scroll}px > ${viewport}px)`);
 }
 
-async function checkStatic({ page, label }) {
+async function checkStatic(run) {
+  const { page, label } = run;
   assert.match(await page.title(), /^Kiln — /, `${label}: title`);
   assert.equal(await page.locator('meta[name="robots"]').count(), 0, `${label}: robots meta should be gone`);
   assert.ok((await page.locator('meta[name="description"]').getAttribute('content')).length > 80, `${label}: description`);
   assert.equal(await page.locator('h1').count(), 1, `${label}: one h1`);
   for (const id of ['main', 'folders', 'new-skills', 'download']) assert.equal(await page.locator(`#${id}`).count(), 1, `${label}: #${id}`);
-  const hrefs = await page.locator('a.download-button').evaluateAll(links => links.map(link => link.href));
-  assert.ok(hrefs.length >= 2, `${label}: download buttons`);
-  for (const href of hrefs) {
-    assert.equal(href, installer, `${label}: download link`);
-  }
-  assert.match(await page.locator('#download .fine').innerText(), /unsigned.*SmartScreen/s, `${label}: unsigned-build note`);
+  await checkDownload(run, expectedFor(await page.evaluate(() => navigator.userAgent)));
+  const body = await page.locator('body').innerText();
+  assert.match(body, /desktop app for Windows, macOS and Linux/, `${label}: names all three platforms`);
+  assert.doesNotMatch(body, /a Windows app/, `${label}: no longer called a Windows app`);
+  // Every platform's file is offered in the download section, once, as the button or one of the other links.
+  const offered = await page.locator('#download a[data-download], #download a[data-download-other]').evaluateAll(links => links.map(link => link.href));
+  assert.deepEqual([...offered].sort(), Object.values(files).sort(), `${label}: one link per platform file`);
+  const note = os => page.locator(`#download [data-install-note="${os}"]`).innerText();
+  assert.match(await note('windows'), /unsigned.*SmartScreen.*More info.*Run anyway/s, `${label}: Windows SmartScreen note`);
+  assert.match(await note('mac'), /not notarized|isn’t notarized/, `${label}: macOS notarization note`);
+  assert.match(await note('mac'), /right-click.*Open/s, `${label}: macOS right-click Open`);
+  assert.match(await note('mac'), /xattr -dr com\.apple\.quarantine \/Applications\/Kiln\.app/, `${label}: macOS quarantine command`);
+  assert.match(await note('linux'), new RegExp(`chmod \\+x Kiln-${version}-x86_64\\.AppImage`), `${label}: AppImage chmod`);
+  assert.match(await note('linux'), new RegExp(`sudo apt install \\./kiln_${version}_amd64\\.deb`), `${label}: deb install`);
+  assert.match(await note('linux'), /--no-sandbox/, `${label}: Linux sandbox note`);
+  for (const os of ['mac', 'linux']) assert.match(await note(os), /untested/, `${label}: ${os} build marked untested`);
   assert.doesNotMatch(await page.locator('body').innerText(), /private GitHub repository|account that has access/, `${label}: no private-repository note`);
   assert.ok(await page.locator(`#download a[href="${repository}/releases"]`).count() >= 1, `${label}: link to all releases`);
   assert.ok(await page.locator(`a[href="${kofi}"]`).count() >= 1, `${label}: Ko-fi link`);
@@ -63,6 +95,49 @@ async function checkStatic({ page, label }) {
   assert.equal(await page.locator('.hero-sponsor a').getAttribute('href'), kofi, `${label}: hero sponsor link`);
   for (const href of supportLinks) assert.equal(href, supportUrl, `${label}: support link resolves under the base path`);
   assert.equal(await page.locator('.site-footer').count(), 1, `${label}: footer`);
+}
+
+/** The hero and closing buttons and the footer link offer `key`; the other files are listed beside it and this platform's notes come first. */
+async function checkDownload({ page, label }, key) {
+  const buttons = await page.locator('a.download-button').evaluateAll(links => links.map(link => ({ href: link.href, key: link.dataset.download, text: link.innerText })));
+  assert.equal(buttons.length, 2, `${label}: hero and closing download buttons`);
+  const name = { windows: 'Windows', mac: 'macOS', linux: 'Linux' }[osOf(key)];
+  for (const button of buttons) {
+    assert.equal(button.href, files[key], `${label}: download button offers ${key}`);
+    assert.equal(button.key, key, `${label}: download button key`);
+    assert.match(button.text, new RegExp(`for ${name}$`), `${label}: download button names ${name}`);
+  }
+  assert.match(await page.locator('#download [data-download-file]').innerText(), new RegExp(files[key].split('/').pop().replaceAll('.', '\\.')), `${label}: file name under the button`);
+  const others = await page.locator('#download a[data-download-other]').evaluateAll(links => links.map(link => link.href));
+  assert.deepEqual([...others].sort(), Object.entries(files).filter(([k]) => k !== key).map(([, url]) => url).sort(), `${label}: other platforms beside the button`);
+  assert.equal(await page.locator('#download [data-install-note]').first().getAttribute('data-install-note'), osOf(key), `${label}: ${name} notes first`);
+  assert.equal(await page.locator('.site-footer a[data-download]').getAttribute('href'), files[key], `${label}: footer download link`);
+}
+
+/** The download button follows the visitor's platform: spoofed user agents, with and without the browser saying which Mac chip it has. */
+async function checkPlatforms() {
+  const cases = [
+    ['Windows', { userAgent: agents.windows }, 'windows'],
+    ['macOS, chip unknown', { userAgent: agents.mac, userAgentData: null }, 'mac-arm64'],
+    ['macOS, Apple silicon', { userAgent: agents.mac, userAgentData: { platform: 'macOS', architecture: 'arm' } }, 'mac-arm64'],
+    ['macOS, Intel', { userAgent: agents.mac, userAgentData: { platform: 'macOS', architecture: 'x86' } }, 'mac-x64'],
+    ['Linux', { userAgent: agents.linux, userAgentData: null }, 'appimage'],
+    ['phone', { userAgent: agents.phone, userAgentData: null }, 'windows'],
+  ];
+  for (const [name, spoof, key] of cases) {
+    const run = await open(1440, 'reduce', base, spoof);
+    run.label = `${name} user agent`;
+    // The Intel switch happens once the browser answers; wait for it rather than racing it.
+    if (key === 'mac-x64') await run.page.locator('a.download-button[data-download="mac-x64"]').first().waitFor({ state: 'attached', timeout: 3000 });
+    await checkDownload(run, key);
+    assert.deepEqual(run.errors, [], `${run.label}: page errors`);
+    await run.context.close();
+    const support = await open(390, 'reduce', supportUrl, spoof);
+    if (key === 'mac-x64') await support.page.locator('.site-footer a[data-download="mac-x64"]').waitFor({ state: 'attached', timeout: 3000 });
+    assert.equal(await support.page.locator('.site-footer a[data-download]').getAttribute('href'), files[key], `${name} user agent: support page footer download`);
+    await support.context.close();
+    console.log(`ok  ${name} user agent offers ${files[key].split('/').pop()}`);
+  }
 }
 
 /** The support page: same header and footer, the Ko-fi button, the other ways to help, and working links back to the homepage. */
@@ -254,6 +329,7 @@ try {
     await run.context.close();
     console.log(`ok  ${run.label}, support page`);
   }
+  await checkPlatforms();
   for (const width of [390, 1440]) {
     const run = await open(width, 'no-preference');
     await checkMotion(run);

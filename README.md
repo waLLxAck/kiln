@@ -4,19 +4,49 @@
 
 # Kiln
 
-A local desktop workbench for prompts and agent skills. Capture useful material, test an exact revision, record a decision, and install an approved snapshot into Codex, Claude Code or GitHub Copilot. Windows is the current packaged release target.
+A local desktop workbench for prompts and agent skills. Capture useful material, test an exact revision, record a decision, and install an approved snapshot into Codex, Claude Code or GitHub Copilot. Kiln is a desktop app for Windows, macOS and Linux; the macOS and Linux builds are new in 0.18.1 and have not been tested on real machines yet.
 
 Kiln is for developers who want to keep useful agent workflows, understand which versions they have tested, and reuse approved skills across projects and machines. The desktop app and CLI share one library and the same approval rules. Kiln is free and MIT licensed; managed agent interactions use your installed, signed-in Codex or Claude Code CLI and its account usage.
 
-**[Website](https://wallxack.github.io/kiln/)** · **[Download for Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.0/Kiln.Setup.0.18.0.exe)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
+**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln.Setup.0.18.1.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
 
 ## Download
 
-[Download Kiln 0.18.0 for Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.0/Kiln.Setup.0.18.0.exe) (`Kiln.Setup.0.18.0.exe`). Earlier versions and release notes are on the [releases page](https://github.com/waLLxAck/kiln/releases).
+Kiln 0.18.1 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`.
 
-The installer is unsigned, so Windows SmartScreen may warn you before it runs: choose **More info**, then **Run anyway**. If you would rather not run an unsigned installer, [build Kiln from source](#build-from-source).
+| Platform | File | Status |
+| --- | --- | --- |
+| Windows (x64) | [`Kiln.Setup.0.18.1.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln.Setup.0.18.1.exe) | Supported |
+| macOS, Apple silicon | [`Kiln-0.18.1-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-arm64.zip)) | New, untested |
+| macOS, Intel | [`Kiln-0.18.1-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x64.zip)) | New, untested |
+| Linux (x64) | [`Kiln-0.18.1-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/Kiln-0.18.1-x86_64.AppImage) or [`kiln_0.18.1_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.18.1/kiln_0.18.1_amd64.deb) | New, untested |
 
-The installer is per-user and lets you choose the installation folder. To use Kiln you also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in: first launch creates or opens your Kiln repository on GitHub. Managed runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH.
+"Untested" means the macOS and Linux builds are built, inspected and started once on GitHub's CI runners, but nobody has used them on a real Mac or Linux desktop yet. Please [report what breaks](https://github.com/waLLxAck/kiln/issues). If you would rather not run an unsigned build, [build Kiln from source](#build-from-source).
+
+**Windows.** The installer is unsigned, so Windows SmartScreen may warn you before it runs: choose **More info**, then **Run anyway**. It installs per user and lets you choose the installation folder.
+
+**macOS.** Open the disk image and drag Kiln to Applications. The app is ad-hoc signed (so it runs on Apple silicon) but not notarized by Apple, so Gatekeeper blocks the first launch. Right-click Kiln in Applications and choose **Open**; on macOS 15 and later, try to open it once, then choose **Open Anyway** in System Settings → Privacy & Security. Alternatively, clear the quarantine flag in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Kiln.app
+```
+
+**Linux.** Either make the AppImage executable and run it (AppImages need FUSE 2: `libfuse2`, or `libfuse2t64` on Ubuntu 24.04):
+
+```sh
+chmod +x Kiln-0.18.1-x86_64.AppImage
+./Kiln-0.18.1-x86_64.AppImage
+```
+
+or install the Debian/Ubuntu package, which adds Kiln to the applications menu (the package is named `kiln-workbench`; remove it with `sudo apt remove kiln-workbench`):
+
+```sh
+sudo apt install ./kiln_0.18.1_amd64.deb
+```
+
+Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chromium's sandbox uses. When they are unavailable, the AppImage's launcher starts Kiln with `--no-sandbox`, so the renderer runs without Chromium's sandbox. If Kiln still exits with a sandbox error, start it with `./Kiln-0.18.1-x86_64.AppImage --no-sandbox`. The .deb installs an AppArmor profile meant to keep the sandbox on. Kiln itself never turns the sandbox off.
+
+To use Kiln you also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in: first launch creates or opens your Kiln repository on GitHub. Managed runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH.
 
 ## What Kiln offers
 
@@ -40,7 +70,7 @@ This README is the product reference for the app and the [marketing site](https:
 | Configuration editor | Discover and edit agent instructions, settings, permissions, MCP configuration, hooks and shell profiles. Validate supported syntax, compare backups, restore versions and detect stale edits. |
 | Git and GitHub | Create or open a Kiln repository, inspect changes, checkpoint, synchronize and resolve conflicts. GitHub access uses the official `gh` CLI. |
 | CLI | Script collections, items, experiments, approvals, installation and library operations through structured JSON results and the same domain code as the desktop. |
-| Desktop preferences | Choose theme and agent defaults, resize panels, configure quick search and startup behavior, inspect local performance logs, and prepare/restart into a newer Windows installer. |
+| Desktop preferences | Choose theme and agent defaults, resize panels, configure quick search and startup behavior, inspect local performance logs, and, on Windows, prepare/restart into a newer installer. |
 
 ## The problems behind the workflow
 
@@ -86,7 +116,7 @@ These are the factual basis for the marketing site. Its interactive skills panel
 - Managed agent runs support Codex and Claude Code. Copilot supports skills and agent-definition import/installation, not built-in experiment execution.
 - Automated capture and experiments request read-only access. Item chat has broader file and command access. Agent interactions use the official clients and show a consent notice; normal editing, approval and installation do not invoke a model.
 - Local run folders hold private inputs and transcripts. Normal export/publishing excludes reserved session data and machine-specific paths; authored text and arbitrary attachments are not automatically secret-redacted.
-- SSH execution, remote deployment and a remote machine dashboard are not implemented. Windows installers are unsigned and the full Windows release matrix is not certified.
+- SSH execution, remote deployment and a remote machine dashboard are not implemented. Windows installers are unsigned and the full Windows release matrix is not certified. macOS builds are ad-hoc signed and not notarized; the macOS and Linux builds have not been tested on real machines.
 
 ## Core workflow
 
@@ -100,9 +130,9 @@ First launch walks through connecting GitHub and creating or opening your Kiln r
 
 ## Open the app
 
-After installing, start Kiln from its Start Menu or Desktop shortcut. If you built it yourself, run `release/0.18.0/win-unpacked/Kiln.exe` or install the setup executable from `release/0.18.0`; keep the unpacked executable beside its supporting files. Closing the window keeps Kiln in the tray; use **Quit Kiln** to exit. The default quick-search shortcut is **Ctrl+Shift+Space** and can be changed in Settings.
+After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage or your applications menu on Linux. If you built it yourself, run `release/0.18.1/win-unpacked/Kiln.exe` or install the setup executable from `release/0.18.1`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages. Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Kiln** there to exit, or Cmd+Q on macOS. Linux desktops without a tray (GNOME without an AppIndicator extension) show no icon: quit from **File → Quit** (press Alt to show the menu bar), and opening Kiln again brings the window back. The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.18.0](docs/releases/0.18.0.md).
+See [what changed in 0.18.1](docs/releases/0.18.1.md).
 
 ## Use a library
 
@@ -162,7 +192,7 @@ The marketing homepage is a founder’s printout reviewed in red pen: skill fold
 
 The site is published at [wallxack.github.io/kiln](https://wallxack.github.io/kiln/) by the [Pages workflow](.github/workflows/pages.yml) on every push to `main`. It installs only the marketing workspace and builds with `BASE_PATH=/kiln/`; set the same variable locally to check a build served under that path.
 
-Requirements: Windows, Node.js 24 LTS (22.16 or newer), npm, Git. GitHub features additionally require GitHub CLI. Official Codex/Claude clients are optional for manual handoffs; Kiln does not store their authentication or request a model API key.
+Requirements: Windows, macOS or Linux, Node.js 24 LTS (22.16 or newer), npm, Git. GitHub features additionally require GitHub CLI. Official Codex/Claude clients are optional for manual handoffs; Kiln does not store their authentication or request a model API key.
 
 ```powershell
 npm ci
@@ -171,8 +201,12 @@ npm run check
 npm test
 npm run test:desktop
 npm run package
-npm run dist:win
+npm run dist:win     # on Windows: release/Kiln Setup <version>.exe
+npm run dist:mac     # on macOS: arm64 and x64 .dmg and .zip
+npm run dist:linux   # on Linux: .AppImage and .deb
 ```
+
+Each installer builds on its own platform; `.github/workflows/release.yml` builds all three on GitHub's runners.
 
 `npm run test:desktop` runs isolated Electron tests. The real-install test is skipped by default and must be explicitly enabled; it should only be run against an authorized machine. Build outputs and local verification evidence are ignored by Git.
 
@@ -198,7 +232,7 @@ After building, `npm link` makes both `kiln` and `workbench` available through n
 
 ## Release scope
 
-This is the local workflow release, with GitHub onboarding and standardized migration. Managed Codex capture and experiment runs are supported. SSH execution remains unimplemented. External client hooks can be edited in Config files; Kiln does not execute them itself. The full Windows release matrix has not been certified. Windows builds are unsigned.
+This is the local workflow release, with GitHub onboarding and standardized migration. Managed Codex capture and experiment runs are supported. SSH execution remains unimplemented. External client hooks can be edited in Config files; Kiln does not execute them itself. The full Windows release matrix has not been certified. Windows builds are unsigned. The macOS and Linux builds are new in 0.18.1 and untested on real machines; the Mac build is ad-hoc signed and not notarized.
 
 See [implementation and verification](docs/IMPLEMENTATION.md), [architecture](docs/ARCHITECTURE.md), and [third-party notices](THIRD_PARTY.md).
 
@@ -206,7 +240,7 @@ See [implementation and verification](docs/IMPLEMENTATION.md), [architecture](do
 
 Drag the dividers beside the navigation sidebar and skill list to resize them. Widths are saved on this machine. Focus a divider and use arrow keys (20 px), Home, or End for keyboard resizing.
 
-Settings → Open performance logs opens the local `logs` folder under Electron's user-data directory (normally `%APPDATA%/kiln-workbench/logs`). Isolated profiles use their own logs folder. `performance.jsonl` records request start/end/error codes, background queue and execution timings, requests still pending after two seconds, renderer tasks over 100 ms, event-loop delays over 500 ms, unresponsive/recovered windows, renderer exits, and CPU/memory samples every 15 seconds. One previous 5 MB log is retained as `performance.jsonl.1`. Nothing is uploaded. Request arguments, skill bodies, and credentials are excluded.
+Settings → Open performance logs opens the local `logs` folder under Electron's user-data directory (normally `%APPDATA%/kiln-workbench/logs` on Windows, `~/Library/Application Support/kiln-workbench/logs` on macOS and `~/.config/kiln-workbench/logs` on Linux). Isolated profiles use their own logs folder. `performance.jsonl` records request start/end/error codes, background queue and execution timings, requests still pending after two seconds, renderer tasks over 100 ms, event-loop delays over 500 ms, unresponsive/recovered windows, renderer exits, and CPU/memory samples every 15 seconds. One previous 5 MB log is retained as `performance.jsonl.1`. Nothing is uploaded. Request arguments, skill bodies, and credentials are excluded.
 
 After a freeze, inspect the timestamps and match `requestId` or backend `id` across records. `backend.slow` is recorded by the main process while the worker is still busy. `queueMs` distinguishes waiting from execution. A renderer stall is recorded on recovery; Electron's unresponsive event can report a window that has not recovered. Main-loop stalls are recorded after recovery. A forced process kill or machine shutdown can prevent the final events from reaching disk. Logs diagnose symptoms; they do not guarantee a record of every OS-level hang.
 
@@ -232,17 +266,19 @@ When an older library opens, legacy session-bearing revisions are archived in ma
 
 ## Updating the installed app
 
-If you installed Kiln from GitHub, update by downloading and running the newer installer from the [releases page](https://github.com/waLLxAck/kiln/releases). The in-app flow below is for builds made from a local checkout.
+If you installed Kiln from GitHub, update by downloading and running the newer installer from the [releases page](https://github.com/waLLxAck/kiln/releases). The in-app flow below is for Windows builds made from a local checkout.
+
+On macOS and Linux, Kiln doesn't update itself: Settings → Updates links to the releases page. Replace `Kiln.app` in Applications with the new one, replace the AppImage file, or `sudo apt install` the new .deb.
 
 Every build records where it was made. Kiln watches that repository's `release` folder (top level or one folder down) for a newer `Kiln Setup <version>.exe`. Checks run on startup and window focus. **Prepare update** copies the installer into Kiln's private update cache and verifies it while the app stays open. A progress indicator becomes **Restart to update** when ready. Preparation never launches the installer; closing Kiln normally does not install it, and the ready state survives reopening even if the original release folder disappears.
 
-Only **Restart to update** verifies the cached installer again, starts it silently for the current user, and quits Kiln so Windows can replace the running files. The installer then relaunches Kiln. Save your work before restarting. If verification or starting the installer fails, Kiln stays open and offers a retry. Settings → Updates can choose a different source folder or stop checking. Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they don't watch for local builds. Pushing a version tag such as `v0.18.0` runs `.github/workflows/release.yml`, which builds the installer on a Windows runner and publishes it with the notes from `docs/releases/`. Updates started from an older Kiln release still follow that release's update flow; the two-step flow starts after installing 0.8.1.
+Only **Restart to update** verifies the cached installer again, starts it silently for the current user, and quits Kiln so Windows can replace the running files. The installer then relaunches Kiln. Save your work before restarting. If verification or starting the installer fails, Kiln stays open and offers a retry. Settings → Updates can choose a different source folder or stop checking. Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they don't watch for local builds. Pushing a version tag such as `v0.18.1` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from `docs/releases/`. Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing. Updates started from an older Kiln release still follow that release's update flow; the two-step flow starts after installing 0.8.1.
 
 ## Quick capture and agent runs
 
 Use the import area or Ctrl+N, paste/drop content or select files, then choose **Analyze and add**. **Save only** keeps the original text and attachments immediately without calling an agent or fetching captions. **Analyze and add** uses the same analysis as a YouTube video. Kiln preserves your original source and asks your default agent to create reusable prompts, insights, techniques, tools and resources in a collection, linked back to that source. Unreadable sources and unsupported files are reported instead of guessed. Mixed files stay together on the source item. Failed starts can be retried without creating another copy. Existing captures are not automatically reprocessed.
 
-Codex runs need the native Codex CLI on PATH with `codex login status` reporting ChatGPT. Claude Code runs use `claude -p --output-format stream-json --json-schema` with Read/Glob/Grep and read-only WebFetch/WebSearch tools, none of your settings, hooks or MCP servers, and the client's own sign-in; if a headless run reports an expired session, run `claude` once in a terminal. Kiln uses `codex exec --json --output-schema` with a read-only sandbox. Capture runs use an isolated working folder; experiments can use a selected local project as their working directory. Runs use existing CLI authentication with unrelated user tool configuration excluded. No API key is requested. Capture sends the selected input to the chosen agent; diagnostic logs themselves are local. See [official non-interactive CLI documentation](https://learn.chatgpt.com/docs/non-interactive-mode) and [authentication](https://learn.chatgpt.com/docs/auth).
+Codex runs need the native Codex CLI on PATH with `codex login status` reporting ChatGPT. Apps opened from the macOS Dock or a Linux launcher get a minimal PATH, so packaged Kiln on those platforms takes PATH from your login shell (nvm, mise, Homebrew and similar setups) and also looks in `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.volta/bin`, `~/.bun/bin` and `~/.claude/local`. Claude Code runs use `claude -p --output-format stream-json --json-schema` with Read/Glob/Grep and read-only WebFetch/WebSearch tools, none of your settings, hooks or MCP servers, and the client's own sign-in; if a headless run reports an expired session, run `claude` once in a terminal. Kiln uses `codex exec --json --output-schema` with a read-only sandbox. Capture runs use an isolated working folder; experiments can use a selected local project as their working directory. Runs use existing CLI authentication with unrelated user tool configuration excluded. No API key is requested. Capture sends the selected input to the chosen agent; diagnostic logs themselves are local. See [official non-interactive CLI documentation](https://learn.chatgpt.com/docs/non-interactive-mode) and [authentication](https://learn.chatgpt.com/docs/auth).
 
 **Test** opens a provider selector, a **Project / repository** selector and an optional context box. Choose an enrolled project, use **Choose project folder…** for any local repository or directory, or keep **No project — isolated example**. Enrollment is not required to test a folder. The selected directory becomes the actual working directory for Codex or Claude Code; experiments remain read-only, so tasks requiring edits or unavailable tools are reported as uncertain. The last managed experiment’s project is offered again for that item. **Manual handoff instead** keeps your selection and tells you where to start the external session.
 

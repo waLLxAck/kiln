@@ -485,6 +485,13 @@ a.timestamp:hover { background: #fbe0e0; }
 .get-kiln h2 { font-size: clamp(30px, 3.2vw, 46px); line-height: 1.02; font-weight: 700; margin-bottom: 16px; }
 .get-kiln > p { max-width: 48ch; margin-bottom: 24px; }
 .fine { max-width: 60ch !important; margin: 18px 0 0 !important; font-size: 13.5px; color: var(--muted); }
+.download-file { margin: 10px 0 0 !important; font: 400 13px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.download-others { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 12px 0 0 !important; font-size: 14.5px; color: var(--muted); }
+.download-others a { text-underline-offset: .25em; }
+.install-notes { margin-top: 8px; }
+.install-notes .fine { margin-top: 10px !important; }
+.install-notes b { color: var(--text); }
+.install-notes code { overflow-wrap: anywhere; line-height: 1.5; }
 .faq { display: grid; gap: 18px; margin: 0; align-content: start; }
 .faq div { padding-top: 14px; border-top: 1px solid #3a2a1424; }
 .faq dt { font-weight: 600; color: var(--ink); margin-bottom: 4px; }

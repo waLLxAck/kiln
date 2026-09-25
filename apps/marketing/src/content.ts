@@ -3,10 +3,38 @@
 
 // ---------- links ----------
 // Every external link the site uses. To change where donations go, edit `kofi`.
-export const version = '0.18.0';
+export const version = '0.18.1';
 export const repository = 'https://github.com/waLLxAck/kiln';
 export const releases = `${repository}/releases`;
-export const installer = `${releases}/download/v${version}/Kiln.Setup.${version}.exe`;
+const assets = `${releases}/download/v${version}`;
+
+// ---------- downloads ----------
+// One file per platform, all from the same release. The macOS and Linux builds are new and have not been tested on real machines.
+export type Os = 'windows' | 'mac' | 'linux';
+export type Download = { key: 'windows' | 'mac-arm64' | 'mac-x64' | 'appimage' | 'deb'; os: Os; label: string; detail: string; file: string; url: string };
+const file = (key: Download['key'], os: Os, label: string, detail: string, name: string): Download => ({ key, os, label, detail, file: name, url: `${assets}/${name}` });
+export const downloads: Download[] = [
+  file('windows', 'windows', 'Windows', 'installer', `Kiln.Setup.${version}.exe`),
+  file('mac-arm64', 'mac', 'macOS, Apple silicon', 'disk image', `Kiln-${version}-arm64.dmg`),
+  file('mac-x64', 'mac', 'macOS, Intel', 'disk image', `Kiln-${version}-x64.dmg`),
+  file('appimage', 'linux', 'Linux', 'AppImage', `Kiln-${version}-x86_64.AppImage`),
+  file('deb', 'linux', 'Debian and Ubuntu', '.deb', `kiln_${version}_amd64.deb`),
+];
+export const download = (key: Download['key']) => downloads.find(d => d.key === key)!;
+export const osName: Record<Os, string> = { windows: 'Windows', mac: 'macOS', linux: 'Linux' };
+/** The visitor's desktop OS from the user agent. Phones and tablets, and anything unrecognised, get null. */
+export function detectOs(userAgent: string): Os | null {
+  if (/iPhone|iPad|iPod|Android/i.test(userAgent)) return null;
+  if (/Windows/i.test(userAgent)) return 'windows';
+  if (/Macintosh|Mac OS X/i.test(userAgent)) return 'mac';
+  if (/Linux|X11|CrOS/i.test(userAgent)) return 'linux';
+  return null;
+}
+/** The file the main download button offers: Apple silicon for Macs (browsers rarely say which chip), the AppImage for Linux, and the Windows installer otherwise. */
+export function primaryDownload(userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent): Download {
+  const os = detectOs(userAgent);
+  return download(os === 'mac' ? 'mac-arm64' : os === 'linux' ? 'appimage' : 'windows');
+}
 export const issues = `${repository}/issues`;
 export const licence = `${repository}/blob/main/LICENSE`;
 export const kofi = 'https://ko-fi.com/wallxack';
