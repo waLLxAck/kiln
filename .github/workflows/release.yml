@@ -16,11 +16,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run check
+      # Tests make Git commits and temporary folders: give them an identity and a temp folder outside any repository.
+      - run: git config --global user.name "Kiln CI" && git config --global user.email "ci@users.noreply.github.com"
       - run: npm test
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
       - run: npm run dist:win
         env:
           KILN_PUBLIC_BUILD: '1'
