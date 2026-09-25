@@ -127,10 +127,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Outside the checkout: the repository has its own assets/ folder, which must not end up in the release.
       - uses: actions/download-artifact@v4
         with:
           pattern: kiln-*
-          path: assets
+          path: ${{ runner.temp }}/release
           merge-multiple: true
       - name: Publish the release
         env:
@@ -138,7 +139,8 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
-          cd assets
+          notes="$PWD/docs/releases/$version.md"
+          cd "$RUNNER_TEMP/release"
           sha256sum -- * > ../SHA256SUMS.txt && mv ../SHA256SUMS.txt .
           cat SHA256SUMS.txt
-          gh release create "v$version" --title "Kiln $version" --notes-file "../docs/releases/$version.md" *
+          gh release create "v$version" --title "Kiln $version" --notes-file "$notes" *
