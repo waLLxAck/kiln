@@ -30,6 +30,22 @@ function downloadBlock() {
       <div class="install-notes">${order.map(os => `<p class="fine" data-install-note="${os}">${installNotes[os](fileOf)}</p>`).join('')}</div>`;
 }
 
+/** Three real screenshots of the app, taped to the page, so the sheets above aren't the only picture of it. */
+const shots = [
+  { file: 'skill-installs', alt: 'Kiln showing the code-review skill: install switches for the Agents and Claude folders, and the Claude copy flagged as edited outside Kiln.', note: 'one skill, a switch per folder. the Claude copy was edited by hand.' },
+  { file: 'video-distilled', alt: 'A YouTube video in Kiln, distilled into a prompt, techniques, an insight and a tool, each linked to its minute in the video.', note: 'a video, turned into a prompt and the bits worth keeping.' },
+  { file: 'experiment-result', alt: 'A Claude Code experiment in Kiln: the prompt tested read-only on a local project, with the agent’s output and a pass verdict.', note: 'the prompt, tested on my own repo. read-only, and it passed.' },
+];
+function screenshotsMarkup() {
+  return `<section class="sheet screenshots" id="screenshots" aria-labelledby="screenshots-title">
+    <div class="sheet-head"><h2 id="screenshots-title">And here’s the real app.</h2><p>Screenshots of Kiln on Windows, with a made-up library. The agent’s replies in them are scripted.</p></div>
+    <ul class="shots">${shots.map((shot, index) => {
+      const url = new URL(`./screenshots/${shot.file}.webp`, import.meta.url).href;
+      return `<li style="--r:${[-1.2, .8, -.6][index]}deg"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${shot.alt}" width="1440" height="900" loading="lazy" decoding="async"></a><p class="shot-note">${shot.note}</p></li>`;
+    }).join('')}</ul>
+  </section>`;
+}
+
 function closing() {
   const faq = [
     ['Do I need an API key?', 'No. Kiln drives the Codex or Claude Code you’re already signed into, on your ChatGPT or Claude plan. Its usage limits still apply. Editing, approving and installing never call a model.'],
@@ -62,6 +78,7 @@ export function renderHome(root: HTMLElement) {
       </section>
       ${foldersMarkup()}
       ${newSkillsMarkup()}
+      ${screenshotsMarkup()}
       ${closing()}
     </main>
     ${siteFooter()}

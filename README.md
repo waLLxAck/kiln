@@ -10,6 +10,21 @@ Kiln is for developers who want to keep useful agent workflows, understand which
 
 **[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln.Setup.0.18.2.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.18.2/Kiln-0.18.2-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
 
+## Screenshots
+
+![Kiln showing the code-review skill: an install switch per folder, and the Claude copy flagged as edited outside Kiln](docs/screenshots/skill-installs.png)
+
+One skill, a switch per install location, and every folder it's in, including a copy edited outside Kiln.
+
+| | |
+| --- | --- |
+| ![A YouTube video distilled into a prompt, techniques, an insight and a tool](docs/screenshots/video-distilled.png) | ![A prompt tested read-only on a local project, with a pass verdict](docs/screenshots/experiment-result.png) |
+| A video distilled into a prompt, techniques, an insight and a tool, each linked to its minute. | The prompt tested read-only on your own project, with the agent's verdict for that exact revision. |
+| ![An older copy of a skill compared line by line with the approved version](docs/screenshots/drift-compare.png) | ![Agent instructions, permissions and hooks in one editor](docs/screenshots/config-files.png) |
+| An older copy found in another folder, compared with the approved version. | Agent instructions, permissions and hooks in one editor, with previous versions. |
+
+Screenshots of Kiln on Windows with a made-up library; the agent's replies in them are scripted. [All screenshots and how they're made](docs/screenshots/).
+
 ## Download
 
 Kiln 0.18.2 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`.

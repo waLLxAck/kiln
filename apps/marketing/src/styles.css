@@ -481,6 +481,16 @@ a.timestamp:hover { background: #fbe0e0; }
 .skill-chip { position: fixed; z-index: 1000; padding: 3px 9px; border-radius: 5px; background: var(--landed); box-shadow: 0 10px 20px -10px #3a2a1488; font: 600 14px/1.2 var(--sans); color: var(--ink); white-space: nowrap; pointer-events: none; will-change: transform; }
 
 /* ---------- closing: download and questions ---------- */
+/* ---------- screenshots of the real app, taped on ---------- */
+.shots { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px 28px; }
+.shots li { position: relative; transform: rotate(var(--r)); transition: transform .35s cubic-bezier(.2, .8, .2, 1); }
+.shots li:hover { transform: rotate(0) translateY(-3px); }
+.shots li::before { content: ''; position: absolute; z-index: 1; top: -11px; left: 50%; width: 92px; height: 24px; margin-left: -46px; background: #efe3c3cc; box-shadow: 0 1px 2px #3a2a1422; transform: rotate(calc(var(--r) * -2)); }
+.shots a { display: block; border: 1px solid #1f1c1826; background: #fff; box-shadow: 0 18px 34px -22px #3a2a1488; }
+.shots img { display: block; width: 100%; height: auto; }
+.shot-note { margin-top: 12px; font: 600 20px/1.12 var(--hand); color: var(--red); }
+@media (max-width: 900px) { .shots { grid-template-columns: minmax(0, 1fr); gap: 40px; } }
+
 .closing { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 40px 64px; max-width: 1360px; margin: 72px auto 0; padding: 52px 56px; background: var(--sheet); box-shadow: 0 1px 0 #3a2a140f, 0 26px 50px -36px #3a2a1470; }
 .get-kiln h2 { font-size: clamp(30px, 3.2vw, 46px); line-height: 1.02; font-weight: 700; margin-bottom: 16px; }
 .get-kiln > p { max-width: 48ch; margin-bottom: 24px; }
