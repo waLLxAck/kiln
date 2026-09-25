@@ -22,6 +22,10 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
   const row = (title: string) => page.locator('.item-card').filter({ has: page.locator('.item-title', { hasText: exact(title) }) }).first();
   await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible({ timeout: 60_000 });
+  // A slightly narrower list, as if its divider had been dragged, gives the detail pane room for paths and run details.
+  await page.evaluate(() => localStorage.setItem('kiln-list-width', '540'));
+  await page.reload();
+  await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible({ timeout: 60_000 });
 
   // 1. A skill with its install locations.
   await page.getByRole('tab', { name: /^Skills/ }).click();

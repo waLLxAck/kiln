@@ -56,13 +56,13 @@ if (input.includes('You are the assistant inside Kiln')) {
       () => say('With ?profile=demo, useProfile returns the demo profile, so Start skips ParentGate and renders Levels.'),
       () => use('Glob', { pattern: 'src/screens/*.tsx' }),
       () => use('Read', { file_path: file('src/screens/Levels.tsx') }),
-      () => use('Read', { file_path: file('src/screens/Shop.tsx') }),
+      () => use('Read', { file_path: file('AGENTS.md') }),
       () => say('The first thing a player meets on Levels is the play control, and it has no text.'),
     ];
     output = {
       judgement: 'pass',
       note: 'Found a concrete first obstacle with a file reference and a one-line fix, using read access only. Judged from the code; the app was not run.',
-      output: 'Used the demo profile from README.md (“Local testing → Demo profile”). With ?profile=demo, src/save/profile.ts returns the demo profile, so Start renders Levels without the parent gate.\n\nFirst obstacle: on Levels, the play control is an icon with no label (src/screens/Levels.tsx:4, <IconButton icon="triangle" />). A seven-year-old who does not read the triangle as “play” has no other cue for what starts a level. AGENTS.md already asks for a visible text label on every button.\n\nSuggested fix: put the word “Play” under the icon and make the whole level card tappable.\n\nNot reached: Shop is behind ParentGate (“Ask a grown-up”), which is expected for a children’s app.\n\nNo files were changed.',
+      output: 'Used the demo profile from README.md (“Local testing → Demo profile”). With ?profile=demo, src/save/profile.ts returns the demo profile, so Start renders Levels without the parent gate.\n\nFirst obstacle: on Levels, the play control is an icon with no label (src/screens/Levels.tsx:4, <IconButton icon="triangle" />). A seven-year-old who does not read the triangle as “play” has no other cue for what starts a level. AGENTS.md already asks for a visible text label on every button.\n\nSuggested fix: put the word “Play” under the icon and make the whole level card tappable.\n\nNo files were changed.',
     };
     usage = { input_tokens: 38950, cache_read_input_tokens: 27600, output_tokens: 1210 };
   } else {
