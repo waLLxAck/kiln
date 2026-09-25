@@ -655,7 +655,7 @@ button[aria-busy=true]::after { content: ''; display: inline-block; width: 12px;
 
 /* Agent run visibility: what model ran, how long, what it did */
 .eyebrow > span { display: inline-flex; align-items: center; gap: 4px; }
-.eyebrow > .detail-source { display: inline-block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; font-weight: 500; font-family: var(--mono); }
+.detail-meta .detail-source { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
 .run-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
 .run-meta span:first-child { color: var(--text-2); font-weight: 600; }
 .run-meta code { font-size: 11px; }

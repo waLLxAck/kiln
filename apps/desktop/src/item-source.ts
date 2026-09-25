@@ -37,11 +37,19 @@ export const sharedTitleIds = (items: Item[]) => titleGroups(items).flat().map(i
  * source recorded on this machine at import (the shared source keeps only the folder name). A group whose sources all read the
  * same gets no label.
  */
-export function titleCollisions(items: Item[], home = '', origins: Record<string, string> = {}): Map<string, string> {
-  const labels = new Map<string, string>();
+export function titleCollisions(items: Item[], home = '', origins: Record<string, string> = {}): Map<string, { label: string; full: string }> {
+  const labels = new Map<string, { label: string; full: string }>();
   for (const group of titleGroups(items)) {
     const sources = group.map(item => sourceLabel(origins[item.id] ?? item.source, home));
-    if (new Set(sources).size > 1) group.forEach((item, index) => labels.set(item.id, sources[index]));
+    if (new Set(sources).size < 2) continue;
+    // Long folder names (such as synced/<uuid>) are cut short, unless that would make two labels read the same.
+    const short = sources.map(shortenSegments), labelsFor = new Set(short).size === new Set(sources).size ? short : sources;
+    group.forEach((item, index) => labels.set(item.id, { label: labelsFor[index], full: sources[index] }));
   }
   return labels;
 }
+/** Every path segment over 16 characters becomes its first 8 and an ellipsis: `synced/be0098eb-8b95-…` reads `synced/be0098eb…`. */
+export const shortenSegments = (label: string) => label.split(/([\\/])/).map(part => part.length > 16 ? `${part.slice(0, 8)}…` : part).join('');
+
+/** "A", "A and B", "A, B and C". */
+export const joinAnd = (parts: string[]) => parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;

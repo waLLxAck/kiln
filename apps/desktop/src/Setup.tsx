@@ -8,6 +8,7 @@ import { LocalAgentsDialog, LocalSkillsDialog, RepositorySkillsDialog } from './
 
 import { SkillLocationSettings, ScanDialog } from './Skills';
 import { unmanagedSourceFolders } from './skill-folders';
+import { joinAnd } from './item-source';
 import { skillLocationLabel } from '../../../packages/providers/skill-locations';
 
 type Repo = { nameWithOwner: string; url: string; isPrivate: boolean; description: string };
@@ -40,7 +41,7 @@ export function Setup({ snapshot, previous, onAttach, onRefresh, providers, onSe
   const unmanaged = unmanagedSourceFolders(sources, providers, snapshot.targets);
   const manageSources = () => run('locations', async () => {
     for (const folder of unmanaged) await onSetLocation(folder.provider, true, folder.native);
-    setManaged(`Kiln now manages ${unmanaged.map(f => f.folder).join(' and ')}. Nothing was installed or changed; the copies already there show as found.`);
+    setManaged(`Kiln now manages ${joinAnd(unmanaged.map(f => f.folder))}. Nothing was installed or changed; identical copies already there show as found.`);
   });
   const ready = snapshot.repository.ready;
   const [changing, setChanging] = useState(false);
@@ -127,7 +128,7 @@ export function Setup({ snapshot, previous, onAttach, onRefresh, providers, onSe
     <section className={`setup-step ${ready ? '' : 'disabled'}`}><div className="setup-step-head">{step(4, imported.length > 0)}<h2>Bring in the skills and agents you already have <small>optional</small></h2></div>
       <p>Everything comes in as a draft; approve the ones you want on GitHub. Nothing is moved or deleted where it lives now.</p>
       {imported.map(line => <div className="notice success" key={line}><Check size={14} /> {line}</div>)}
-      {unmanaged.length > 0 && <div className="notice" data-testid="manage-sources"><b>Manage these folders so Kiln can show the copies already there</b><p>Kiln doesn’t manage {unmanaged.map((f, i) => <span key={f.folder}>{i ? ' and ' : ''}<code>{f.folder}</code></span>)} yet, so the skills you imported from there read “Not installed”. Managing a folder only lets Kiln recognise what is in it: nothing is installed, moved or changed. You can turn this off in step 3 or in Settings.</p><button className="button primary" disabled={!ready || Boolean(busy)} onClick={manageSources}>{unmanaged.length === 1 ? `Manage the ${skillLocationLabel[unmanaged[0].location]} folder` : `Manage the ${unmanaged.map(f => skillLocationLabel[f.location]).join(' and ')} folders`}</button></div>}
+      {unmanaged.length > 0 && <div className="notice" data-testid="manage-sources"><b>Manage these folders so Kiln can show the copies already there</b><p>Kiln doesn’t manage {unmanaged.map((f, i) => <span key={f.folder}>{i === 0 ? '' : i === unmanaged.length - 1 ? ' and ' : ', '}<code>{f.folder}</code></span>)} yet, so the skills you imported from there read “Not installed”. Managing a folder only lets Kiln recognise what is in it: nothing is installed, moved or changed. You can turn this off in step 3 or in Settings.</p><button className="button primary" disabled={!ready || Boolean(busy)} onClick={manageSources}>{`Manage the ${joinAnd(unmanaged.map(f => skillLocationLabel[f.location]))} folder${unmanaged.length === 1 ? '' : 's'}`}</button></div>}
       {managed && !unmanaged.length && <div className="notice success"><Check size={14} /> {managed}</div>}
       <div className="wrap-actions"><button className="button primary" disabled={!ready || Boolean(busy)} onClick={() => setDialog('local')}><Download size={15} />Import my installed skills</button><button className="button" disabled={!ready || Boolean(busy)} onClick={() => setDialog('agents')}><Download size={15} />Import my agents</button><button className="button" disabled={!ready || Boolean(busy)} onClick={() => setDialog('repository')}><Upload size={15} />Import from a skills repository…</button></div>
       <p className="muted small">Discovery includes shared Agents, Claude, Codex-specific and Copilot skill folders, plus your configured locations. Agent imports discover Codex, Claude Code and Copilot definitions. A skills repository is a Git repository (or a clone of one) that holds SKILL.md folders; every skill in it is found, with its supporting and linked files.</p>
