@@ -1,0 +1,48 @@
+name: Screenshots
+
+# Real screenshots of the desktop app for the README and website, taken from a fictional demo library.
+# Push to the `screenshots` branch or run it by hand; the PNGs are uploaded as the `screenshots` artifact.
+on:
+  push:
+    branches: [screenshots]
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # The runner's display is small; a larger one lets the window open at its full 1440 × 900 size.
+      - name: Use a 1920 × 1080 display
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+        continue-on-error: true
+      - run: npm ci
+      # A public build records no source folder, so the app does not look for local update installers.
+      - run: npm run build
+        env:
+          KILN_PUBLIC_BUILD: '1'
+      # The tests make Git commits and temporary folders: give them an identity and a temp folder outside any repository.
+      - run: git config --global user.name "Kiln CI" && git config --global user.email "ci@users.noreply.github.com"
+      # The demo user's home folder, so every path in the screenshots reads C:\Users\dev.
+      - name: Create the demo home folder
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path C:\Users\dev | Out-Null
+      - run: npx playwright test --config tests/screenshots/playwright.config.ts
+        env:
+          KILN_DEMO_HOME: C:\Users\dev
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: |
+            test-results/screenshots/
+            test-results/screenshots-run/
+          if-no-files-found: warn
