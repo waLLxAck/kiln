@@ -5,6 +5,7 @@ import os from 'node:os';
 import { desktopEnv } from './fixture';
 
 test('prepare keeps the app open and usable; restart waits for a second click even after reopening', async () => {
+  test.skip(process.platform !== 'win32', 'The in-app updater runs the Windows NSIS installer; macOS and Linux builds update from the releases page.');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-update-ui-'));
   const source = path.join(root, 'release'); fs.mkdirSync(source);
   const installer = path.join(source, 'Kiln Setup 99.0.0.exe');
@@ -40,5 +41,22 @@ test('prepare keeps the app open and usable; restart waits for a second click ev
     await page.getByRole('button', { name: 'Restart to update', exact: true }).first().click();
     await expect(page.getByText(/The prepared installer changed/).first()).toBeVisible();
     expect(app.process().exitCode).toBeNull();
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('on macOS and Linux the Updates panel points to the releases page instead of the Windows updater', async () => {
+  test.skip(process.platform === 'win32', 'Windows has the in-app updater, covered above.');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-update-other-'));
+  const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
+  try {
+    const page = await app.firstWindow();
+    const status = await page.evaluate(() => window.kiln.call<{ supported?: boolean; available: unknown }>('desktop.updateCheck'));
+    expect(status.supported).toBe(false); expect(status.available).toBeNull();
+    await expect(page.evaluate(() => window.kiln.call('desktop.updatePrepare', { version: '99.0.0' }))).rejects.toThrow(/UPDATE_UNSUPPORTED/);
+    await page.getByRole('button', { name: 'Settings & repository' }).click();
+    const panel = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Updates', exact: true }) });
+    await expect(panel).toContainText('updates come from the releases page');
+    await expect(panel.getByRole('button', { name: 'Open the releases page' })).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Check now' })).toHaveCount(0);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

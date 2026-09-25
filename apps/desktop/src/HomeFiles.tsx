@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { diffLines } from 'diff';
 import { ArrowRight, BookOpen, ChevronRight, ExternalLink, FileCog, FolderOpen, History, Library, Plus, RefreshCw, RotateCcw, Save, Terminal, Trash2, TriangleAlert, X } from 'lucide-react';
 import type { HomeBackup, HomeFile, HomeFileContent, HomeFileKind, HomeList } from '../../../packages/home/service';
-import { api, date } from './api';
+import { api, date, fileManager } from './api';
 import { Badge, Modal } from './components';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
 
@@ -101,7 +101,7 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
         <div className="detail-actions">
           {loaded.exists || dirty ? <button className="button primary" disabled={!dirty} onClick={() => void save()} title="Ctrl+S"><Save size={15} />Save</button> : <button className="button primary" onClick={() => void save((current.template ?? templates[current.kind]))}><Plus size={15} />Create file</button>}
           {dirty && <button className="button" onClick={discard}>Discard changes</button>}
-          {loaded.exists && <><button className="button" onClick={() => void perform(() => api('desktop.revealHomeFile', { key: selected }))} title="Show the file in Explorer"><FolderOpen size={15} />Show in folder</button>{current.kind !== 'powershell' && <button className="button" onClick={() => void perform(() => api('desktop.revealHomeFile', { key: selected, open: true }))} title="Open in the default app for this file type"><ExternalLink size={15} />Open</button>}<button className="button" onClick={showHistory}><History size={15} />Previous versions</button></>}
+          {loaded.exists && <><button className="button" onClick={() => void perform(() => api('desktop.revealHomeFile', { key: selected }))} title={`Show the file in ${fileManager}`}><FolderOpen size={15} />Show in folder</button>{current.kind !== 'powershell' && <button className="button" onClick={() => void perform(() => api('desktop.revealHomeFile', { key: selected, open: true }))} title="Open in the default app for this file type"><ExternalLink size={15} />Open</button>}<button className="button" onClick={showHistory}><History size={15} />Previous versions</button></>}
           {(current.instruction ?? /\.md$/i.test(current.path)) && (loaded.exists || dirty) && <button className="button" onClick={copyToLibrary} title="Store a copy as an instruction item, so it can be versioned, approved and installed into project folders."><Library size={15} />Copy to library</button>}
         </div>
         {linked.length > 0 && <div className="home-imports"><span className="muted small">Imports:</span>{linked.map(({ spec, file }) => file ? <button key={spec} className="chip" onClick={() => setSelected(file.key)} title={file.path}>@{spec}{!file.exists && ' · missing'} <ArrowRight size={12} /></button> : <span key={spec} className="chip" title="Not in this list; add it with the button below the list to edit it here.">@{spec}</span>)}</div>}

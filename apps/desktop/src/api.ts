@@ -12,6 +12,10 @@ export function api<T = unknown>(method: string, args: unknown = {}): Promise<T>
   const request = window.kiln.call<T>(method, args).finally(() => inflight.delete(key));
   inflight.set(key, request); return request;
 }
+/** The desktop app's `process.platform`; Windows when the bridge does not say (older preload, tests of the web build). */
+export const platform = window.kiln?.platform ?? 'win32';
+/** What this platform calls the app that shows files in folders. */
+export const fileManager = platform === 'darwin' ? 'Finder' : platform === 'win32' ? 'Explorer' : 'your file manager';
 export const shortHash = (value: string) => value.slice(0, 8);
 /** "6 Sept, 16:40" for this year; older dates add the year so "6 Sept" from three years ago is not mistaken for last week. */
 export const date = (value: string) => { const when = new Date(value); return when.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(when.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) }); };

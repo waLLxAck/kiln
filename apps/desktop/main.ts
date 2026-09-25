@@ -16,6 +16,7 @@ import { resolveVariables } from '../../packages/domain/content';
 import { atomicWrite, noLinks, now, readJson, writeJson } from '../../packages/storage/files';
 import { defaultLibrary, privateRoot, selectLibrary } from '../../packages/storage/config';
 import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '../../packages/updates/service';
+import { desktopPath } from '../../packages/providers/path';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -75,8 +76,11 @@ async function pickDirectory() { const result = await dialog.showOpenDialog(main
 function buildInfo(): { sourceRoot?: string; releaseDir?: string; commit?: string; builtAt?: string } {
   try { return readJson(path.join(app.getAppPath(), 'dist', 'build-info.json')) as ReturnType<typeof buildInfo>; } catch { return {}; }
 }
+/** The in-app updater runs the Windows NSIS installer. macOS and Linux builds are updated from the releases page instead. */
+const updaterSupported = process.platform === 'win32';
 function checkUpdate(): UpdateStatus {
-  const current = app.getVersion(), status: UpdateStatus = { current, source: '', sourceKind: 'none', packaged: app.isPackaged, available: null, stage: updates.status(), commit: buildInfo().commit ?? '' };
+  const current = app.getVersion(), status: UpdateStatus = { current, source: '', sourceKind: 'none', packaged: app.isPackaged, available: null, stage: updates.status(), commit: buildInfo().commit ?? '', supported: updaterSupported };
+  if (!updaterSupported) return status;
   const file = path.join(local, 'settings.json'); const chosen = fs.existsSync(file) ? String((readJson(file) as { updateSource?: string }).updateSource ?? '') : '';
   // An explicit folder wins; otherwise the release folder of the repository this build came from; "off" disables checks.
   const source = chosen === 'off' ? '' : chosen || buildInfo().releaseDir || '';
@@ -138,6 +142,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       const file = path.join(local, 'settings.json'); const previous = fs.existsSync(file) ? readJson(file) as object : {}; writeJson(file, { ...previous, updateSource: chosen }); return checkUpdate();
     }
     case 'desktop.updatePrepare': {
+      invariant(updaterSupported, 'UPDATE_UNSUPPORTED', 'In-app updates are only available on Windows. Download the new version from the releases page.');
       const status = checkUpdate(); invariant(status.available, 'NO_UPDATE', 'No newer installer was found in the update folder.');
       const { version } = z.object({ version: z.string() }).parse(args);
       invariant(status.available.version === version, 'UPDATE_CHANGED', 'The available update changed. Check again before preparing it.');
@@ -145,6 +150,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       return checkUpdate();
     }
     case 'desktop.updateRestart': {
+      invariant(updaterSupported, 'UPDATE_UNSUPPORTED', 'In-app updates are only available on Windows. Download the new version from the releases page.');
       await updates.restart(installer => new Promise<void>((resolve, reject) => {
         const child = spawn(installer, ['--updated', '/S', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true });
         child.once('error', reject);
@@ -275,6 +281,9 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
 }
 
 if (singleInstance) void app.whenReady().then(async () => {
+  // Apps opened from the Dock, Finder or a desktop launcher get a minimal PATH; take the login shell's so codex, claude, git and gh are found.
+  // Set before the backend worker starts, which copies the environment.
+  if (app.isPackaged && process.platform !== 'win32') { process.env.PATH = await desktopPath(); log('path.resolved', { entries: process.env.PATH.split(':').length }); }
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
   ({ local, canonical } = await backend.call('paths'));
@@ -307,7 +316,9 @@ if (singleInstance) void app.whenReady().then(async () => {
     } finally { if (operation && operation !== 'desktop.telemetry') log('request.finished', { requestId, method: operation, durationMs: Date.now() - started }); }
   });
   main = createWindow(false);
-  const icon = nativeImage.createFromPath(path.join(app.getAppPath(), 'assets/kiln.png')).resize({ width: 20, height: 20 });
+  // macOS menu bar icons are monochrome templates that the system tints; Windows and Linux use the colour logo.
+  const icon = process.platform === 'darwin' ? nativeImage.createFromPath(path.join(app.getAppPath(), 'assets/kilnTemplate.png')) : nativeImage.createFromPath(path.join(app.getAppPath(), 'assets/kiln.png')).resize({ width: 20, height: 20 });
+  if (process.platform === 'darwin') icon.setTemplateImage(true);
   tray = new Tray(icon); tray.setToolTip('Kiln · Prompt & Skill Workbench');
   tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Kiln', click: () => main.show() }, { label: 'Quick search', click: openPalette }, { type: 'separator' }, { label: 'Quit Kiln', click: () => app.quit() }]));
   tray.on('double-click', () => main.show());
