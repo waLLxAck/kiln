@@ -1,6 +1,6 @@
 {
   "name": "kiln-workbench",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "private": true,
   "description": "A local home for prompts, experiments, and approved agent skills",
   "author": "Kiln contributors",

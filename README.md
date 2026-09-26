@@ -6,7 +6,7 @@
 
 Kiln is a free, open-source desktop app and CLI for keeping, testing and installing coding-agent prompts, skills and agents for Claude Code, Codex and GitHub Copilot. Test an exact revision on your own project, approve it, and install that approved copy wherever your agents look. It runs on Windows; the macOS and Linux builds are new and untested.
 
-**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-Setup-0.20.0.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
+**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-Setup-0.21.1.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
 
 ## Screenshots
 
@@ -38,20 +38,20 @@ The [user guide](docs/GUIDE.md) covers every feature in detail, along with limit
 
 ## Download
 
-Kiln 0.20.0 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`. See [what changed in 0.20.0](docs/releases/0.20.0.md).
+Kiln 0.21.1 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`. See [what changed in 0.21.1](docs/releases/0.21.1.md).
 
 | Platform | File | Status |
 | --- | --- | --- |
-| Windows (x64) | [`Kiln-Setup-0.20.0.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-Setup-0.20.0.exe) | Supported |
-| macOS, Apple silicon | [`Kiln-0.20.0-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-arm64.zip)) | New, untested |
-| macOS, Intel | [`Kiln-0.20.0-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-x64.zip)) | New, untested |
-| Linux (x64) | [`Kiln-0.20.0-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-x86_64.AppImage), [`kiln_0.20.0_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/kiln_0.20.0_amd64.deb) or [`Kiln-0.20.0-x64.tar.gz`](https://github.com/waLLxAck/kiln/releases/download/v0.20.0/Kiln-0.20.0-x64.tar.gz) | New, tried on one Arch desktop |
+| Windows (x64) | [`Kiln-Setup-0.21.1.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-Setup-0.21.1.exe) | Supported |
+| macOS, Apple silicon | [`Kiln-0.21.1-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-arm64.zip)) | New, untested |
+| macOS, Intel | [`Kiln-0.21.1-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-x64.zip)) | New, untested |
+| Linux (x64) | [`Kiln-0.21.1-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-x86_64.AppImage), [`kiln_0.21.1_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/kiln_0.21.1_amd64.deb) or [`Kiln-0.21.1-x64.tar.gz`](https://github.com/waLLxAck/kiln/releases/download/v0.21.1/Kiln-0.21.1-x64.tar.gz) | New, tried on one Arch desktop |
 
 The macOS builds have only been started on CI runners; the Linux build has been tried on one Arch Linux desktop. Please [report what breaks](https://github.com/waLLxAck/kiln/issues), or [build from source](#build-from-source).
 
 - **Windows:** the installer is unsigned. If SmartScreen warns you, choose **More info**, then **Run anyway**.
 - **macOS:** drag Kiln to Applications. It is not notarized, so Gatekeeper blocks the first launch: right-click it and choose **Open** (on macOS 15 and later, **Open Anyway** in System Settings → Privacy & Security), or run `xattr -dr com.apple.quarantine /Applications/Kiln.app`.
-- **Linux:** `chmod +x Kiln-0.20.0-x86_64.AppImage` and run it. It needs FUSE 2: `sudo pacman -S fuse2` (Arch), `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with `--appimage-extract-and-run`. The tar.gz needs no FUSE: unpack it and run `kiln-workbench`. Or install the package with `sudo apt install ./kiln_0.20.0_amd64.deb`. If it exits with a sandbox error, start it with `--no-sandbox`.
+- **Linux:** `chmod +x Kiln-0.21.1-x86_64.AppImage` and run it. It needs FUSE 2: `sudo pacman -S fuse2` (Arch), `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with `--appimage-extract-and-run`. The tar.gz needs no FUSE: unpack it and run `kiln-workbench`. Or install the package with `sudo apt install ./kiln_0.21.1_amd64.deb`. If it exits with a sandbox error, start it with `--no-sandbox`.
 
 You also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in; first launch creates or opens your Kiln repository on GitHub. Agent runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH. [Install notes in full](docs/GUIDE.md#installing).
 

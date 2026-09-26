@@ -64,7 +64,7 @@ export function CollectionNameInput({ name, onRename, onDone, onError }: { name:
     settled.current = true;
     try { await onRename(parent ? `${parent}/${leaf}` : leaf); } finally { settled.current = false; }
   };
-  return <input ref={input} className="collection-name-input" aria-label={`Name for ${name}`} value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} onBlur={() => void commit()}
+  return <input ref={input} className="collection-name-input" aria-label={`Name for ${name}`} value={draft} onChange={e => setDraft(e.target.value)} onBlur={() => void commit()}
     onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); void commit(); } else if (e.key === 'Escape') { e.preventDefault(); settled.current = true; onDone(); } }} />;
 }
 
@@ -112,7 +112,7 @@ export function MoveItemsDialog({ names, items, onClose, onDone }: { names: stri
       {names.map(n => <div className="collection-row" role="listitem" key={n} style={{ marginLeft: depthOf(n) * 18 }}><button type="button" className="collection-name text-button" aria-label={`Move to ${n}`} disabled={busy || current === n} onClick={() => void move(n)}><Folder size={14} /><span>{leafOf(n)}</span>{current === n && <small>current</small>}</button></div>)}
     </div>
     <form className="collection-add" onSubmit={event => { event.preventDefault(); if (name.trim()) void move(name); }}>
-      <input aria-label="New collection for the items" placeholder="Or a new collection… (Parent/Name for a subfolder)" value={name} onChange={e => setName(e.target.value)} maxLength={80} disabled={busy} />
+      <input aria-label="New collection for the items" placeholder="Or a new collection… (Parent/Name for a subfolder)" value={name} onChange={e => setName(e.target.value)} disabled={busy} />
       <button type="submit" className="button" disabled={busy || !name.trim()}><FolderPlus size={14} />Move</button>
     </form>
     <div className="modal-actions"><button className="button" disabled={busy} onClick={onClose}>Cancel</button></div>

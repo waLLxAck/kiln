@@ -17,7 +17,7 @@ const deriveResult = z.object({ name: z.string().min(1).max(64), description: z.
 export const entryTypes = ['prompt', 'tool', 'technique', 'resource', 'insight'] as const;
 export type EntryType = typeof entryTypes[number];
 const distillEntry = z.object({ type: z.enum(entryTypes), title: z.string().min(1).max(120), description: z.string().min(1).max(600), content: z.string().min(1).max(20000), url: z.string().max(500), timestamp: z.string().max(12), tags: z.array(z.string().min(1).max(40)).max(6) });
-const distillResult = z.object({ collection: z.string().min(1).max(80), summary: z.string().min(1).max(1200), takeaway: z.string().min(1).max(300), entries: z.array(distillEntry).max(80), skipped: z.string().max(1200) });
+const distillResult = z.object({ collection: z.string().min(1), summary: z.string().min(1).max(1200), takeaway: z.string().min(1).max(300), entries: z.array(distillEntry).max(80), skipped: z.string().max(1200) });
 export type DistillResult = z.infer<typeof distillResult>;
 /** A chat turn's answer is free Markdown from the agent; changes it made went through Kiln's CLI and show up as revisions. */
 export type ChatResult = { reply: string };
@@ -144,11 +144,11 @@ export class AgentService {
   private fileDistillation(job: AgentJob, folder: string, video: VideoTranscript | undefined, result: DistillResult, author: string) {
     const source = this.wb.getItem(job.itemId);
     const taken = new Set(this.wb.collections().map(c => c.toLowerCase()));
-    const base = (video ? video.title : result.collection || source.title).normalize('NFKC').replace(/[\x00-\x1f\x7f]/g, ' ').replaceAll('/', '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Untitled video';
+    const base = (video ? video.title : result.collection || source.title).normalize('NFKC').replace(/[\x00-\x1f\x7f]/g, ' ').replaceAll('/', '-').replace(/\s+/g, ' ').trim() || 'Untitled video';
     let collection = base;
     if (taken.has(collection.toLowerCase()) && source.collection !== collection) {
       const suffix = ` · ${video?.id ?? source.id.slice(0, 8)}`;
-      collection = base.slice(0, 80 - suffix.length) + suffix;
+      collection = base + suffix;
     }
     const ids: string[] = [];
     for (const entry of result.entries) {
@@ -167,7 +167,7 @@ export class AgentService {
     this.sessionAttachment(job, folder);
     const item = this.wb.getItem(job.itemId), revision = this.wb.getRevision(job.itemId);
     // Whatever it was captured as, analysed material is a source from now on.
-    this.wb.update({ id: job.itemId, expect: item.revision, value: { ...revision, kind: 'source', collection, description: result.summary.slice(0, 600), files: revision.files }, summary: `${author} distilled ${ids.length} entries into “${collection}”` });
+    this.wb.update({ id: job.itemId, expect: item.revision, value: { ...revision, kind: 'source', collection, description: result.summary.slice(0, 600), files: revision.files }, summary: `${author} distilled ${ids.length} entries into “${collection}”`.slice(0, 500) });
     job.createdItemIds = ids; job.collection = collection;
     const counts = result.entries.reduce<Record<string, number>>((acc, e) => ({ ...acc, [e.type]: (acc[e.type] ?? 0) + 1 }), {});
     this.wb.recordAnalysis({ schemaVersion: 1, id: job.id, itemId: job.itemId, revision: job.revision, provider: job.provider, model: job.model, effort: job.effort, ...(job.usage ? { usage: job.usage } : {}), startedAt: job.startedAt, finishedAt: now(), summary: result.summary, takeaway: result.takeaway, skipped: result.skipped, counts, created: ids, collection });

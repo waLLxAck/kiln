@@ -781,7 +781,7 @@ export class Workbench {
   importLibrary(file: string) {
     this.dirty = true;
     noLinks(file); invariant(fs.statSync(file).size < 150_000_000, 'IMPORT_TOO_LARGE', 'Export exceeds 150 MB.');
-    const data = z.object({ schemaVersion: z.literal(1), items: z.array(z.object({ item: itemSchema, revisions: z.array(revisionSchema) })), collections: z.array(z.string().min(1).max(100)).default([]), approvals: z.array(approvalSchema), trials: z.array(trialSchema), analyses: z.array(analysisSchema).default([]), activity: z.array(z.unknown()).default([]) }).parse(readJson(file));
+    const data = z.object({ schemaVersion: z.literal(1), items: z.array(z.object({ item: itemSchema, revisions: z.array(revisionSchema) })), collections: z.array(z.string().min(1)).default([]), approvals: z.array(approvalSchema), trials: z.array(trialSchema), analyses: z.array(analysisSchema).default([]), activity: z.array(z.unknown()).default([]) }).parse(readJson(file));
     for (const { item, revisions } of data.items) {
       invariant(revisions.some(r => r.hash === item.revision), 'INVALID_EXPORT', 'Current revision is missing.');
       for (const r of revisions) { validateContent(r); invariant(r.itemId === item.id && r.hash === revisionHash(r), 'BUNDLE_TAMPERED', 'Export contains a modified revision.'); }

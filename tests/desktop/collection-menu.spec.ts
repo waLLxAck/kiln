@@ -192,6 +192,8 @@ test('new folders are named in place, and dragging a collection nests it, reorde
     // Dropping on the middle of a row nests the collection there; the open view follows it.
     const node = (name: string) => sidebar.locator('.collection-node', { has: page.getByRole('button', { name: new RegExp(`^${name}`) }) });
     const dropOn = async (source: string, target: string, where: 'before' | 'into' | 'after') => {
+      // The stored order can change before the sidebar re-renders, so measure the row only once it is on screen.
+      await expect(node(target)).toBeVisible();
       const box = (await node(target).boundingBox())!;
       await node(source).dragTo(node(target), { targetPosition: { x: box.width / 2, y: where === 'before' ? 3 : where === 'after' ? box.height - 3 : box.height / 2 } });
     };
