@@ -167,7 +167,7 @@ export class AgentService {
     this.sessionAttachment(job, folder);
     const item = this.wb.getItem(job.itemId), revision = this.wb.getRevision(job.itemId);
     // Whatever it was captured as, analysed material is a source from now on.
-    this.wb.update({ id: job.itemId, expect: item.revision, value: { ...revision, kind: 'source', collection, description: result.summary.slice(0, 600), files: revision.files }, summary: `${author} distilled ${ids.length} entries into “${collection}”` });
+    this.wb.update({ id: job.itemId, expect: item.revision, value: { ...revision, kind: 'source', collection, description: result.summary.slice(0, 600), files: revision.files }, summary: `${author} distilled ${ids.length} entries into “${collection}”`.slice(0, 500) });
     job.createdItemIds = ids; job.collection = collection;
     const counts = result.entries.reduce<Record<string, number>>((acc, e) => ({ ...acc, [e.type]: (acc[e.type] ?? 0) + 1 }), {});
     this.wb.recordAnalysis({ schemaVersion: 1, id: job.id, itemId: job.itemId, revision: job.revision, provider: job.provider, model: job.model, effort: job.effort, ...(job.usage ? { usage: job.usage } : {}), startedAt: job.startedAt, finishedAt: now(), summary: result.summary, takeaway: result.takeaway, skipped: result.skipped, counts, created: ids, collection });

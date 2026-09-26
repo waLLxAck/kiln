@@ -9,7 +9,7 @@ import { AgentService } from '../packages/agent/service';
 import { writeJson } from '../packages/storage/files';
 
 const content = '---\nname: careful-review\ndescription: Review changes carefully.\n---\nRead the diff and verify claims.\n';
-const longName = 'Research and development '.repeat(12).trim();
+const longName = 'Research and development '.repeat(32).trim();
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-long-collections-'));
   const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
@@ -85,6 +85,8 @@ test('distillation preserves long collection names and adds collision suffixes w
     assert.equal(done.status, 'completed', done.error);
     const expected = longName + ' · ' + item.id.slice(0, 8);
     assert.equal(f.wb.getItem(item.id).collection, expected);
+    assert.ok(expected.length > 500);
+    assert.ok(f.wb.getRevision(item.id).summary.length <= 500);
     assert.equal(f.wb.getItem(done.createdItemIds![0]).collection, expected);
     assert.equal(f.wb.analyses(item.id)[0].collection, expected);
   } finally { f.close(); }
