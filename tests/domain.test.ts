@@ -9,6 +9,7 @@ import { DeploymentService, readDestination } from '../packages/deployment/servi
 import { WorkbenchError } from '../packages/domain/errors';
 import { resolveVariables } from '../packages/domain/content';
 import { readJson, writeJson, withLock, safeRelative } from '../packages/storage/files';
+import { dropPlacement, placeCollection, untitledName } from '../packages/domain/collections';
 
 const content = '---\nname: careful-review\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\nRead the diff. Verify claims. Record uncertainty.\n';
 function fixture() {
@@ -325,6 +326,72 @@ test('collections form a tree: subfolders follow their parent, parents are impli
     assert.equal(f.wb.listItems()[0].collection, 'B/X/Y');
     assert.throws(() => f.wb.renameCollection({ from: 'A', to: 'b/sub' }), hasCode('DUPLICATE_COLLECTION'));
     assert.throws(() => f.wb.renameCollection({ from: 'Missing', to: 'Other' }), hasCode('COLLECTION_NOT_FOUND'));
+  } finally { f.close(); }
+});
+
+test('new folders get the first free "New Folder" name among their siblings, ignoring case', () => {
+  assert.equal(untitledName([]), 'New Folder');
+  assert.equal(untitledName(['new folder', 'New Folder 2', 'A/New Folder 3']), 'New Folder 3');
+  assert.equal(untitledName(['New Folder', 'A', 'A/Other'], 'A'), 'A/New Folder');
+  assert.equal(untitledName(['A/NEW FOLDER', 'A/New Folder/New Folder 2'], 'A'), 'A/New Folder 2', 'only direct subfolders count');
+});
+
+test('placing a folder keeps its subfolders with it and every other folder in place', () => {
+  const names = ['A', 'A/X', 'A/Y', 'B', 'C', 'C/Z'];
+  assert.deepEqual(placeCollection(names, 'C', 'A'), ['C', 'C/Z', 'A', 'A/X', 'A/Y', 'B']);
+  assert.deepEqual(placeCollection(names, 'A', null), ['B', 'C', 'C/Z', 'A', 'A/X', 'A/Y']);
+  assert.deepEqual(placeCollection(names, 'A/Y', 'A/X'), ['A', 'A/Y', 'A/X', 'B', 'C', 'C/Z']);
+  assert.deepEqual(placeCollection(names, 'A/X', null), ['A', 'A/Y', 'A/X', 'B', 'C', 'C/Z'], 'last among siblings, still inside the parent');
+  assert.deepEqual(placeCollection(names, 'B', 'C/Z'), ['A', 'A/X', 'A/Y', 'C', 'C/Z', 'B'], 'a folder that is not a sibling means last');
+
+  // Dropping on a row: above, into or below it, never into itself.
+  assert.deepEqual(dropPlacement(names, 'C', 'A', 'before'), { parent: '', before: 'A' });
+  assert.deepEqual(dropPlacement(names, 'C', 'A/X', 'after'), { parent: 'A', before: 'A/Y' });
+  assert.deepEqual(dropPlacement(names, 'C', 'A/Y', 'after'), { parent: 'A', before: null });
+  assert.deepEqual(dropPlacement(names, 'A', 'B', 'after'), { parent: '', before: 'C' });
+  assert.deepEqual(dropPlacement(names, 'B', 'A', 'after'), { parent: '', before: 'C' }, 'the dragged folder is not its own neighbour');
+  assert.deepEqual(dropPlacement(names, 'B', 'A', 'after', true), { parent: 'A', before: 'A/X' }, 'below an open folder is first inside it');
+  assert.deepEqual(dropPlacement(names, 'B', 'C', 'into'), { parent: 'C', before: null });
+  assert.equal(dropPlacement(names, 'A', 'A', 'into'), null);
+  assert.equal(dropPlacement(names, 'A', 'A/X', 'before'), null);
+});
+
+test('moving a collection nests it, lifts it, or reorders it in one step; items travel with it and it cannot go inside itself', () => {
+  const f = fixture();
+  try {
+    f.wb.saveCollections({ names: ['A', 'A/X', 'B', 'C', 'C/Sub'] });
+    const skill = approved(f.wb); f.wb.moveItems({ ids: [skill.id], collection: 'C/Sub' });
+    const top = f.wb.create({ title: 'Top', kind: 'prompt', content: 'In C', collection: 'C' });
+
+    // Into another collection: the whole branch moves, last among its new siblings.
+    const nested = f.wb.moveCollection({ name: 'C', parent: 'a' });
+    assert.equal(nested.to, 'A/C', 'the parent keeps its spelling');
+    assert.deepEqual(new Set(nested.moved), new Set([skill.id, top.id]));
+    assert.deepEqual(f.wb.collections(), ['A', 'A/X', 'A/C', 'A/C/Sub', 'B']);
+    assert.equal(f.wb.getItem(skill.id).collection, 'A/C/Sub');
+    assert.equal(f.wb.getItem(skill.id).revision, skill.revision); assert.equal(f.wb.getItem(skill.id).status, 'approved');
+
+    // Before a sibling somewhere else: re-parented and reordered at once.
+    assert.equal(f.wb.moveCollection({ name: 'A/C', parent: '', before: 'A' }).to, 'C');
+    assert.deepEqual(f.wb.collections(), ['C', 'C/Sub', 'A', 'A/X', 'B']);
+    assert.equal(f.wb.getItem(top.id).collection, 'C');
+
+    // Same parent: only the order changes, and no item is touched.
+    const reordered = f.wb.moveCollection({ name: 'B', parent: '', before: 'C' });
+    assert.deepEqual(reordered.moved, []); assert.deepEqual(f.wb.collections(), ['B', 'C', 'C/Sub', 'A', 'A/X']);
+    f.wb.moveCollection({ name: 'B', parent: '' });
+    assert.deepEqual(f.wb.collections(), ['C', 'C/Sub', 'A', 'A/X', 'B'], 'no sibling to go before means last');
+    f.wb.moveCollection({ name: 'C/Sub', parent: '', before: 'A' });
+    assert.deepEqual(f.wb.collections(), ['C', 'Sub', 'A', 'A/X', 'B'], 'lifted to the top level');
+
+    assert.throws(() => f.wb.moveCollection({ name: 'A', parent: 'A' }), hasCode('INVALID_COLLECTION'));
+    assert.throws(() => f.wb.moveCollection({ name: 'A', parent: 'A/X' }), hasCode('INVALID_COLLECTION'));
+    f.wb.createCollection({ name: 'B/x' });
+    assert.throws(() => f.wb.moveCollection({ name: 'A/X', parent: 'B' }), hasCode('DUPLICATE_COLLECTION'));
+    assert.throws(() => f.wb.moveCollection({ name: 'Missing', parent: '' }), hasCode('COLLECTION_NOT_FOUND'));
+    assert.throws(() => f.wb.moveCollection({ name: 'A', parent: 'Nowhere' }), hasCode('COLLECTION_NOT_FOUND'));
+    assert.throws(() => f.wb.moveCollection({ name: 'A', parent: '', before: 'A/X' }), hasCode('INVALID_COLLECTION'), 'before must be a sibling at the destination');
+    assert.deepEqual(f.wb.collections(), ['C', 'Sub', 'A', 'A/X', 'B', 'B/x'], 'failed moves change nothing');
   } finally { f.close(); }
 });
 

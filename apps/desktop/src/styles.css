@@ -191,10 +191,23 @@ button[aria-busy=true]::after { content: ''; display: inline-block; width: 12px;
 .nav-item.active svg { color: var(--accent-text); }
 .nav-count { font-size: 11px; font-weight: 600; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--subtle-2); color: var(--muted); font-variant-numeric: tabular-nums; }
 .nav-item.active .nav-count { background: var(--accent); color: var(--accent-ink); }
-.collection-node { display: flex; align-items: center; }
+.collection-node { position: relative; display: flex; align-items: center; }
 .collection-node .nav-item { flex: 1; min-width: 0; }
 .collection-toggle { flex: none; width: 16px; height: 32px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); border-radius: var(--r-sm); }
 button.collection-toggle:hover { color: var(--text); background: var(--subtle-2); }
+/* Named in place, like a file manager. */
+.collection-rename, .collection-rename:hover { background: var(--subtle-2); }
+.collection-name-input { flex: 1; min-width: 0; height: 26px; padding: 0 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--panel); color: var(--text); font: inherit; box-shadow: 0 0 0 3px var(--ring); }
+/* Dragging a collection: the middle of a row nests it there (the row lights up), its edges place it beside the row (a line). */
+.collection-node[data-dragging], .collection-row[data-dragging] { opacity: .45; }
+.collection-node[data-drop="into"] .nav-item, .collection-label[data-drop="into"], .collection-row[data-drop="into"] { background: var(--accent-tint); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent); }
+.collection-label { border-radius: var(--r-sm); }
+.collection-label[data-drop="into"] { box-shadow: 0 0 0 4px var(--accent-tint), inset 0 0 0 1px var(--accent); }
+.collection-node[data-drop="before"]::before, .collection-node[data-drop="after"]::after, .collection-row[data-drop="before"]::before, .collection-row[data-drop="after"]::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+.collection-node[data-drop="before"]::before { top: -1px; }
+.collection-node[data-drop="after"]::after { bottom: -1px; }
+.collection-row[data-drop="before"]::before { top: -4px; }
+.collection-row[data-drop="after"]::after { bottom: -4px; }
 .sidebar-bottom { margin-top: auto; padding-top: 18px; }
 .sidebar-foot { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 0; color: var(--faint); font-size: 11.5px; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; flex-shrink: 0; box-shadow: 0 0 0 3px var(--ok-bg); }
@@ -856,6 +869,8 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .context-menu .context-note { margin-left: auto; padding-left: 16px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .lib-count { white-space: nowrap; margin-left: auto; font-variant-numeric: tabular-nums; }
 .lib-tools .icon-button { width: 26px; height: 26px; }
+.lib-tools .sort-pill { flex: none; }
+.sort-pill b { font-weight: 600; color: var(--text); }
 .lib-hint { padding: 8px 2px 4px; }
 /* Rows: a grid; the selected item opens in a drawer over the list, so rows never reflow. */
 .item-card.lib-row { display: grid; gap: 12px; align-items: center; padding: 7px 12px; border-radius: var(--r-sm); }
@@ -951,13 +966,12 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 
 /* ---------- Collections dialog ---------- */
 .collection-rows { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 14px; }
-.collection-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--panel); }
+.collection-row { position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--panel); }
 .collection-row:hover { background: var(--subtle); }
 .collection-row > .collection-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; }
 .collection-row > .collection-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collection-row > .collection-name small { color: var(--muted); font-variant-numeric: tabular-nums; }
-.collection-row form { flex: 1; display: flex; gap: 6px; align-items: center; }
-.collection-row form input { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--panel); }
+.collection-row .collection-name-input { height: 28px; }
 .collection-row .icon-button { width: 26px; height: 26px; color: var(--muted); }
 .collection-row .icon-button:hover:not(:disabled) { color: var(--text); }
 .collection-row .icon-button.danger:hover:not(:disabled) { color: var(--bad); }

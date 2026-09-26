@@ -42,3 +42,36 @@ export function collectionTree(names: Iterable<string>) {
   walk('');
   return ordered;
 }
+/** "New Folder" under `parent`, or "New Folder 2", "New Folder 3"… when a sibling already has that name in any case. Returns the full path. */
+export function untitledName(names: Iterable<string>, parent = '', base = 'New Folder') {
+  const taken = new Set([...names].filter(n => parentOf(n) === parent).map(n => leafOf(n).toLowerCase()));
+  let leaf = base;
+  for (let n = 2; taken.has(leaf.toLowerCase()); n++) leaf = `${base} ${n}`;
+  return parent ? `${parent}/${leaf}` : leaf;
+}
+/**
+ * The tree order with the folder `name` (already at its new path) moved to sit before its sibling `before`, or after its last
+ * sibling when `before` is null or not a sibling. Its subfolders travel with it and every other folder keeps its place.
+ */
+export function placeCollection(names: Iterable<string>, name: string, before: string | null = null) {
+  const ordered = collectionTree(names), branch = ordered.filter(n => isWithin(n, name)), rest = ordered.filter(n => !isWithin(n, name)), parent = parentOf(name);
+  let at = before && parentOf(before) === parent ? rest.indexOf(before) : -1;
+  // After the last sibling means after the parent's whole branch; for the top level that is the end.
+  if (at < 0) { at = rest.length; if (parent) { const last = rest.findLastIndex(n => isWithin(n, parent)); if (last >= 0) at = last + 1; } }
+  return [...rest.slice(0, at), ...branch, ...rest.slice(at)];
+}
+/** Where a dragged folder lands relative to a row: above it, inside it, or below it. */
+export type DropZone = 'before' | 'into' | 'after';
+/**
+ * Turns dropping the folder `name` on the row `target` into a move: the new parent, and the sibling to go before (null: last).
+ * Null when the drop makes no sense: onto itself or into its own subfolders. Below an open folder that has subfolders reads as
+ * "first inside it", because that is where the line is drawn.
+ */
+export function dropPlacement(names: string[], name: string, target: string, zone: DropZone, open = false): { parent: string; before: string | null } | null {
+  if (isWithin(target, name)) return null;
+  const childrenOf = (parent: string) => names.filter(n => parentOf(n) === parent && n !== name);
+  if (zone === 'into') return { parent: target, before: null };
+  if (zone === 'after' && open && childrenOf(target).length) return { parent: target, before: childrenOf(target)[0] };
+  const siblings = childrenOf(parentOf(target));
+  return { parent: parentOf(target), before: zone === 'before' ? target : siblings[siblings.indexOf(target) + 1] ?? null };
+}

@@ -5,14 +5,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot } from '../protocol/schema';
+import { analysisSchema, approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
-import { collectionPath, collectionTree, isWithin, parentOf, relocate } from './collections';
+import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
 
 /** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
 function workingFingerprint(dir: string, revision: string) {
@@ -47,6 +47,8 @@ export class Workbench {
   private changedItems: Set<string> | null = null;
   /** Content digest per revision hash, for duplicate detection without re-reading revisions. */
   private contentDigests = new Map<string, string>();
+  /** Usage counts from the observations folder; dropped when an observation is written and on a full refresh, which also picks up other processes' writes. */
+  private usageCache?: Usage;
   warnings: string[] = [];
   constructor(readonly root: string, localRoot = path.join(os.homedir(), '.kiln')) {
     invariant(path.isAbsolute(root), 'INVALID_PATH', 'Library root must be absolute.');
@@ -184,6 +186,10 @@ export class Workbench {
   trials(includeDeleted = false) { return readRecords(path.join(this.canonical, 'experiments'), value => trialSchema.parse(value), this.warnings).filter(t => includeDeleted || !t.deletedAt); }
   targets() { return readRecords(path.join(this.local, 'targets'), value => targetSchema.parse(value), this.warnings); }
   observations() { return readRecords(path.join(this.local, 'observations'), value => observationSchema.parse(value), this.warnings); }
+  /** Every snapshot carries these counts; reading every observation file each time would grow with use, so they are cached. */
+  usage(): Usage {
+    return this.usageCache ??= this.observations().reduce<Usage>((acc, o) => { if (o.itemId) { const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++; } return acc; }, {});
+  }
   activity() { return readRecords(path.join(this.canonical, 'activity'), value => value as Activity, this.warnings).sort((a, b) => b.at.localeCompare(a.at)); }
   record(kind: string, message: string, itemId: string | null = null, revision?: string) {
     const event: Activity = { id: randomUUID(), at: now(), itemId, kind, message, ...(revision ? { revision } : {}) };
@@ -307,6 +313,7 @@ export class Workbench {
   /** Reconciles working files into revisions and rebuilds the index. A full pass looks at every item; the snapshot path passes false and trusts the folder watcher. */
   refresh(full = true) {
     this.warnings = [];
+    if (full) this.usageCache = undefined;
     try {
       this.mutate(() => {
         // Only folders the watcher reported (or everything, the first time) are looked at; a snapshot after a small change must not walk the whole library.
@@ -523,7 +530,7 @@ export class Workbench {
   private observeUnlocked(event: Observation) {
     const file = path.join(this.local, 'observations', `${digest({ source: event.source, id: event.eventId })}.json`);
     if (fs.existsSync(file)) return { duplicate: true };
-    writeJson(file, event); return { duplicate: false };
+    writeJson(file, event); this.usageCache = undefined; return { duplicate: false };
   }
   enroll(input: unknown) {
     const data = targetSchema.omit({ id: true, machine: true }).parse(input);
@@ -626,19 +633,44 @@ export class Workbench {
     const value = { from: collectionPath(raw.from), to: collectionPath(raw.to) };
     invariant(value.from !== value.to, 'SAME_NAME', 'Choose a different name.');
     return this.mutate(() => {
-      const all = this.collections(this.listItems(true));
-      invariant(all.includes(value.from), 'COLLECTION_NOT_FOUND', `There is no collection called “${value.from}”.`);
-      const remaining = all.filter(name => !isWithin(name, value.from));
-      invariant(!remaining.some(name => name.toLowerCase() === value.to.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${value.to}” already exists.`);
-      const to = this.existingSpelling(value.to, remaining);
-      const moved: string[] = [];
-      for (const item of this.listItems(true).filter(i => isWithin(i.collection, value.from))) {
-        const destination = relocate(item.collection, value.from, to);
-        this.fileItems([this.reconcileItem(item.id)], destination, from => `Moved from “${from}” to “${destination}”`); moved.push(item.id);
-      }
-      this.saveCollectionNames(this.collections().map(name => relocate(name, value.from, to)));
+      const { to, moved } = this.relocateCollection(value.from, value.to);
       this.record('collection_renamed', `Renamed the “${value.from}” collection to “${to}”${moved.length ? ` (${moved.length} item${moved.length === 1 ? '' : 's'})` : ''}`);
       return { from: value.from, to, moved };
+    });
+  }
+  /** Renaming without the lock or the activity entry, so a move can rename and reorder in one mutation. The list keeps its order. */
+  private relocateCollection(from: string, target: string) {
+    const all = this.collections(this.listItems(true));
+    invariant(all.includes(from), 'COLLECTION_NOT_FOUND', `There is no collection called “${from}”.`);
+    const remaining = all.filter(name => !isWithin(name, from));
+    invariant(!remaining.some(name => name.toLowerCase() === target.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${target}” already exists.`);
+    const to = this.existingSpelling(target, remaining);
+    const moved: string[] = [];
+    for (const item of this.listItems(true).filter(i => isWithin(i.collection, from))) {
+      const destination = relocate(item.collection, from, to);
+      this.fileItems([this.reconcileItem(item.id)], destination, was => `Moved from “${was}” to “${destination}”`); moved.push(item.id);
+    }
+    this.saveCollectionNames(this.collections().map(name => relocate(name, from, to)));
+    return { to, moved };
+  }
+  /**
+   * Drag and drop in one step: puts a collection inside `parent` ('' for the top level), before its sibling `before` or last.
+   * A new parent renames it, taking subfolders and items along; either way the saved order changes so it shows where it was dropped.
+   */
+  moveCollection(input: unknown) {
+    const raw = z.object({ name: z.string(), parent: z.string(), before: z.string().nullish() }).parse(input);
+    const name = collectionPath(raw.name), parent = raw.parent.trim() ? collectionPath(raw.parent) : '', before = raw.before?.trim() ? collectionPath(raw.before) : null;
+    invariant(!isWithin(parent.toLowerCase(), name.toLowerCase()), 'INVALID_COLLECTION', `“${name}” cannot go inside itself.`);
+    return this.mutate(() => {
+      const all = this.collections(this.listItems(true)), spelled = this.existingSpelling(parent, all);
+      invariant(all.includes(name), 'COLLECTION_NOT_FOUND', `There is no collection called “${name}”.`);
+      invariant(!parent || all.includes(spelled), 'COLLECTION_NOT_FOUND', `There is no collection called “${parent}”.`);
+      invariant(!before || (all.includes(before) && parentOf(before) === spelled && !isWithin(before, name)), 'INVALID_COLLECTION', `“${before}” is not a folder next to where “${name}” is going.`);
+      const target = spelled ? `${spelled}/${leafOf(name)}` : leafOf(name);
+      const { to, moved } = target === name ? { to: name, moved: [] as string[] } : this.relocateCollection(name, target);
+      this.saveCollectionNames(placeCollection(this.collections(), to, before));
+      if (to !== name) this.record('collection_renamed', `Moved the “${name}” collection to ${spelled ? `“${spelled}”` : 'the top level'}${moved.length ? ` (${moved.length} item${moved.length === 1 ? '' : 's'})` : ''}`);
+      return { from: name, to, moved, collections: this.collections() };
     });
   }
   /** Replaces the custom collection list, which sets the sidebar order. Collections that still hold items stay listed regardless. */
@@ -708,7 +740,7 @@ export class Workbench {
   snapshot(): Snapshot {
     if (this.dirty) this.refresh(false);
     const git = this.cachedGitStatus();
-    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.' };
+    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.usage() };
   }
   exportLibrary(destination: string) {
     invariant(path.isAbsolute(destination), 'INVALID_PATH', 'Export path must be absolute.'); noLinks(destination);

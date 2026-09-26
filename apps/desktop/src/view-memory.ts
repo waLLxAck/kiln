@@ -5,7 +5,7 @@ import { KINDS } from './Library';
 
 const viewSchema = z.object({
   selected: z.string().default(''), query: z.string().default(''), filter: z.string().default('all'),
-  sort: z.object({ key: z.enum(['title', 'kind', 'collection', 'status', 'updatedAt', 'createdAt', 'site']), dir: z.enum(['asc', 'desc']) }).nullable().default(null),
+  sort: z.object({ key: z.enum(['title', 'kind', 'collection', 'status', 'updatedAt', 'createdAt', 'site', 'copied', 'used', 'order']), dir: z.enum(['asc', 'desc']) }).nullable().default(null),
   installFilter: z.enum(['any', 'installed', 'none', 'codex', 'claude', 'copilot']).default('any'),
   advancedFilters: z.object({ provider: z.enum(['any', 'codex', 'claude', 'copilot']), location: z.enum(['any', 'agents', 'codex', 'claude', 'copilot']), state: z.enum(['any', 'managed', 'external', 'linked', 'changed']), scope: z.enum(['any', 'personal', 'project']), tag: z.string(), source: z.string().default('') }).default(emptyLibraryFilters),
 });

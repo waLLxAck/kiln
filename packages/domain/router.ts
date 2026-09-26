@@ -107,6 +107,7 @@ export class Router {
       case 'collections.save': return this.wb.saveCollections(args);
       case 'collections.create': return this.wb.createCollection(args);
       case 'collections.rename': return this.wb.renameCollection(args);
+      case 'collections.move': return this.wb.moveCollection(args);
       case 'collections.delete': return this.wb.deleteCollection(args);
       case 'skills.draft': return this.wb.derive(args);
       case 'approvals.approve': return this.approve(args);
