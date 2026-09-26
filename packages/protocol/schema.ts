@@ -18,7 +18,8 @@ export const authoringSchema = z.object({
   /** One or two sentences on when the item is useful; shown under the title. Empty for most hand-captured items. */
   description: z.string().trim().max(600).default(''),
   tags: z.array(z.string().trim().min(1).max(60)).max(30).default([]),
-  collection: z.string().max(80).default('Personal'),
+  // Collection paths are JSON metadata, not filesystem paths; nesting must not make stored items unreadable.
+  collection: z.string().default('Personal'),
   source: z.string().max(2000).default(''), licence: z.string().max(200).default('Unknown'),
   agent: z.object({ provider: z.enum(['codex', 'claude', 'copilot']), filename: z.string().min(1).max(200) }).optional(),
   ...bundleSchema.shape,
@@ -72,7 +73,7 @@ export const analysisSchema = z.object({
   schemaVersion: z.literal(1), id: idSchema, itemId: idSchema, revision: hashSchema, provider: z.enum(['codex', 'claude']),
   model: z.string().max(200), effort: z.string().max(40), usage: z.object({ input: z.number(), cached: z.number(), output: z.number(), reasoning: z.number() }).optional(),
   startedAt: z.string(), finishedAt: z.string(), summary: z.string().max(2000), takeaway: z.string().max(600), skipped: z.string().max(2000),
-  counts: z.record(z.string(), z.number().int().nonnegative()), created: z.array(idSchema).max(200), collection: z.string().max(80),
+  counts: z.record(z.string(), z.number().int().nonnegative()), created: z.array(idSchema).max(200), collection: z.string(),
 });
 export type Analysis = z.infer<typeof analysisSchema>;
 export type Item = z.infer<typeof itemSchema>;

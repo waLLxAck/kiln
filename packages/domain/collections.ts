@@ -5,14 +5,11 @@ import { WorkbenchError } from './errors';
  * is unfiled and shows only under the whole library. Parents are implied by their subfolders, so no list has to store them.
  * Shared by the workbench and the desktop sidebar; keep it free of Node imports.
  */
-export const MAX_COLLECTION_LENGTH = 80;
 /** Trims each level and rejects empty ones: " Game Design / Puzzles " becomes "Game Design/Puzzles". */
 export function collectionPath(name: string) {
   const parts = name.split('/').map(part => part.trim());
   if (!parts.every(Boolean)) throw new WorkbenchError('INVALID_COLLECTION', name.trim() ? `“${name.trim()}” has an empty folder level. Use / only between names.` : 'Name the collection.');
-  const value = parts.join('/');
-  if (value.length > MAX_COLLECTION_LENGTH) throw new WorkbenchError('INVALID_COLLECTION', `Collection paths are limited to ${MAX_COLLECTION_LENGTH} characters.`);
-  return value;
+  return parts.join('/');
 }
 export const parentOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '';
 export const leafOf = (name: string) => name.slice(name.lastIndexOf('/') + 1);
