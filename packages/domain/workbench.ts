@@ -12,7 +12,7 @@ import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
-import { collectionPath, collectionTree, isWithin, parentOf, relocate } from './collections';
+import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
 
 /** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
 function workingFingerprint(dir: string, revision: string) {
@@ -626,19 +626,44 @@ export class Workbench {
     const value = { from: collectionPath(raw.from), to: collectionPath(raw.to) };
     invariant(value.from !== value.to, 'SAME_NAME', 'Choose a different name.');
     return this.mutate(() => {
-      const all = this.collections(this.listItems(true));
-      invariant(all.includes(value.from), 'COLLECTION_NOT_FOUND', `There is no collection called “${value.from}”.`);
-      const remaining = all.filter(name => !isWithin(name, value.from));
-      invariant(!remaining.some(name => name.toLowerCase() === value.to.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${value.to}” already exists.`);
-      const to = this.existingSpelling(value.to, remaining);
-      const moved: string[] = [];
-      for (const item of this.listItems(true).filter(i => isWithin(i.collection, value.from))) {
-        const destination = relocate(item.collection, value.from, to);
-        this.fileItems([this.reconcileItem(item.id)], destination, from => `Moved from “${from}” to “${destination}”`); moved.push(item.id);
-      }
-      this.saveCollectionNames(this.collections().map(name => relocate(name, value.from, to)));
+      const { to, moved } = this.relocateCollection(value.from, value.to);
       this.record('collection_renamed', `Renamed the “${value.from}” collection to “${to}”${moved.length ? ` (${moved.length} item${moved.length === 1 ? '' : 's'})` : ''}`);
       return { from: value.from, to, moved };
+    });
+  }
+  /** Renaming without the lock or the activity entry, so a move can rename and reorder in one mutation. The list keeps its order. */
+  private relocateCollection(from: string, target: string) {
+    const all = this.collections(this.listItems(true));
+    invariant(all.includes(from), 'COLLECTION_NOT_FOUND', `There is no collection called “${from}”.`);
+    const remaining = all.filter(name => !isWithin(name, from));
+    invariant(!remaining.some(name => name.toLowerCase() === target.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${target}” already exists.`);
+    const to = this.existingSpelling(target, remaining);
+    const moved: string[] = [];
+    for (const item of this.listItems(true).filter(i => isWithin(i.collection, from))) {
+      const destination = relocate(item.collection, from, to);
+      this.fileItems([this.reconcileItem(item.id)], destination, was => `Moved from “${was}” to “${destination}”`); moved.push(item.id);
+    }
+    this.saveCollectionNames(this.collections().map(name => relocate(name, from, to)));
+    return { to, moved };
+  }
+  /**
+   * Drag and drop in one step: puts a collection inside `parent` ('' for the top level), before its sibling `before` or last.
+   * A new parent renames it, taking subfolders and items along; either way the saved order changes so it shows where it was dropped.
+   */
+  moveCollection(input: unknown) {
+    const raw = z.object({ name: z.string(), parent: z.string(), before: z.string().nullish() }).parse(input);
+    const name = collectionPath(raw.name), parent = raw.parent.trim() ? collectionPath(raw.parent) : '', before = raw.before?.trim() ? collectionPath(raw.before) : null;
+    invariant(!isWithin(parent.toLowerCase(), name.toLowerCase()), 'INVALID_COLLECTION', `“${name}” cannot go inside itself.`);
+    return this.mutate(() => {
+      const all = this.collections(this.listItems(true)), spelled = this.existingSpelling(parent, all);
+      invariant(all.includes(name), 'COLLECTION_NOT_FOUND', `There is no collection called “${name}”.`);
+      invariant(!parent || all.includes(spelled), 'COLLECTION_NOT_FOUND', `There is no collection called “${parent}”.`);
+      invariant(!before || (all.includes(before) && parentOf(before) === spelled && !isWithin(before, name)), 'INVALID_COLLECTION', `“${before}” is not a folder next to where “${name}” is going.`);
+      const target = spelled ? `${spelled}/${leafOf(name)}` : leafOf(name);
+      const { to, moved } = target === name ? { to: name, moved: [] as string[] } : this.relocateCollection(name, target);
+      this.saveCollectionNames(placeCollection(this.collections(), to, before));
+      if (to !== name) this.record('collection_renamed', `Moved the “${name}” collection to ${spelled ? `“${spelled}”` : 'the top level'}${moved.length ? ` (${moved.length} item${moved.length === 1 ? '' : 's'})` : ''}`);
+      return { from: name, to, moved, collections: this.collections() };
     });
   }
   /** Replaces the custom collection list, which sets the sidebar order. Collections that still hold items stay listed regardless. */

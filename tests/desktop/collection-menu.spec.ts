@@ -92,15 +92,15 @@ test('subfolders nest in the sidebar; deleting with Keep items lifts items up on
     await work.click();
     await expect(page.locator('.item-card')).toHaveCount(2);
 
-    // A new subfolder from the collection's menu.
+    // A new subfolder from the collection's menu appears at once, named in place.
     await work.click({ button: 'right' });
     await page.getByRole('menu').getByRole('menuitem', { name: /^New subfolder/ }).click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('textbox', { name: 'New collection' })).toHaveValue('Work/');
-    await dialog.getByRole('textbox', { name: 'New collection' }).fill('Work/Ideas');
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
-    await dialog.getByRole('button', { name: 'Done' }).click();
+    const naming = sidebar.getByRole('textbox', { name: 'Name for Work/New Folder' });
+    await expect(naming).toBeFocused();
+    await naming.fill('Ideas'); await naming.press('Enter');
     await expect(sidebar.getByRole('button', { name: /^Ideas/ })).toBeVisible();
+    await expect(naming).toHaveCount(0);
+    const dialog = page.getByRole('dialog');
 
     // Move an item from its context menu.
     await page.locator('.item-card', { hasText: 'Top prompt' }).click({ button: 'right' });
@@ -134,6 +134,121 @@ test('subfolders nest in the sidebar; deleting with Keep items lifts items up on
     const after = await page.evaluate(async () => (await (window as any).kiln.call('snapshot')).items.find((i: any) => i.title === 'Deep prompt'));
     expect(after.collection).toBe(''); expect(after.revision).toBe(revision);
     await page.waitForTimeout(250); await page.screenshot({ path: 'test-results/collection-tree.png' });
+    expect(errors).toEqual([]);
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('new folders are named in place, and dragging a collection nests it, reorders it or lifts it to the top level', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-collection-drag-'));
+  const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
+  const page = await app.firstWindow(); const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const names = () => page.evaluate(async () => (await (window as any).kiln.call('snapshot')).collections as string[]);
+  try {
+    await expect(page.getByRole('button', { name: 'Capture Ctrl N', exact: true })).toBeVisible();
+    await page.evaluate(async () => {
+      const api = (window as any).kiln.call;
+      await api('collections.save', { names: ['Alpha', 'Beta', 'Gamma'] });
+      await api('items.create', { kind: 'prompt', title: 'Gamma prompt', content: 'In Gamma', collection: 'Gamma', tags: [], files: {}, source: '', licence: 'Unknown' });
+    });
+    await page.getByRole('button', { name: 'Refresh library' }).click();
+    const sidebar = page.locator('.sidebar'), folder = (name: RegExp) => sidebar.getByRole('button', { name });
+    await expect(folder(/^Gamma/).locator('small')).toHaveText('1', { timeout: 10_000 });
+
+    // The + makes "New Folder" straight away with its name selected, so typing replaces it.
+    await sidebar.getByRole('button', { name: 'New collection' }).click();
+    const untitled = sidebar.getByRole('textbox', { name: 'Name for New Folder' });
+    await expect(untitled).toBeFocused(); await expect(untitled).toHaveValue('New Folder');
+    expect(await untitled.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd])).toEqual([0, 10]);
+    await page.keyboard.type('Delta'); await page.keyboard.press('Enter');
+    await expect(folder(/^Delta/)).toBeVisible();
+
+    // Escape keeps the folder under its current name, like a file manager.
+    await sidebar.getByRole('button', { name: 'New collection' }).click();
+    await expect(untitled).toBeFocused(); await page.keyboard.press('Escape');
+    await expect(untitled).toHaveCount(0); await expect(folder(/^New Folder/)).toBeVisible();
+    await sidebar.getByRole('button', { name: 'New collection' }).click();
+    await expect(sidebar.getByRole('textbox', { name: 'Name for New Folder 2' })).toBeFocused();
+    await page.keyboard.press('Escape');
+
+    // Rename from the menu is in place too; a clash shows the error and keeps the field open.
+    await folder(/^Alpha/).click({ button: 'right' });
+    await expect(page.getByRole('menu').getByRole('menuitem', { name: /^Rename/ })).not.toContainText('…');
+    await page.getByRole('menu').getByRole('menuitem', { name: /^Rename/ }).click();
+    const alpha = sidebar.getByRole('textbox', { name: 'Name for Alpha' });
+    await alpha.fill('beta'); await alpha.press('Enter');
+    await expect(page.locator('.global-error')).toContainText('already exists');
+    await expect(alpha).toBeVisible();
+    await alpha.fill('Aleph'); await alpha.press('Enter');
+    await expect(folder(/^Aleph/)).toBeVisible(); await expect(alpha).toHaveCount(0);
+    await expect(page.locator('.global-error')).toHaveCount(0);
+
+    // F2 renames the focused collection.
+    await folder(/^New Folder 2/).focus(); await page.keyboard.press('F2');
+    await sidebar.getByRole('textbox', { name: 'Name for New Folder 2' }).fill('Epsilon'); await page.keyboard.press('Enter');
+    await expect(folder(/^Epsilon/)).toBeVisible();
+    expect(await names()).toEqual(['Aleph', 'Beta', 'Gamma', 'Delta', 'New Folder', 'Epsilon']);
+
+    // Dropping on the middle of a row nests the collection there; the open view follows it.
+    const node = (name: string) => sidebar.locator('.collection-node', { has: page.getByRole('button', { name: new RegExp(`^${name}`) }) });
+    const dropOn = async (source: string, target: string, where: 'before' | 'into' | 'after') => {
+      const box = (await node(target).boundingBox())!;
+      await node(source).dragTo(node(target), { targetPosition: { x: box.width / 2, y: where === 'before' ? 3 : where === 'after' ? box.height - 3 : box.height / 2 } });
+    };
+    await folder(/^Gamma/).click();
+    await expect(page.locator('.item-card')).toHaveCount(1);
+    // While dragging, the row under the pointer shows where it will land: lit up for inside, a line for beside; itself never.
+    const at = async (name: string, y: (height: number) => number) => { const box = (await node(name).boundingBox())!; await page.mouse.move(box.x + box.width / 2, box.y + y(box.height), { steps: 4 }); };
+    await at('Gamma', h => h / 2); await page.mouse.down();
+    await at('Beta', h => h / 2); await expect(node('Beta')).toHaveAttribute('data-drop', 'into');
+    await at('Beta', () => 2); await expect(node('Beta')).toHaveAttribute('data-drop', 'before');
+    await page.screenshot({ path: 'test-results/collection-drag-line.png' });
+    await at('Gamma', h => h / 2); await expect(node('Gamma')).not.toHaveAttribute('data-drop', /./); await expect(node('Beta')).not.toHaveAttribute('data-drop', /./);
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    expect(await names()).toEqual(['Aleph', 'Beta', 'Gamma', 'Delta', 'New Folder', 'Epsilon']);
+    await dropOn('Gamma', 'Beta', 'into');
+    await expect.poll(names).toEqual(['Aleph', 'Beta', 'Beta/Gamma', 'Delta', 'New Folder', 'Epsilon']);
+    await expect(node('Gamma')).toHaveCSS('padding-left', '14px');
+    await expect(folder(/^Gamma/)).toHaveClass(/active/);
+    await expect(page.locator('.item-card', { hasText: 'Gamma prompt' })).toBeVisible();
+
+    // The top edge of a row places it before that row.
+    await dropOn('Delta', 'Aleph', 'before');
+    await expect.poll(names).toEqual(['Delta', 'Aleph', 'Beta', 'Beta/Gamma', 'New Folder', 'Epsilon']);
+    // The bottom edge places it after, taking it out of its parent in the same gesture.
+    await dropOn('Gamma', 'New Folder', 'after');
+    await expect.poll(names).toEqual(['Delta', 'Aleph', 'Beta', 'New Folder', 'Gamma', 'Epsilon']);
+    // A collection cannot go inside itself or its own subfolders.
+    await dropOn('Epsilon', 'Gamma', 'into');
+    await expect.poll(names).toEqual(['Delta', 'Aleph', 'Beta', 'New Folder', 'Gamma', 'Gamma/Epsilon']);
+    await dropOn('Gamma', 'Epsilon', 'into');
+    await page.waitForTimeout(300);
+    expect(await names()).toEqual(['Delta', 'Aleph', 'Beta', 'New Folder', 'Gamma', 'Gamma/Epsilon']);
+    // The COLLECTIONS heading takes a collection to the top level, last.
+    await node('Epsilon').dragTo(sidebar.locator('.collection-label'));
+    await expect.poll(names).toEqual(['Delta', 'Aleph', 'Beta', 'New Folder', 'Gamma', 'Epsilon']);
+    expect((await page.evaluate(async () => (await (window as any).kiln.call('snapshot')).items))[0].collection).toBe('Gamma');
+
+    // Manage collections: a New folder button and per-row subfolders, both named in place.
+    await folder(/^Delta/).click({ button: 'right' });
+    await page.getByRole('menu').getByRole('menuitem', { name: /^Manage collections/ }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'New folder', exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Name for New Folder 2' })).toBeFocused();
+    await page.keyboard.type('Zeta'); await page.keyboard.press('Enter');
+    await expect(dialog.getByRole('button', { name: /^Zeta/ })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Add a subfolder to Zeta' }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Name for Zeta/New Folder' })).toBeFocused();
+    await page.keyboard.type('Inner'); await page.keyboard.press('Enter');
+    await expect(dialog.getByRole('button', { name: /^Inner/ })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Move Zeta up' }).click();
+    await expect.poll(names).toEqual(['Delta', 'Aleph', 'Beta', 'New Folder', 'Gamma', 'Zeta', 'Zeta/Inner', 'Epsilon']);
+    // Rows in the dialog drag the same way.
+    const row = (name: string) => dialog.locator('.collection-row', { has: page.getByRole('button', { name: `Rename ${name}`, exact: true }) });
+    await row('Epsilon').dragTo(row('Delta'));
+    await expect.poll(names).toEqual(['Delta', 'Delta/Epsilon', 'Aleph', 'Beta', 'New Folder', 'Gamma', 'Zeta', 'Zeta/Inner']);
+    await page.waitForTimeout(250); await page.screenshot({ path: 'test-results/collection-dialog-inline.png' });
+    await dialog.getByRole('button', { name: 'Done' }).click();
     expect(errors).toEqual([]);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
