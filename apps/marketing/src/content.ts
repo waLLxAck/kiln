@@ -3,26 +3,26 @@
 
 // ---------- links ----------
 // Every external link the site uses. To change where donations go, edit `kofi`.
-export const version = '0.19.1';
+/** The newest published release, read from GitHub when the site is built (see vite.config.ts); empty if GitHub was unreachable. */
+export const version = __KILN_RELEASE__.version;
 export const repository = 'https://github.com/waLLxAck/kiln';
 export const releases = `${repository}/releases`;
 /** The install steps for every platform, in the README. */
 export const installGuide = `${repository}#download`;
-const assets = `${releases}/download/v${version}`;
 
 // ---------- downloads ----------
-// One file per platform, all from the same release. The macOS and Linux builds are new and have not been tested on real machines.
+// One file per platform, all from the newest release, with the URLs GitHub lists for its assets.
 export type Os = 'windows' | 'mac' | 'linux';
-export type Download = { key: 'windows' | 'mac-arm64' | 'mac-x64' | 'appimage' | 'deb' | 'targz'; os: Os; label: string; detail: string; file: string; url: string };
-const file = (key: Download['key'], os: Os, label: string, detail: string, name: string): Download => ({ key, os, label, detail, file: name, url: `${assets}/${name}` });
+export type Download = { key: 'windows' | 'mac-arm64' | 'mac-x64' | 'appimage' | 'deb' | 'targz'; os: Os; label: string; detail: string; url: string };
+const file = (key: Download['key'], os: Os, label: string, detail: string): Download => ({ key, os, label, detail, url: __KILN_RELEASE__.assets[key] });
 export const downloads: Download[] = [
-  file('windows', 'windows', 'Windows', 'installer', `Kiln.Setup.${version}.exe`),
-  file('mac-arm64', 'mac', 'macOS, Apple silicon', 'disk image', `Kiln-${version}-arm64.dmg`),
-  file('mac-x64', 'mac', 'macOS, Intel', 'disk image', `Kiln-${version}-x64.dmg`),
-  file('appimage', 'linux', 'Linux', 'AppImage', `Kiln-${version}-x86_64.AppImage`),
-  file('deb', 'linux', 'Debian and Ubuntu', '.deb', `kiln_${version}_amd64.deb`),
+  file('windows', 'windows', 'Windows', 'installer'),
+  file('mac-arm64', 'mac', 'macOS, Apple silicon', 'disk image'),
+  file('mac-x64', 'mac', 'macOS, Intel', 'disk image'),
+  file('appimage', 'linux', 'Linux', 'AppImage'),
+  file('deb', 'linux', 'Debian and Ubuntu', '.deb'),
   // The same app as a plain archive: runs without FUSE, which the AppImage needs.
-  file('targz', 'linux', 'Linux', 'tar.gz', `Kiln-${version}-x64.tar.gz`),
+  file('targz', 'linux', 'Linux', 'tar.gz'),
 ];
 export const download = (key: Download['key']) => downloads.find(d => d.key === key)!;
 export const osName: Record<Os, string> = { windows: 'Windows', mac: 'macOS', linux: 'Linux' };

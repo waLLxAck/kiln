@@ -10,18 +10,9 @@ import { chromium } from '@playwright/test';
 
 const base = (process.env.MARKETING_URL ?? 'http://127.0.0.1:5174').replace(/\/?$/, '/');
 const supportUrl = new URL('support/', base).href;
-const repository = 'https://github.com/waLLxAck/kiln';
-const version = '0.19.1';
-const assets = `${repository}/releases/download/v${version}`;
-/** Every file the site offers, by the key the page uses in data-download. */
-const files = {
-  windows: `${assets}/Kiln.Setup.${version}.exe`,
-  'mac-arm64': `${assets}/Kiln-${version}-arm64.dmg`,
-  'mac-x64': `${assets}/Kiln-${version}-x64.dmg`,
-  appimage: `${assets}/Kiln-${version}-x86_64.AppImage`,
-  deb: `${assets}/kiln_${version}_amd64.deb`,
-  targz: `${assets}/Kiln-${version}-x64.tar.gz`,
-};
+import { latestRelease, repository } from '../apps/marketing/latest-release.mjs';
+/** Every file the site offers, by the key the page uses in data-download: the newest release's assets, as the build read them. */
+const { version, assets: files } = await latestRelease();
 const agents = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
   mac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15',
@@ -79,6 +70,7 @@ async function checkStatic(run) {
   // Every platform's file is offered in the download section, once, as the button or one of the other links.
   const offered = await page.locator('#download a[data-download], #download a[data-download-other]').evaluateAll(links => links.map(link => link.href));
   assert.deepEqual([...offered].sort(), Object.values(files).sort(), `${label}: one link per platform file`);
+  assert.match(await page.locator('#download .download-button').innerText(), new RegExp(`Download Kiln ${version.replaceAll('.', '\\.')} for`), `${label}: the button names the newest release`);
   // The download section stays short: one honest line about the builds and a link to the install steps in the README.
   const buildNote = await page.locator('#download [data-build-note]').innerText();
   assert.match(buildNote, /Windows build isn’t signed/, `${label}: Windows build called unsigned`);

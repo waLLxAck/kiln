@@ -15,7 +15,7 @@ import { heart } from './ui';
 function downloadBlock() {
   const primary = primaryDownload();
   const others = downloads.filter(d => d.key !== primary.key);
-  return `${downloadButton(primary, os => `Download Kiln ${version} for ${os}`)}
+  return `${downloadButton(primary, os => `Download Kiln ${version ? `${version} ` : ''}for ${os}`)}
       <p class="download-others" aria-label="Other platforms">Also for ${others.map(d => `<a href="${d.url}" data-download-other="${d.key}">${d.label}${d.os === 'linux' ? ` (${d.detail})` : ''}</a>`).join('')}</p>
       <p class="fine" data-build-note>The Windows build isn’t signed yet, and the macOS and Linux builds are new and untested.</p>
       <p class="download-links"><a href="${installGuide}">How to install</a><a href="${releases}">All releases</a><a href="${support}">Support Kiln</a></p>`;
