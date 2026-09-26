@@ -1,10 +1,11 @@
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, FlaskConical, Github, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, ChevronDown, ChevronUp, FlaskConical, Github, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
 import type { Installation, Item, Provider, ProviderId, Target } from '../../../packages/protocol/schema';
 import { Badge, ContextMenu, KindIcon, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
 import { skillState } from './Skills';
+import { defaultSort, site, sortChoices, sortLabel, type Sort, type SortKey } from './library-sort';
 import { emptyLibraryFilters, filterDimensions, type FilterDimension, type LibraryFilterKey, type LibraryFilters } from './library-filters';
 
 /** One tab per kind of item, plus two cross-cutting views. Skills is a tab like any other; its rows carry install marks. */
@@ -61,12 +62,12 @@ function AddFilter({ dimensions, onAdd }: { dimensions: FilterDimension[]; onAdd
   </span>;
 }
 
-type ToolsProps = { query: string; onQuery: (q: string) => void; onSearchDown: (e: React.KeyboardEvent<HTMLInputElement>) => void; status: string; statuses: FilterOption[]; onStatus: (s: string) => void; install: InstallFilter; installOptions: FilterOption[] | null; onInstall: (f: InstallFilter) => void; advanced: LibraryFilters; onAdvanced: (next: LibraryFilters) => void; advancedOptions: (key: LibraryFilterKey) => FilterOption[]; onClear: () => void; shown: number; chosen: number; onClearChosen: () => void; canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean] };
+type ToolsProps = { query: string; onQuery: (q: string) => void; onSearchDown: (e: React.KeyboardEvent<HTMLInputElement>) => void; status: string; statuses: FilterOption[]; onStatus: (s: string) => void; install: InstallFilter; installOptions: FilterOption[] | null; onInstall: (f: InstallFilter) => void; advanced: LibraryFilters; onAdvanced: (next: LibraryFilters) => void; advancedOptions: (key: LibraryFilterKey) => FilterOption[]; onClear: () => void; shown: number; chosen: number; onClearChosen: () => void; sort: NonNullable<Sort>; onSort: (sort: Sort) => void; canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean] };
 /**
- * Search with the count and reorder arrows, then one row of filter pills. Status and installed are always there; the other
+ * Search with the count, the sort pill and (in custom order) the move arrows, then one row of filter pills. Status and installed are always there; the other
  * dimensions join the row through "+ Filter" and leave it through their ×. Collections are chosen in the sidebar, not here.
  */
-export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, onStatus, install, installOptions, onInstall, advanced, onAdvanced, advancedOptions, onClear, shown, chosen, onClearChosen, canReorder, reorder, reorderDisabled }: ToolsProps) {
+export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, onStatus, install, installOptions, onInstall, advanced, onAdvanced, advancedOptions, onClear, shown, chosen, onClearChosen, sort, onSort, canReorder, reorder, reorderDisabled }: ToolsProps) {
   const [added, setAdded] = useState<LibraryFilterKey[]>([]), [fresh, setFresh] = useState<LibraryFilterKey | null>(null);
   const inRow = filterDimensions.filter(d => added.includes(d.key) || advanced[d.key] !== emptyLibraryFilters[d.key]);
   const filtering = status !== 'all' || install !== 'any' || inRow.length > 0;
@@ -74,6 +75,7 @@ export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, o
     <div className="lib-tools">
       <label className="search-field"><Search size={16} /><input aria-label="Search library" value={query} onChange={e => onQuery(e.target.value)} onKeyDown={onSearchDown} placeholder="Search titles, content, tags…" title="Ctrl+F" />{query && <button aria-label="Clear search" onClick={() => onQuery('')}><X size={13} /></button>}</label>
       {chosen > 1 ? <span className="lib-count selection" aria-live="polite"><b>{chosen} selected</b><button type="button" className="icon-button" aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClearChosen}><X size={13} /></button></span> : <span className="muted small lib-count" aria-live="polite">{shown} shown</span>}
+      <SortMenu sort={sort} onSort={onSort} />
       {canReorder && <span className="inline"><button className="icon-button" aria-label="Move selected item up" disabled={reorderDisabled[0]} onClick={() => reorder(-1)}><ArrowUp size={13} /></button><button className="icon-button" aria-label="Move selected item down" disabled={reorderDisabled[1]} onClick={() => reorder(1)}><ArrowDown size={13} /></button></span>}
     </div>
     <div className="filter-bar" role="group" aria-label="Filters">
@@ -87,8 +89,7 @@ export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, o
   </>;
 }
 
-export type SortKey = 'title' | 'kind' | 'collection' | 'status' | 'updatedAt' | 'createdAt' | 'site';
-export type Sort = { key: SortKey; dir: 'asc' | 'desc' } | null;
+export { arrangeItems, defaultSort, moveInOrder, nextSort, sortItems, type Sort, type SortKey } from './library-sort';
 /** `opt` columns give way when the list is narrow; the title and the State column always stay. */
 type Column = { label: string; key: SortKey; opt?: boolean };
 export const columns = (tab: LibraryTab): Column[] => tab === 'source' ? [{ label: 'Source', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'Made', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
@@ -96,18 +97,15 @@ export const columns = (tab: LibraryTab): Column[] => tab === 'source' ? [{ labe
   : tab === 'link' ? [{ label: 'Title', key: 'title' }, { label: 'Site', key: 'site', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Saved', key: 'createdAt', opt: true }]
   : tab === 'recent' || tab === 'favourites' ? [{ label: 'Title', key: 'title' }, { label: 'Type', key: 'kind', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
   : [{ label: 'Title', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }];
-/** Clicking a heading sorts by it; clicking again flips the direction. Dates start newest first, text starts A to Z. */
-export function nextSort(current: Sort, key: SortKey): Sort {
-  if (current?.key === key) return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
-  return { key, dir: key === 'updatedAt' || key === 'createdAt' ? 'desc' : 'asc' };
-}
-const site = (item: Item) => { try { return new URL(item.source).hostname.replace(/^www\./, ''); } catch { return item.source || '—'; } };
-const statusRank: Record<string, number> = { approved: 0, testing: 1, captured: 2, rejected: 3, archived: 4 };
-export function sortItems(items: Item[], sort: Sort): Item[] {
-  if (!sort) return items;
-  const value = (i: Item): string | number => sort.key === 'site' ? site(i).toLowerCase() : sort.key === 'status' ? statusRank[i.status] ?? 9 : String(i[sort.key]).toLowerCase();
-  const direction = sort.dir === 'asc' ? 1 : -1;
-  return [...items].sort((a, b) => { const x = value(a), y = value(b); return (x < y ? -1 : x > y ? 1 : a.title.localeCompare(b.title)) * direction; });
+/** The sort pill in the tools row: the current order by name, and a menu of the others. */
+function SortMenu({ sort, onSort }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
+  const entries: MenuEntry[] = sortChoices.flatMap(c => [...(c.sort.key === 'order' ? ['separator' as const] : []), { label: c.label, hint: c.hint, checked: c.sort.key === sort.key && c.sort.dir === sort.dir, onSelect: () => onSort(c.sort) }]);
+  return <span className="filter-pill sort-pill">
+    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title="Order of the list" onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.left, y: box.bottom + 4 }); }}><ArrowDownUp />Sort: <b>{sortLabel(sort)}</b><ChevronDown /></button>
+    {open && <ContextMenu x={open.x} y={open.y} entries={entries} onClose={() => setOpen(null)} />}
+  </span>;
 }
 export function RowHead({ tab, sort, onSort }: { tab: LibraryTab; sort: Sort; onSort: (key: SortKey) => void }) {
   const cols = columns(tab);

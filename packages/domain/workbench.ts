@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot } from '../protocol/schema';
+import { analysisSchema, approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
@@ -47,6 +47,8 @@ export class Workbench {
   private changedItems: Set<string> | null = null;
   /** Content digest per revision hash, for duplicate detection without re-reading revisions. */
   private contentDigests = new Map<string, string>();
+  /** Usage counts from the observations folder; dropped when an observation is written and on a full refresh, which also picks up other processes' writes. */
+  private usageCache?: Usage;
   warnings: string[] = [];
   constructor(readonly root: string, localRoot = path.join(os.homedir(), '.kiln')) {
     invariant(path.isAbsolute(root), 'INVALID_PATH', 'Library root must be absolute.');
@@ -184,6 +186,10 @@ export class Workbench {
   trials(includeDeleted = false) { return readRecords(path.join(this.canonical, 'experiments'), value => trialSchema.parse(value), this.warnings).filter(t => includeDeleted || !t.deletedAt); }
   targets() { return readRecords(path.join(this.local, 'targets'), value => targetSchema.parse(value), this.warnings); }
   observations() { return readRecords(path.join(this.local, 'observations'), value => observationSchema.parse(value), this.warnings); }
+  /** Every snapshot carries these counts; reading every observation file each time would grow with use, so they are cached. */
+  usage(): Usage {
+    return this.usageCache ??= this.observations().reduce<Usage>((acc, o) => { if (o.itemId) { const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++; } return acc; }, {});
+  }
   activity() { return readRecords(path.join(this.canonical, 'activity'), value => value as Activity, this.warnings).sort((a, b) => b.at.localeCompare(a.at)); }
   record(kind: string, message: string, itemId: string | null = null, revision?: string) {
     const event: Activity = { id: randomUUID(), at: now(), itemId, kind, message, ...(revision ? { revision } : {}) };
@@ -307,6 +313,7 @@ export class Workbench {
   /** Reconciles working files into revisions and rebuilds the index. A full pass looks at every item; the snapshot path passes false and trusts the folder watcher. */
   refresh(full = true) {
     this.warnings = [];
+    if (full) this.usageCache = undefined;
     try {
       this.mutate(() => {
         // Only folders the watcher reported (or everything, the first time) are looked at; a snapshot after a small change must not walk the whole library.
@@ -523,7 +530,7 @@ export class Workbench {
   private observeUnlocked(event: Observation) {
     const file = path.join(this.local, 'observations', `${digest({ source: event.source, id: event.eventId })}.json`);
     if (fs.existsSync(file)) return { duplicate: true };
-    writeJson(file, event); return { duplicate: false };
+    writeJson(file, event); this.usageCache = undefined; return { duplicate: false };
   }
   enroll(input: unknown) {
     const data = targetSchema.omit({ id: true, machine: true }).parse(input);
@@ -708,7 +715,7 @@ export class Workbench {
   snapshot(): Snapshot {
     if (this.dirty) this.refresh(false);
     const git = this.cachedGitStatus();
-    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.' };
+    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.usage() };
   }
   exportLibrary(destination: string) {
     invariant(path.isAbsolute(destination), 'INVALID_PATH', 'Export path must be absolute.'); noLinks(destination);
