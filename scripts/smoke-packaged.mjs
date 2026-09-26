@@ -24,7 +24,11 @@ try {
   const bridge = await page.evaluate(async () => ({ title: document.title, platform: window.kiln.platform, update: await window.kiln.call('desktop.updateCheck') }));
   assert.match(bridge.title, /^Kiln/);
   assert.equal(bridge.platform, main.platform, 'the renderer sees the same platform');
-  assert.equal(bridge.update.supported, main.platform === 'win32', 'the in-app updater is offered only on Windows');
+  // Published builds follow GitHub releases. They install in place on Windows and from a .deb (resources/package-type); macOS builds
+  // are not Developer ID signed and the tar.gz has no installer, so those open the release page. Reading the status makes no request.
+  const debPackage = fs.existsSync(path.join(path.dirname(executablePath), 'resources', 'package-type'));
+  assert.equal(bridge.update.sourceKind, 'github', 'published builds follow GitHub releases');
+  assert.equal(bridge.update.install, main.platform === 'win32' || (main.platform === 'linux' && debPackage) ? 'app' : 'download', 'installs in place only where the platform allows');
   const logs = path.join(root, 'private', 'desktop', 'logs', 'performance.jsonl');
   const events = fs.existsSync(logs) ? fs.readFileSync(logs, 'utf8') : '';
   if (main.platform !== 'win32') assert.match(events, /"path\.resolved"/, 'took PATH from the login shell');
