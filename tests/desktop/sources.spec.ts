@@ -63,6 +63,24 @@ test('a source has its own tab and page: no copy or test, its recorded analysis,
     await page.locator('.item-card', { hasText: 'Ground the copy' }).click();
     await detail.getByRole('button', { name: 'From “Design chat”' }).click();
     await expect(detail.getByRole('heading', { name: 'Design chat' })).toBeVisible();
+
+    // The sort pill names the order. Across the library the source mixes in; inside its collection it leads, whatever the order.
+    const sortPill = page.getByRole('button', { name: /^Sort: / }), titles = page.locator('.item-card .item-title');
+    await expect(sortPill).toHaveText(/Recently added/);
+    await sortPill.click();
+    await page.getByRole('menuitem', { name: /^Title A–Z/ }).click();
+    await expect(sortPill).toHaveText(/Title A–Z/);
+    await expect(titles).toHaveText(['Compare designs side by side', 'Design chat', 'Ground the copy', 'Unrelated prompt']);
+    await page.locator('.sidebar .nav-item', { hasText: /^Design/ }).click();
+    await expect(sortPill).toHaveText(/Recently added/);
+    await expect(titles).toHaveText(['Design chat', 'Compare designs side by side']);
+    // Custom order brings the move arrows; an entry cannot be moved above the pinned source.
+    await expect(page.getByRole('button', { name: 'Move selected item up' })).toHaveCount(0);
+    await sortPill.click();
+    await page.getByRole('menuitem', { name: /^Custom order/ }).click();
+    await page.locator('.item-card', { hasText: 'Compare designs side by side' }).click();
+    await expect(page.getByRole('button', { name: 'Move selected item up' })).toBeDisabled();
+    await expect(titles).toHaveText(['Design chat', 'Compare designs side by side']);
     expect(errors).toEqual([]);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
