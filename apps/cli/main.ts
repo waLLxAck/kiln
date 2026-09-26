@@ -107,7 +107,8 @@ try {
     const items = ids.map(itemId => {
       const revision = wb!.getRevision(itemId, option('revision') || undefined);
       const item = wb!.getItem(itemId), madeFrom = item.kind === 'source' ? { madeFrom: wb!.madeFrom(itemId).map(({ id, title, kind }) => ({ id, title, kind })) } : {};
-      return option('full') ? { ...revision, ...madeFrom } : { item, revision: revision.hash, contentBytes: Buffer.byteLength(revision.content), files: Object.keys(revision.files), ...madeFrom };
+      // The item says where it is filed now; the revision's collection is where it was when that revision was saved.
+      return option('full') ? { ...revision, item, ...madeFrom } : { item, revision: revision.hash, contentBytes: Buffer.byteLength(revision.content), files: Object.keys(revision.files), ...madeFrom };
     });
     result = ids.length === 1 ? items[0] : { items };
   } else if (resource === 'items' && action === 'create') {

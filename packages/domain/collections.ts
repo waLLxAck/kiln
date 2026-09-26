@@ -36,7 +36,7 @@ export function collectionTree(names: Iterable<string>) {
   const seen = new Set<string>();
   for (const name of names) if (name) for (const part of [...ancestorsOf(name), name]) seen.add(part);
   const children = new Map<string, string[]>();
-  for (const name of seen) { const parent = parentOf(name); children.set(parent, [...children.get(parent) ?? [], name]); }
+  for (const name of seen) { const parent = parentOf(name), siblings = children.get(parent); if (siblings) siblings.push(name); else children.set(parent, [name]); }
   const ordered: string[] = [];
   const walk = (parent: string) => { for (const child of children.get(parent) ?? []) { ordered.push(child); walk(child); } };
   walk('');

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, net } from 'electron';
+import { app } from 'electron';
 import { GitHubUpdates, type InstallKind, type Updater } from '../../packages/updates/github';
 export { RELEASES } from '../../packages/updates/github';
 
@@ -24,5 +24,6 @@ async function loadUpdater(log: (event: string, fields?: Record<string, unknown>
   return autoUpdater as unknown as Updater;
 }
 export function createGitHubUpdates(log: (event: string, fields?: Record<string, unknown>) => void) {
-  return new GitHubUpdates(app.getVersion(), installKind(), log, (url, init) => net.fetch(url, init), () => loadUpdater(log));
+  // Node's fetch, not net.fetch: net.fetch reports an empty Response.url after a redirect, and the redirect target is the answer here.
+  return new GitHubUpdates(app.getVersion(), installKind(), log, (url, init) => fetch(url, init), () => loadUpdater(log));
 }

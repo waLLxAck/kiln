@@ -103,8 +103,16 @@ export class Workbench {
    */
   private fileSources() {
     const distilled = / distilled \d+ entries into “/;
-    const candidates = this.listItems(true).filter(i => ['prompt', 'link', 'file', 'image'].includes(i.kind) && !i.origin && (i.description || i.tags.includes('youtube')));
+    // Each item revision is looked at once per machine: reading a history means parsing every revision with its attachments.
+    const checkedFile = path.join(this.local, 'sources-checked.json');
+    const checked = new Set<string>(fs.existsSync(checkedFile) ? z.array(z.string()).catch([]).parse(readJson(checkedFile)) : []);
+    const candidates = this.listItems(true).filter(i => ['prompt', 'link', 'file', 'image'].includes(i.kind) && !i.origin && (i.description || i.tags.includes('youtube')) && !checked.has(`${i.id}:${i.revision}`));
+    if (!candidates.length) return;
     const found = candidates.filter(item => { try { return (item.tags.includes('youtube') && Boolean(this.getRevision(item.id).files['transcript.md'])) || this.revisionHistory(item.id).some(r => distilled.test(r.summary)); } catch { return false; } });
+    const approvedOnes = new Set(this.approvals().filter(a => a.trust === 'local').map(a => `${a.itemId}:${a.revision}`));
+    // Items that are not sources, and approved ones that stay as they are, need no second look until they change.
+    for (const item of candidates) if (!found.includes(item) || approvedOnes.has(`${item.id}:${item.revision}`)) checked.add(`${item.id}:${item.revision}`);
+    writeJson(checkedFile, [...checked]);
     if (!found.length) return;
     const approved = new Set(this.approvals().filter(a => a.trust === 'local').map(a => `${a.itemId}:${a.revision}`));
     try {

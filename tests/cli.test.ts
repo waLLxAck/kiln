@@ -119,6 +119,7 @@ test('CLI lists sources and what was made from them', () => {
   assert.deepEqual(ok(['items', 'list', '--from', source]).items.map((i: { id: string }) => i.id), [entry], 'found wherever the entry is filed');
   assert.deepEqual(ok(['items', 'read', source]).madeFrom, [{ id: entry, title: 'Compare designs', kind: 'technique' }]);
   assert.deepEqual(ok(['items', 'read', source, '--full']).madeFrom.map((i: { id: string }) => i.id), [entry]);
+  assert.equal(ok(['items', 'read', entry, '--full']).item.collection, 'Elsewhere', 'a full read says where the item is filed now');
   assert.equal(ok(['items', 'read', entry]).madeFrom, undefined);
   assert.match(JSON.parse(call(['items', 'list', '--kind', 'sources']).stderr).error.message, /--kind must be one of/);
 });

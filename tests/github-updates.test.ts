@@ -16,7 +16,10 @@ test('the latest release comes from the /releases/latest redirect, not the rate-
   assert.deepEqual(asked, { url: `${RELEASES}/latest`, method: 'HEAD' });
   assert.deepEqual(await latestRelease(async () => ({ status: 302, url: `${RELEASES}/latest`, headers: { get: (name: string) => name === 'location' ? `${RELEASES}/tag/v1.2.3` : null } })), { version: '1.2.3', url: `${RELEASES}/tag/v1.2.3` }, 'an unfollowed redirect still names the tag');
   assert.equal(await latestRelease(async () => ({ status: 404, url: `${RELEASES}/latest`, headers: { get: () => null } })), null, 'no releases yet');
-  assert.equal(await latestRelease(redirect('nightly')), null);
+  assert.deepEqual(await latestRelease(redirect('2.0.0')), { version: '2.0.0', url: `${RELEASES}/tag/2.0.0` }, 'the link keeps the tag as published');
+  // Electron's net.fetch reports an empty URL after a redirect: that must read as a failure, never as "up to date".
+  await assert.rejects(latestRelease(async () => ({ status: 200, url: '', headers: { get: () => null } })), /without naming the latest release/);
+  await assert.rejects(latestRelease(redirect('nightly')), /without naming the latest release/);
 });
 
 test('a copy that cannot replace itself only reports the release; checks share one request and failures are reported', async () => {

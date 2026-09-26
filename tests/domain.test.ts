@@ -423,6 +423,8 @@ test('material distilled before sources existed becomes a source when the librar
       assert.equal(reopened.getItem(approvedVideo.id).kind, 'link'); assert.equal(reopened.getItem(approvedVideo.id).status, 'approved', 'approval is never dropped by the tidy-up');
       assert.ok(reopened.warnings.some(w => w.includes('Approved talk')));
       assert.equal(reopened.getItem(plain.id).kind, 'prompt'); assert.equal(reopened.getItem(plain.id).revision, plain.revision);
+      const checked = JSON.parse(fs.readFileSync(path.join(reopened.local, 'sources-checked.json'), 'utf8')) as string[];
+      assert.ok(checked.includes(`${plain.id}:${plain.revision}`), 'a plain item is not scanned again on the next start');
     } finally { reopened.close(); }
   } finally { f.close(); }
 });

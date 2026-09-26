@@ -11,13 +11,16 @@ type Fetch = (url: string, init: { method: string; redirect: 'follow'; cache: 'n
 
 /**
  * Newest published version: github.com redirects /releases/latest to the release's tag page, so one HEAD request answers it without
- * the rate-limited API. The redirect is followed (Electron's net.fetch cancels a manual one) and the tag read from the final URL.
+ * the rate-limited API. Pass a fetch that reports the final URL after a redirect: Node's does; Electron's net.fetch leaves it empty.
+ * No release yet is null; an answer that names no tag is an error, never a silent "up to date".
  */
 export async function latestRelease(fetcher: Fetch): Promise<{ version: string; url: string } | null> {
   const response = await fetcher(`${RELEASES}/latest`, { method: 'HEAD', redirect: 'follow', cache: 'no-store' });
+  if (response.status === 404) return null;
   const location = response.url.includes('/releases/tag/') ? response.url : response.headers.get('location') ?? '';
-  const version = location.match(/\/releases\/tag\/v?(\d+\.\d+\.\d+)$/)?.[1];
-  return version ? { version, url: `${RELEASES}/tag/v${version}` } : null;
+  const match = location.match(/\/releases\/tag\/(v?(\d+\.\d+\.\d+))$/);
+  if (!match) throw new Error(`GitHub answered ${response.status} without naming the latest release.`);
+  return { version: match[2], url: `${RELEASES}/tag/${match[1]}` };
 }
 
 /** The parts of electron-updater's AppUpdater this uses, so tests can stand in for it. */

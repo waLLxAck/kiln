@@ -80,8 +80,11 @@ To publish without Actions, build each platform on its own machine and upload wi
 KILN_PUBLIC_BUILD=1 npm run dist:linux -- --publish never     # AppImage, .deb, tar.gz and latest-linux.yml in release/
 KILN_PUBLIC_BUILD=1 npm run dist:win -- --publish never       # Kiln-Setup-<version>.exe, its .blockmap and latest.yml
 KILN_PUBLIC_BUILD=1 npm run dist:mac -- --publish never       # dmg, zip and latest-mac.yml
-gh release create v<version> --title "Kiln <version>" --notes-file docs/releases/<version>.md <installers> latest*.yml SHA256SUMS.txt
+gh release create v<version> --title "Kiln <version>" --notes-file docs/releases/<version>.md    # once, from any machine
+gh release upload v<version> release/<installers> release/latest*.yml                        # from each build machine
 ```
+
+Then download every file into one folder (`gh release download v<version>`), run `sha256sum -- * > SHA256SUMS.txt` there, and upload it with `gh release upload v<version> SHA256SUMS.txt`.
 
 Keep the file names electron-builder gives them, because the feeds refer to them. On Arch, the `.deb` step needs `libcrypt.so.1` (`libxcrypt-compat`).
 
