@@ -23,14 +23,16 @@ test('formatted reading, primary actions, simple status and save without analysi
     await page.getByRole('button', { name: 'Refresh library' }).click();
     await page.locator('.item-card').filter({ hasText: 'Reading example' }).click();
     await expect(page.locator('.detail-actions > .primary')).toHaveText('Copy');
+    await expect(page.locator('.content-preview')).toContainText('# Readable heading');
+    await expect(page.locator('.markdown-content')).toHaveCount(0);
+    await expect(page.locator('.item-status-details summary')).toHaveText('Draft');
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
     await expect(page.locator('.markdown-content h1')).toHaveText('Readable heading');
     await expect(page.locator('.markdown-content li')).toHaveCount(2);
     await expect(page.locator('.markdown-content pre code')).toContainText('const answer = 42');
     expect(await page.evaluate(() => (window as any).unsafe)).toBeUndefined();
-    await expect(page.locator('.item-status-details summary')).toHaveText('Draft');
     await page.getByRole('button', { name: 'Raw text', exact: true }).click();
     await expect(page.locator('.content-preview')).toContainText('# Readable heading');
-    await page.getByRole('button', { name: 'Read formatted' }).click();
     await page.getByRole('button', { name: 'More', exact: true }).click();
     await expect(page.getByRole('menuitem', { name: /^Approve/ })).toBeVisible();
     await page.keyboard.press('Escape');

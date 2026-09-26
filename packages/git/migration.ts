@@ -102,7 +102,8 @@ export function applyMigration(wb: Workbench, expected: string, source = wb.root
       if (existing.sourceHash === entry.hash) { unchanged++; continue; }
       const item = wb.getItem(existing.itemId);
       if (item.revision !== existing.revision) { conflicts.push(entry.path); continue; }
-      const changed = wb.update({ id: item.id, expect: item.revision, value: bundle, summary: `Imported source update at ${plan.commit.slice(0, 8)}` });
+      // An upstream update keeps the item in whatever collection it was moved to.
+      const changed = wb.update({ id: item.id, expect: item.revision, value: { ...bundle, collection: item.collection }, summary: `Imported source update at ${plan.commit.slice(0, 8)}` });
       existing.revision = changed.revision; existing.sourceHash = entry.hash; updated++;
     } else {
       const item = wb.create(bundle, `migration:${key}:${entry.hash}`);

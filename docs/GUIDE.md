@@ -34,8 +34,8 @@ What ships today:
 | Source analysis | Turn captured material into prompts, insights, techniques, tools and resources, grouped in a collection and linked to their source. |
 | YouTube distillation | Fetch captions and metadata with `yt-dlp`, retain the transcript, and extract reusable entries with timestamped source links. |
 | Library organization | Search, filter by kind/status/provider/location/tags, favorite items, manage collections, select in bulk, archive, trash and restore. |
-| Prompt editing | Keep Markdown and attachments, resolve template variables when copying, inspect revision history and diffs, and retain provenance when deriving new items. |
-| Experiments | Choose a local project/repository or an isolated example, then test an exact revision through Codex or Claude Code. Or prepare a manual handoff with a project, task, rubric and variables. Keep output, limitations and pass/fail/uncertain assessments with that revision. Agent assessments and human judgements are distinct. |
+| Prompt editing | Keep Markdown and attachments, fill in `{{variable}}` placeholders when copying (all optional; anything left blank stays as `{{name}}`), inspect revision history and diffs, and retain provenance when deriving new items. |
+| Experiments | Choose a local project/repository or an isolated example, then test an exact revision through Codex or Claude Code. Or prepare a manual handoff with a project, task, rubric and optional variable values. Keep output, limitations and pass/fail/uncertain assessments with that revision. Agent assessments and human judgements are distinct. |
 | Run visibility | See live activity, model, reasoning effort, elapsed time and token usage; cancel or retry runs and inspect local evidence. Up to two managed runs can be active. |
 | Item conversations | Ask an agent about an item and its attachments, including source-video context; continue a private session or explicitly export its transcript. |
 | Skill authoring | Ask an agent to turn a prompt, image or note into a new SKILL.md draft using bundled writing guidance, with a link back to the source revision. |
@@ -118,7 +118,7 @@ See [what changed in 0.19.1](releases/0.19.1.md).
 
 1. On first launch, sign in with the official `gh` CLI and create a Kiln repository on GitHub (or open one Kiln created earlier). The same screen offers **Import my installed skills** (the folders Codex and Claude Code already read on this machine) and **Import from a skills repository** (a clone or one of your GitHub repositories); everything arrives as drafts with supporting and linked files, and nothing is moved. Folders that only hold other skills (such as `~/.codex/skills/.system`) are not listed on their own; empty or broken folders are. If the skills came from a personal folder Kiln does not manage yet, setup offers **Manage the … folders** so the copies already there show as found instead of "Not installed"; managing a folder only records it, and installs or changes nothing. Two different skills with the same name stay separate items, and the list and the item header show which folder each came from (the full folder is kept on this machine only; the library stores just the folder name). **Settings & repository** has the same tools later, including **Connect a different repository**.
 2. In **Settings → Skill & agent locations**, choose **Agents** (`~/.agents/skills`, shared by Codex, Copilot and other clients) and **Claude** (`~/.claude/skills`). Both skill and client-specific agent-definition paths are shown. **Find skills and agents not in the library** imports existing items as drafts and offers safe cleanup of broken links or empty folders. Optional `.codex/skills` and `.copilot/skills` copies are under **Client-specific locations**; Copilot project copies use `.github/skills`. An installed item shows **Installed** in its header. Click it to manage or remove individual copies in **Installs**, where Agents and Claude locations are grouped together and client-specific copies are in a disclosure. See [verified compatibility and sources](SKILL_LOCATIONS.md).
-3. Browse **Library** or **Skills**. The lifecycle chips (Captured, Testing, Approved) filter and count items; **Archive** holds rejected and archived items. Right-click any item for status, favourite, install and trash actions. Right-click a collection in the sidebar to delete it; the items inside move to Trash. Items in **Trash** can be restored or deleted permanently.
+3. Browse **Library** or **Skills**. The lifecycle chips (Captured, Testing, Approved) filter and count items; **Archive** holds rejected and archived items. Right-click any item for status, favourite, install, move and trash actions. Right-click a collection in the sidebar to add a subfolder, rename or delete it; deleting asks whether its items stay in the library or move to Trash. Items in **Trash** can be restored or deleted permanently.
 4. **Test** runs an experiment with Codex or Claude Code (or a manual handoff); output and the agent assessment are saved automatically against the exact revision. **Create skill** asks the chosen agent to draft a SKILL.md from a prompt, image or note using Kiln's bundled writing-for-agents guidance; the draft arrives as a new unapproved skill linked to its source.
 5. Every skill shows one toggle per configured location. **Install** copies the approved version into the agent's skills folder (approving the current draft first if needed); new agent sessions see it. **Approve & install** does both for every configured location in one click. **Remove** deletes only that copy. An identical folder Kiln did not create is adopted rather than rewritten; a junction is replaced by a real copy; a differing folder is set aside under Kiln's private data only after you confirm. Project folders are enrolled in **Machines** and installed to from an item's Installs tab. Machines is not reliable yet, so release builds show it as **Coming soon** (see [Machines](#machines)); builds from source still have it.
 6. Installed skills are recorded in `workbench/installs.json` inside the library. On another machine, clone the library, turn on the same locations and press **Install everything marked for this machine**, or run `workbench skills sync`. Sync installs the latest locally trusted approved revision, even when a newer draft exists. It never creates an approval; missing or imported-only approvals are reported for review.
@@ -131,15 +131,32 @@ Editing an item does not need a note: leave **What changed?** empty to use a pla
 Use the import area or Ctrl+N, paste/drop content or select files, then choose **Analyze and add**. You can also paste or drop anything onto the window to capture it; the capture dialog also takes files.
 
 - **Save only** keeps the original text and attachments immediately without calling an agent or fetching captions.
-- **Analyze and add** uses the same analysis as a YouTube video. Kiln preserves your original source and asks your default agent to create reusable prompts, insights, techniques, tools and resources in a collection, linked back to that source.
+- **Analyze and add** uses the same analysis as a YouTube video. Kiln keeps your original material as a **source** and asks your default agent to create reusable prompts, insights, techniques, tools and resources in a collection, each linked back to that source. A saved-only item can be analysed later with **More → Analyze as a source**.
+
+See [Sources](#sources) for how the material and everything made from it stay connected.
 
 Unreadable sources and unsupported files are reported instead of guessed. Mixed files stay together on the source item. Failed starts can be retried without creating another copy. Existing captures are not automatically reprocessed.
 
+## Sources
+
+A source is the material an analysis read: a pasted chat, a page, files, or a video. It is not a prompt, so it has no Copy, Test, Approve or Create skill. The **Sources** tab lists them with how many items were made from each. A source's page has:
+
+- **Overview**: the analysis runs (model, effort, tokens, steps, summary, takeaway, what was skipped), a short list of what was made, and the original material.
+- **Made**: every item made from it, grouped by kind, each with the collection it is filed in now. **Show in library** filters the library to them with the **Source** filter.
+- **Original**: the material and its attached files, editable like any item.
+- **History**: its revisions.
+
+**Analyze again** runs a new analysis; new entries are added beside the earlier ones. Every entry shows **From "<source>"** under its title, which opens the source. The link is kept on the entry, so moving entries, renaming collections or deleting a collection never breaks it. **+ Filter → Source** shows what one source produced across collections.
+
+The run's steps and CLI session stay on the machine that ran it. A summary of each completed analysis (provider, model, effort, tokens, summary, takeaway, skipped notes, counts and the items it created) is kept in the library under `workbench/analyses/`, so it shows on other machines and in exports. Chatting about a source, or about an entry made from one, gives the agent the source material (a video's transcript) and the list of sibling entries.
+
+Material analysed before sources existed is filed as a source the next time the library opens: anything with a distillation note in its history, or a video with its transcript. Approved items are left as they are, because changing the kind creates a new revision; Kiln shows a warning for them instead.
+
 ## Distilling a YouTube video
 
-Paste a bare YouTube link into Add to library and the button becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` the same way the shell `yt` helper does (auto-captions, English first, `~/cookies.txt` when present; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the link item, and asks the chosen agent for library entries: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, and only the insights that change what you would do.
+Paste a bare YouTube link into Add to library and the button becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` the same way the shell `yt` helper does (auto-captions, English first, `~/cookies.txt` when present; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, and only the insights that change what you would do.
 
-Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized, limited to 80 characters; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description shown under its title. Prompts are stored bare so Copy yields only the prompt. The video item shows the summary, takeaway, entry counts and an **Open** button for the collection. `yt-dlp` must be on PATH.
+Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized, limited to 80 characters; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description shown under its title. Prompts are stored bare so Copy yields only the prompt. The video's source page shows the summary, takeaway, entry counts and everything made from it. `yt-dlp` must be on PATH.
 
 Distillation keeps a private copy of the CLI transcript in its run folder. It is never attached to the library item, included in a normal library export, or newly published to GitHub. The public video captions remain attached as `transcript.md`.
 
@@ -177,9 +194,13 @@ Follow-up messages continue that chat. Switching items starts a separate session
 
 ## Library tabs and collections
 
-The **All** tab lists everything newest first; the other tabs are one per kind and appear only when something of that kind exists. Entries distilled from a video are filed under their own kinds, **Insights**, **Techniques**, **Tools** and **Resources**, next to Prompts; a tool or resource with a known URL leads with it, so Open goes there.
+The **All** tab lists everything newest first; the other tabs are one per kind and appear only when something of that kind exists. **Sources** holds the material analyses were run on (see [Sources](#sources)). Entries distilled from a video are filed under their own kinds, **Insights**, **Techniques**, **Tools** and **Resources**, next to Prompts; a tool or resource with a known URL leads with it, so Open goes there.
 
-**Collections** are renamed, reordered, added and deleted from the sidebar's right-click menu or **Manage collections**. Renaming moves every item in the collection, trashed ones included; because the collection is part of each revision, approved items return to Captured and need approving again. Imported collections can be renamed freely; nothing ties them to their source repository.
+**Collections** are folders. They are renamed, reordered, added and deleted from the sidebar's right-click menu or **Manage collections**. A `/` in the name makes a subfolder (`Game Design/Puzzles`); the sidebar shows them as a tree that can be collapsed, and choosing a collection shows its subfolders' items too. Renaming moves the collection's subfolders and every item in them, trashed ones included; renaming to a path (`Puzzles` → `Game Design/Puzzles`) nests it. Imported collections can be renamed freely; nothing ties them to their source repository.
+
+**Move to collection…** on an item's right-click menu (or on a selection) files items in another collection, a new one, or none. Items outside every collection stay in the whole library and appear under **Unfiled**. Deleting a collection offers **Keep items**, which moves its items and subfolders up one level (to the parent, or out of every collection for a top-level one), or **Move items to trash**, which trashes them with their subfolders' items; restoring one brings the collection back.
+
+Organising never creates a revision: where an item is filed is kept on the item, not in its content, so approved items stay approved and installed copies keep matching. Changing only the collection in the editor is a move too.
 
 ## Bulk Library management
 
@@ -221,6 +242,11 @@ npm run cli -- collections list
 npm run cli -- items list --collection "Game Design Practice"
 npm run cli -- items list --collection "Game Design Practice" --query puzzles
 npm run cli -- items read <id1> <id2> --full
+npm run cli -- collections create --name "Game Design/Puzzles"
+npm run cli -- items move <id1> <id2> --collection "Game Design/Puzzles"
+npm run cli -- collections delete --name "Old ideas" --keep-items
+npm run cli -- items list --kind source
+npm run cli -- items list --from <source id>
 npm run cli -- --library "C:\path\to\library" github status
 npm run cli -- --library "C:\path\to\library" deploy installations
 npm run cli -- --library "C:\path\to\library" skills sync
@@ -229,7 +255,11 @@ npm run cli -- --library "C:\path\to\library" library export --file "C:\backups\
 
 After building, `npm link` makes both `kiln` and `workbench` available through npm's bin directory.
 
-Start with the named collection; read content only for the items you need. Collection names match exactly, including case. Lists return IDs, titles and kinds; `items list --full` returns detailed metadata. Lists include archived/rejected items and exclude trash. `--status` narrows them further. Collection summaries include empty collections with count zero.
+Start with the named collection; read content only for the items you need. Collection names match exactly, including case. Lists return IDs, titles and kinds; `items list --full` returns detailed metadata. Lists include archived/rejected items and exclude trash. `--status` narrows them further. Collection summaries include empty collections with count zero; `count` is the items directly inside, `total` adds subfolders, and `unfiled` counts items outside every collection. `items list --collection "Name" --recursive` includes subfolders; `--unfiled` lists items outside every collection.
+
+Agents organise the library with the same commands as the desktop: `collections create --name`, `collections rename --from --to` (subfolders and items move with it; a path nests it), `collections delete --name` with either `--keep-items` (items and subfolders move up one level) or `--trash-items`, and `items move <id...> --collection "Name"` or `--unfiled` for 1–500 items. Neither option is a default. None of these create revisions, so approvals and installed copies are unaffected.
+
+`items list --kind <kind>` narrows a list to one kind, and `--from <id>` to the items made from one item, wherever they are filed. Reading a source returns `madeFrom`, the items made from it.
 
 Lists return `total` and `nextOffset`; pass `--offset <nextOffset>` for another page. `--limit` defaults to 50 (maximum 500). `items read` accepts 1–100 IDs in one call. Single reads return one object; multiple IDs return `{ items: [...] }` in requested order. Add `--full` to read content and attached files. `--revision` works with one ID only. A failed batch returns an error without partial content.
 
@@ -237,9 +267,12 @@ Other typed operations accept `--input request.json`. Results include `schemaVer
 
 ## Updating the installed app
 
-If you installed Kiln from GitHub, update by downloading and running the newer installer from the [releases page](https://github.com/waLLxAck/kiln/releases).
+Kiln 0.20.0 and later check the [releases page](https://github.com/waLLxAck/kiln/releases) for new versions 15 seconds after starting and then every 30 minutes. Each check is one small request to GitHub. When a new version is out, a download button appears at the bottom of the sidebar and in Settings → Updates.
 
-On macOS and Linux, Kiln doesn't update itself: Settings → Updates links to the releases page. Replace `Kiln.app` in Applications with the new one, replace the AppImage file, or `sudo apt install` the new .deb.
+- **Windows, the Linux AppImage and the .deb:** **Download** fetches the update in the background while you keep working. **Restart to update** then installs it and reopens Kiln. The .deb asks for your administrator password. Nothing downloads until you click, and closing Kiln doesn't install anything.
+- **macOS and the Linux tar.gz:** **Get <version>** opens the release page. Replace `Kiln.app` in Applications, or unpack the new tar.gz over the old folder. macOS only lets apps signed with an Apple Developer ID replace themselves, and Kiln's macOS builds aren't signed that way yet.
+
+Settings → Updates also has **Check now** and **Stop checking**. Versions before 0.20.0 don't check GitHub: download 0.20.0 once from the releases page, and later versions arrive in the app.
 
 Windows builds made from a local checkout can update themselves in the app; see [DEVELOPMENT.md](DEVELOPMENT.md#in-app-updates-for-local-builds).
 

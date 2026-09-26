@@ -7,9 +7,11 @@ export type LibraryFilters = {
   state: 'any' | 'managed' | 'external' | 'linked' | 'changed';
   scope: 'any' | 'personal' | 'project';
   tag: string;
+  /** ID of a source: only items made from it. */
+  source: string;
 };
 export type LibraryFilterKey = keyof LibraryFilters;
-export const emptyLibraryFilters: LibraryFilters = { provider: 'any', location: 'any', state: 'any', scope: 'any', tag: '' };
+export const emptyLibraryFilters: LibraryFilters = { provider: 'any', location: 'any', state: 'any', scope: 'any', tag: '', source: '' };
 export const activeFilterCount = (filters: LibraryFilters) => Object.entries(filters).filter(([key, value]) => value !== emptyLibraryFilters[key as LibraryFilterKey]).length;
 
 /** One optional filter dimension: added to the filter row on demand, shown as a pill like the built-in ones. Tag options come from the items. */
@@ -24,10 +26,12 @@ export const filterDimensions: FilterDimension[] = [
     { value: 'managed', label: 'Managed by Kiln', hint: 'Installed by Kiln and tracked.' }, { value: 'external', label: 'External copy', hint: 'Found in a skill folder but not installed by Kiln.' }, { value: 'linked', label: 'Link or junction' }, { value: 'changed', label: 'Different or missing content', hint: 'The copy no longer matches the library revision.' }] },
   { key: 'scope', name: 'Scope', hint: `Personal folders or enrolled project folders. ${sameCopy}`, options: [{ value: 'personal', label: 'Personal' }, { value: 'project', label: 'Project' }] },
   { key: 'tag', name: 'Tag', hint: 'Only items carrying one tag', options: [] },
+  { key: 'source', name: 'Source', hint: 'Only items made from one source, in whatever collection they are filed', options: [] },
 ];
 
 export function matchesLibraryFilters(item: Item, copies: Installation[], filters: LibraryFilters) {
   if (filters.tag && !item.tags.includes(filters.tag)) return false;
+  if (filters.source && item.origin?.itemId !== filters.source) return false;
   const copyFilters = filters.location !== 'any' || filters.state !== 'any' || filters.scope !== 'any';
   if (!copyFilters && filters.provider === 'any') return true;
   if (!copyFilters && item.kind === 'agent') return item.agent?.provider === filters.provider;

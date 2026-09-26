@@ -1,7 +1,8 @@
 name: Release
 
 # Pushing a version tag (for example v0.18.1) builds Kiln for Windows, Linux and macOS, each on its own runner, and publishes
-# all of them in one release with that version's notes from docs/releases/ and a combined SHA256SUMS.txt. Public builds record no
+# all of them in one release with that version's notes from docs/releases/, a combined SHA256SUMS.txt and the latest*.yml feeds
+# the in-app updater reads. Public builds record no
 # build folder (KILN_PUBLIC_BUILD=1).
 #
 # Running it by hand (workflow_dispatch) is a dry run: it builds and inspects every installer and uploads them as workflow
@@ -69,12 +70,11 @@ jobs:
           mkdir upload
           case "$RUNNER_OS" in
             Windows)
-              cp "release/Kiln Setup $version.exe" "upload/Kiln.Setup.$version.exe"
-              cp "release/Kiln Setup $version.exe.blockmap" "upload/Kiln.Setup.$version.exe.blockmap" ;;
+              cp "release/Kiln-Setup-$version.exe" "release/Kiln-Setup-$version.exe.blockmap" release/latest.yml upload/ ;;
             Linux)
-              cp "release/Kiln-$version-x86_64.AppImage" "release/kiln_${version}_amd64.deb" "release/Kiln-$version-x64.tar.gz" upload/ ;;
+              cp "release/Kiln-$version-x86_64.AppImage" "release/kiln_${version}_amd64.deb" "release/Kiln-$version-x64.tar.gz" release/latest-linux.yml upload/ ;;
             macOS)
-              cp "release/Kiln-$version-arm64.dmg" "release/Kiln-$version-x64.dmg" "release/Kiln-$version-arm64.zip" "release/Kiln-$version-x64.zip" upload/ ;;
+              cp "release/Kiln-$version-arm64.dmg" "release/Kiln-$version-x64.dmg" "release/Kiln-$version-arm64.zip" "release/Kiln-$version-x64.zip" release/latest-mac.yml upload/ ;;
           esac
           ls -l upload
           file upload/* || true

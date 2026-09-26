@@ -21,13 +21,16 @@ workbench/
   approvals/<uuid>.json
   experiments/<uuid>.json
   activity/<uuid>.json
+  analyses/<uuid>.json    # what each analysis of a source produced
 ```
 
 `kiln.json` declares `format: kiln-library`, `schemaVersion: 1`, a stable `repositoryId`, `library: workbench`, and `infrastructureVersion`. Kiln rejects unsupported schema versions and does not downgrade newer infrastructure.
 
+Item kind `source` marks material an agent analysed (a pasted chat, a page, files, a video). Items made from it name it in `origin`. `analyses/<job id>.json` records each completed analysis: provider, model, effort, token usage, times, summary, takeaway, skipped notes, counts by kind, the created item IDs and the collection. It never holds run steps, commands, paths or the CLI session, which stay machine-private. Records are written once, exported with the library and removed when their source is purged.
+
 Item status is one of `captured`, `testing`, `approved`, `rejected`, or `archived`. Libraries written before v0.2 stored `inbox` for newly captured items; Kiln reads that as `captured` and rewrites the file on its next save.
 
-The stable item ID survives edits, renaming, Git sync, and export/import. An immutable revision stores content, supporting file bytes as base64, title, description, kind, tags, collection, source, licence and agent metadata when applicable. New revisions carry `hashVersion: 2`; legacy revisions without it keep their original identity and remain readable. Its SHA-256 is calculated over a stable serialization of those fields. Approval refers to that exact hash. Editing working files creates a new draft after reconciliation; historical approved snapshots stay intact.
+The stable item ID survives edits, renaming, Git sync, and export/import. An immutable revision stores content, supporting file bytes as base64, title, description, kind, tags, collection, source, licence and agent metadata when applicable. New revisions carry `hashVersion: 2`; legacy revisions without it keep their original identity and remain readable. Its SHA-256 is calculated over a stable serialization of those fields. Approval refers to that exact hash. The collection an item is filed in lives in `item.json`. Moving an item rewrites that file; renaming or deleting a collection rewrites the affected item files and `workbench.json`. Revisions and approvals are never touched, so approvals survive organising. A revision's own `collection` records where the item was when that revision was saved, and an empty collection means the item is unfiled. `/` separates subfolders (`Game Design/Puzzles`); parents are implied, and `workbench.json` keeps the sidebar order and empty collections. Editing working files creates a new draft after reconciliation; historical approved snapshots stay intact.
 
 The infrastructure manifest records hashes of app-owned files. Update previews compare both current and proposed bytes; unmanaged or locally modified files block replacement. Future releases can ship new templates and infrastructure versions without accepting alternate library structures.
 

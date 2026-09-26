@@ -66,9 +66,62 @@ test('CLI combines collection, content search and status; full lists expose meta
 });
 
 test('CLI collection counts include empty and archived collections but exclude trash', () => {
-  const { collections } = data(['collections', 'list']);
-  assert.deepEqual(collections.find((item: { name: string }) => item.name === 'Game Design Practice'), { name: 'Game Design Practice', count: 3 });
-  assert.deepEqual(collections.find((item: { name: string }) => item.name === 'Empty collection'), { name: 'Empty collection', count: 0 });
+  const { collections, unfiled } = data(['collections', 'list']);
+  assert.deepEqual(collections.find((item: { name: string }) => item.name === 'Game Design Practice'), { name: 'Game Design Practice', count: 3, total: 3 });
+  assert.deepEqual(collections.find((item: { name: string }) => item.name === 'Empty collection'), { name: 'Empty collection', count: 0, total: 0 });
+  assert.equal(unfiled, 0);
+});
+
+test('CLI organises collections: subfolders, moves, renames and deletes that keep items, all without new revisions', () => {
+  // A separate library, so the shared fixture above stays as the other tests expect.
+  const own = path.join(root, 'organising');
+  const call = (list: string[]) => spawnSync(process.execPath, [cli, '--library', own, '--local', local, ...list], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+  const ok = (list: string[]) => { const result = call(list); assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout).data; };
+  const wb = new Workbench(own, local);
+  let skill: string, note: string, revision: string;
+  try {
+    skill = wb.create({ title: 'Review skill', kind: 'prompt', collection: 'Work', content: 'Review carefully.' }).id;
+    note = wb.create({ title: 'Loose note', kind: 'prompt', collection: 'Work', content: 'A note.' }).id;
+    revision = wb.getItem(skill).revision;
+  } finally { wb.close(); }
+  assert.equal(ok(['collections', 'create', '--name', 'Work/Reviews']).name, 'Work/Reviews');
+  assert.deepEqual(ok(['items', 'move', skill, '--collection', 'Work/Reviews']).moved, [skill]);
+  const listed = ok(['collections', 'list']);
+  assert.deepEqual(listed.collections, [{ name: 'Work', count: 1, total: 2 }, { name: 'Work/Reviews', count: 1, total: 1 }]);
+  assert.deepEqual(ok(['items', 'list', '--collection', 'Work']).items.map((i: { id: string }) => i.id), [note]);
+  assert.equal(ok(['items', 'list', '--collection', 'Work', '--recursive']).total, 2);
+  assert.equal(ok(['collections', 'rename', '--from', 'Work', '--to', 'Job']).to, 'Job');
+  assert.equal(ok(['items', 'read', skill]).item.collection, 'Job/Reviews');
+  const deleted = ok(['collections', 'delete', '--name', 'Job', '--keep-items']);
+  assert.deepEqual(new Set(deleted.moved), new Set([skill, note])); assert.deepEqual(deleted.trashed, []);
+  assert.deepEqual(ok(['collections', 'list']), { collections: [{ name: 'Reviews', count: 1, total: 1 }], unfiled: 1 });
+  assert.deepEqual(ok(['items', 'list', '--unfiled']).items.map((i: { id: string }) => i.id), [note]);
+  assert.deepEqual(ok(['items', 'move', skill, '--unfiled']).moved, [skill]);
+  const read = ok(['items', 'read', skill]);
+  assert.equal(read.item.collection, ''); assert.equal(read.revision, revision, 'organising never creates a revision');
+  assert.deepEqual(ok(['collections', 'list']).collections, [{ name: 'Reviews', count: 0, total: 0 }], 'an emptied collection stays until it is deleted');
+  const missing = call(['collections', 'delete', '--name', 'Nope', '--trash-items']);
+  assert.equal(missing.status, 1); assert.equal(JSON.parse(missing.stderr).error.code, 'COLLECTION_NOT_FOUND');
+});
+
+test('CLI lists sources and what was made from them', () => {
+  const own = path.join(root, 'sources');
+  const call = (list: string[]) => spawnSync(process.execPath, [cli, '--library', own, '--local', local, ...list], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+  const ok = (list: string[]) => { const result = call(list); assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout).data; };
+  const wb = new Workbench(own, local);
+  let source: string, entry: string;
+  try {
+    const created = wb.create({ title: 'Pasted chat', kind: 'source', content: 'Chat', collection: 'Design' }); source = created.id;
+    entry = wb.createFrom({ id: source, revision: created.revision, author: 'Codex', item: { title: 'Compare designs', kind: 'technique', content: '1. Compare.', collection: 'Elsewhere' } }).id;
+    wb.create({ title: 'Unrelated', kind: 'prompt', content: 'Other' });
+  } finally { wb.close(); }
+  assert.deepEqual(ok(['items', 'list', '--kind', 'source']).items, [{ id: source, title: 'Pasted chat', kind: 'source' }]);
+  assert.deepEqual(ok(['items', 'list', '--from', source]).items.map((i: { id: string }) => i.id), [entry], 'found wherever the entry is filed');
+  assert.deepEqual(ok(['items', 'read', source]).madeFrom, [{ id: entry, title: 'Compare designs', kind: 'technique' }]);
+  assert.deepEqual(ok(['items', 'read', source, '--full']).madeFrom.map((i: { id: string }) => i.id), [entry]);
+  assert.equal(ok(['items', 'read', entry, '--full']).item.collection, 'Elsewhere', 'a full read says where the item is filed now');
+  assert.equal(ok(['items', 'read', entry]).madeFrom, undefined);
+  assert.match(JSON.parse(call(['items', 'list', '--kind', 'sources']).stderr).error.message, /--kind must be one of/);
 });
 
 test('CLI reads selected IDs in one call, preserving order and single-read compatibility', () => {
@@ -111,6 +164,15 @@ test('CLI rejects unknown and misplaced flags before opening storage', () => {
     ['items', 'read', first, second, '--revision', 'hash'],
     ['items', 'read', ...Array(101).fill(first)],
     ['collections', 'list', 'extra'],
+    ['collections', 'create'],
+    ['collections', 'rename', '--from', 'A'],
+    ['collections', 'delete', '--name', 'A'],
+    ['collections', 'delete', '--name', 'A', '--keep-items', '--trash-items'],
+    ['items', 'move', first],
+    ['items', 'move', first, '--collection', 'A', '--unfiled'],
+    ['items', 'move', '--collection', 'A'],
+    ['items', 'list', '--unfiled', '--collection', 'A'],
+    ['items', 'list', '--recursive'],
   ]) assert.throws(() => parseArguments(args), { code: 'INVALID_INPUT' }, args.join(' '));
 });
 

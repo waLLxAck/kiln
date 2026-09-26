@@ -16,6 +16,7 @@ import { resolveVariables } from '../../packages/domain/content';
 import { atomicWrite, noLinks, now, readJson, writeJson } from '../../packages/storage/files';
 import { defaultLibrary, privateRoot, selectLibrary } from '../../packages/storage/config';
 import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '../../packages/updates/service';
+import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -33,6 +34,7 @@ const diagnostics = createDiagnostics(path.join(app.getPath('userData'), 'logs')
 const log = diagnostics.log;
 const agentConsent = new AgentConsent(path.join(app.getPath('userData'), 'agent-consent.json'));
 const updates = new InstallerUpdates(path.join(app.getPath('userData'), 'updates'), app.getVersion(), log);
+const github = createGitHubUpdates(log);
 let quitting = false;
 const devUrl = process.env.KILN_DEV_URL;
 const singleInstance = app.requestSingleInstanceLock();
@@ -76,15 +78,35 @@ async function pickDirectory() { const result = await dialog.showOpenDialog(main
 function buildInfo(): { sourceRoot?: string; releaseDir?: string; commit?: string; builtAt?: string } {
   try { return readJson(path.join(app.getAppPath(), 'dist', 'build-info.json')) as ReturnType<typeof buildInfo>; } catch { return {}; }
 }
-/** The in-app updater runs the Windows NSIS installer. macOS and Linux builds are updated from the releases page instead. */
+/** Watching a folder runs the Windows NSIS installer from it; that developer path exists only on Windows. */
 const updaterSupported = process.platform === 'win32';
-function checkUpdate(): UpdateStatus {
+/**
+ * Where updates come from. Published builds follow GitHub releases. A local build watches its repository's release folder, for
+ * developers; Settings can choose another folder, switch to GitHub ("github") or turn checks off ("off").
+ */
+function updateSource(): { kind: UpdateStatus['sourceKind']; folder: string } {
+  if (process.env.KILN_DISABLE_AUTO_UPDATE === '1') return { kind: 'off', folder: '' };
+  const file = path.join(local, 'settings.json'); const chosen = local && fs.existsSync(file) ? String((readJson(file) as { updateSource?: string }).updateSource ?? '') : '';
+  if (chosen === 'off') return { kind: 'off', folder: '' };
+  if (chosen === 'github') return { kind: 'github', folder: '' };
+  if (chosen) return { kind: 'setting', folder: chosen };
+  const releaseDir = buildInfo().releaseDir;
+  return releaseDir ? { kind: 'build', folder: releaseDir } : { kind: 'github', folder: '' };
+}
+/** GitHub checks run on their own timer only while GitHub is the source. */
+function syncUpdateTimer() { if (updateSource().kind === 'github') github.start(); else github.stop(); }
+/** `force` checks GitHub now; otherwise its last result is returned, so opening Settings or focusing the window never touches the network. */
+async function checkUpdate(force = false): Promise<UpdateStatus> {
   const current = app.getVersion(), status: UpdateStatus = { current, source: '', sourceKind: 'none', packaged: app.isPackaged, available: null, stage: updates.status(), commit: buildInfo().commit ?? '', supported: updaterSupported };
+  const { kind, folder: source } = updateSource();
+  if (kind === 'off') return { ...status, sourceKind: 'off' };
+  if (kind === 'github') {
+    if (force) await github.check('manual');
+    const { error, ...state } = github.status();
+    return { ...status, ...state, ...(error ? { error } : {}), source: RELEASES, sourceKind: 'github', supported: true, install: github.install };
+  }
   if (!updaterSupported) return status;
-  const file = path.join(local, 'settings.json'); const chosen = fs.existsSync(file) ? String((readJson(file) as { updateSource?: string }).updateSource ?? '') : '';
-  // An explicit folder wins; otherwise the release folder of the repository this build came from; "off" disables checks.
-  const source = chosen === 'off' ? '' : chosen || buildInfo().releaseDir || '';
-  status.source = source; status.sourceKind = chosen === 'off' ? 'off' : chosen ? 'setting' : source ? 'build' : 'none'; if (!source) return status;
+  status.source = source; status.sourceKind = kind;
   try {
     if (!fs.existsSync(source)) return { ...status, error: 'The update folder does not exist.' };
     const candidates: { version: string; path: string }[] = [];
@@ -132,24 +154,26 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       log(value.event, { durationMs: value.durationMs, target: value.target, window: sender === main ? 'main' : 'palette' }); return true;
     }
     case 'desktop.chooseDirectory': return pickDirectory();
-    case 'desktop.updateCheck': return checkUpdate();
+    case 'desktop.updateCheck': return checkUpdate(z.object({ force: z.boolean().default(false) }).parse(args ?? {}).force);
     case 'desktop.updateSource': {
-      // Choose the folder to watch for installers; an empty choice clears it.
-      // clear: back to the build's own release folder; off: stop checking; path: use that folder; otherwise ask.
-      const value = z.object({ clear: z.boolean().default(false), off: z.boolean().default(false), path: z.string().min(1).max(1000).optional() }).parse(args ?? {});
+      // clear: the default for this build (GitHub, or a local build's release folder); github: GitHub releases; off: stop checking; path: watch that folder; otherwise ask for one.
+      const value = z.object({ clear: z.boolean().default(false), off: z.boolean().default(false), github: z.boolean().default(false), path: z.string().min(1).max(1000).optional() }).parse(args ?? {});
       if (value.path) invariant(fs.existsSync(value.path) && fs.statSync(value.path).isDirectory(), 'INVALID_FOLDER', 'The update folder does not exist.');
-      const chosen = value.off ? 'off' : value.clear ? '' : value.path ?? await pickDirectory(); if (chosen === null) return checkUpdate();
-      const file = path.join(local, 'settings.json'); const previous = fs.existsSync(file) ? readJson(file) as object : {}; writeJson(file, { ...previous, updateSource: chosen }); return checkUpdate();
+      const chosen = value.off ? 'off' : value.github ? 'github' : value.clear ? '' : value.path ?? await pickDirectory(); if (chosen === null) return checkUpdate();
+      const file = path.join(local, 'settings.json'); const previous = fs.existsSync(file) ? readJson(file) as object : {}; writeJson(file, { ...previous, updateSource: chosen });
+      syncUpdateTimer(); return checkUpdate(updateSource().kind === 'github');
     }
     case 'desktop.updatePrepare': {
-      invariant(updaterSupported, 'UPDATE_UNSUPPORTED', 'In-app updates are only available on Windows. Download the new version from the releases page.');
-      const status = checkUpdate(); invariant(status.available, 'NO_UPDATE', 'No newer installer was found in the update folder.');
       const { version } = z.object({ version: z.string() }).parse(args);
+      if (updateSource().kind === 'github') { await github.download(version); return checkUpdate(); }
+      invariant(updaterSupported, 'UPDATE_UNSUPPORTED', 'Watching a folder for installers works on Windows only. Download the new version from the releases page.');
+      const status = await checkUpdate(); invariant(status.available, 'NO_UPDATE', 'No newer installer was found in the update folder.');
       invariant(status.available.version === version, 'UPDATE_CHANGED', 'The available update changed. Check again before preparing it.');
       updates.prepare(status.available);
       return checkUpdate();
     }
     case 'desktop.updateRestart': {
+      if (updateSource().kind === 'github') { await github.restart(() => { quitting = true; }); return true; }
       invariant(updaterSupported, 'UPDATE_UNSUPPORTED', 'In-app updates are only available on Windows. Download the new version from the releases page.');
       await updates.restart(installer => new Promise<void>((resolve, reject) => {
         const child = spawn(installer, ['--updated', '/S', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true });
@@ -209,7 +233,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       const { id } = z.object({ id: idSchema }).parse(args); const revision = await backend.call<Revision>('getRevision', id);
       const firstLine = revision.content.trim().split('\n')[0];
       // Links always open in the browser; tools and resources distilled from videos do too when they lead with their URL.
-      if (revision.kind === 'link' || (['tool', 'resource'].includes(revision.kind) && /^https?:\/\/\S+$/i.test(firstLine))) { const url = new URL(firstLine); invariant(['https:', 'http:'].includes(url.protocol), 'INVALID_URL', 'Only web URLs can be opened.'); await shell.openExternal(url.href); }
+      if (revision.kind === 'link' || (['tool', 'resource', 'source'].includes(revision.kind) && /^https?:\/\/\S+$/i.test(firstLine))) { const url = new URL(firstLine); invariant(['https:', 'http:'].includes(url.protocol), 'INVALID_URL', 'Only web URLs can be opened.'); await shell.openExternal(url.href); }
       else if (revision.kind === 'reference') { shell.showItemInFolder(await backend.call('referencePath', id)); }
       else if (['image', 'file'].includes(revision.kind)) {
         const asset = Object.entries(revision.files)[0]; invariant(asset, 'ASSET_MISSING', 'No imported asset is attached.');
@@ -287,6 +311,7 @@ if (singleInstance) void app.whenReady().then(async () => {
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
   ({ local, canonical } = await backend.call('paths'));
+  syncUpdateTimer();
   log('app.started', { version: app.getVersion(), pid: process.pid });
   let tick = Date.now();
   setInterval(() => { const elapsed = Date.now() - tick; tick = Date.now(); if (elapsed > 1500) log('main.stall', { durationMs: elapsed - 1000 }); }, 1000).unref();

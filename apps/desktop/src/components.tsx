@@ -1,5 +1,5 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
-import { Bot, X, FileText, Link, Image, File, Terminal, BookOpen, BookMarked, FolderSymlink, Check, Lightbulb, ListOrdered, Loader2, ArrowUpRight, Wrench } from 'lucide-react';
+import { Bot, X, FileText, Link, Image, File, Terminal, BookOpen, BookMarked, FolderSymlink, FileInput, Check, Lightbulb, ListOrdered, Loader2, ArrowUpRight, Wrench } from 'lucide-react';
 import type { Item, ProviderId } from '../../../packages/protocol/schema';
 
 /** The Kiln mark (cream kiln arch with an orange fire opening). Its dark rounded square is the `.brand-symbol` background. */
@@ -16,7 +16,7 @@ export const statusHelp: Record<string, string> = {
   archived: 'Finished with. Hidden from the main library.',
 };
 export function KindIcon({ kind, size = 19 }: { kind: Item['kind']; size?: number }) {
-  const Icon = { prompt: FileText, agent: Bot, skill: Terminal, instruction: BookOpen, link: Link, insight: Lightbulb, technique: ListOrdered, tool: Wrench, resource: BookMarked, image: Image, file: File, reference: FolderSymlink }[kind];
+  const Icon = { prompt: FileText, agent: Bot, skill: Terminal, instruction: BookOpen, link: Link, insight: Lightbulb, technique: ListOrdered, tool: Wrench, resource: BookMarked, image: Image, file: File, reference: FolderSymlink, source: FileInput }[kind];
   return <Icon size={size} aria-hidden="true" />;
 }
 export function Badge({ status }: { status: string }) { return <span className={`badge ${status}`} title={statusHelp[status]}>{status === 'approved' && <Check size={11} />}{status.replaceAll('_', ' ')}</span>; }

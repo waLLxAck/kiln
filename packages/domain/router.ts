@@ -88,6 +88,7 @@ export class Router {
       case 'items.create': return this.wb.create(args);
       case 'items.update': return this.updateItem(args);
       case 'items.meta': return this.wb.setMeta(args);
+      case 'items.move': return this.wb.moveItems(args);
       case 'items.restore': return this.wb.restore(args);
       case 'items.purge': return this.wb.purge(args);
       case 'agents.scan': return scanAgents(this.wb, args);
@@ -104,6 +105,7 @@ export class Router {
       case 'targets.remove': return this.wb.removeTarget(args);
       case 'items.reorder': return this.wb.reorderItems(args);
       case 'collections.save': return this.wb.saveCollections(args);
+      case 'collections.create': return this.wb.createCollection(args);
       case 'collections.rename': return this.wb.renameCollection(args);
       case 'collections.delete': return this.wb.deleteCollection(args);
       case 'skills.draft': return this.wb.derive(args);

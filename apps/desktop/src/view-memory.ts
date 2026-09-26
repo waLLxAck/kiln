@@ -7,7 +7,7 @@ const viewSchema = z.object({
   selected: z.string().default(''), query: z.string().default(''), filter: z.string().default('all'),
   sort: z.object({ key: z.enum(['title', 'kind', 'collection', 'status', 'updatedAt', 'createdAt', 'site']), dir: z.enum(['asc', 'desc']) }).nullable().default(null),
   installFilter: z.enum(['any', 'installed', 'none', 'codex', 'claude', 'copilot']).default('any'),
-  advancedFilters: z.object({ provider: z.enum(['any', 'codex', 'claude', 'copilot']), location: z.enum(['any', 'agents', 'codex', 'claude', 'copilot']), state: z.enum(['any', 'managed', 'external', 'linked', 'changed']), scope: z.enum(['any', 'personal', 'project']), tag: z.string() }).default(emptyLibraryFilters),
+  advancedFilters: z.object({ provider: z.enum(['any', 'codex', 'claude', 'copilot']), location: z.enum(['any', 'agents', 'codex', 'claude', 'copilot']), state: z.enum(['any', 'managed', 'external', 'linked', 'changed']), scope: z.enum(['any', 'personal', 'project']), tag: z.string(), source: z.string().default('') }).default(emptyLibraryFilters),
 });
 const locationSchema = z.object({ section: z.string(), collection: z.string(), tab: z.enum(['recent', 'favourites', ...KINDS]) });
 const memorySchema = z.object({ location: locationSchema, sections: z.record(z.string(), locationSchema), views: z.record(z.string(), viewSchema) });

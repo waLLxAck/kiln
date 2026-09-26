@@ -35,14 +35,12 @@ export function validateContent(value: Authoring): string[] {
   if (value.kind === 'reference' && !value.content.trim()) problems.push('Add an absolute file path. This is a reference, not a backup.');
   return [...new Set(problems)];
 }
-import { variablesIn } from './text';
 export { isTextFile, variablesIn } from './text';
 export function skillName(value: Revision) {
   const match = value.content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   return String(parse(match?.[1] ?? '')?.name ?? '');
 }
+/** Every variable is optional: a missing or blank value leaves its `{{name}}` placeholder exactly as written, so the reader sees what was not filled. */
 export function resolveVariables(content: string, variables: Record<string, string>) {
-  const missing = variablesIn(content).filter(key => !Object.hasOwn(variables, key));
-  invariant(missing.length === 0, 'MISSING_VARIABLES', `Fill these variables: ${missing.join(', ')}`);
-  return content.replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (_, key: string) => variables[key]);
+  return content.replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (placeholder, key: string) => Object.hasOwn(variables, key) && variables[key].trim() ? variables[key] : placeholder);
 }

@@ -36,7 +36,7 @@ test('a pasted YouTube link is distilled: transcript saved on the link item, ent
       { type: 'tool', title: 'Broken URL tool', description: 'URL should be ignored.', content: 'Details.', url: 'not a url', timestamp: '', tags: [] },
     ] }; }, async () => [], async input => { fetched = input.url; input.onPhase('Fetching transcript with yt-dlp'); return video; });
     const { item, job } = service.capture({ text: 'https://youtu.be/Q7n0PGbMW_U', files: {} });
-    assert.equal(job?.kind, 'distill'); assert.equal(item.kind, 'link');
+    assert.equal(job?.kind, 'distill'); assert.equal(item.kind, 'source', 'material captured for analysis is a source');
     await wait(service);
     const done = service.list()[0]; assert.equal(done.status, 'completed', done.error); assert.equal(fetched, 'https://youtu.be/Q7n0PGbMW_U');
     assert.match(prompt, /Distill this captured source material/); assert.match(prompt, /## Transcript\n\nStarting September/);
@@ -51,6 +51,12 @@ test('a pasted YouTube link is distilled: transcript saved on the link item, ent
     assert.match(wb.getRevision(created[1].id).content, /^https:\/\/github\.com\/ryoppippi\/ccusage\n\nRun `npx ccusage`[\s\S]*by Theo: https:\/\/www\.youtube\.com\/watch\?v=Q7n0PGbMW_U$/);
     assert.match(wb.getRevision(created[2].id).content, /at 9:30: https:\/\/www\.youtube\.com\/watch\?v=Q7n0PGbMW_U&t=570s$/);
     assert.ok(wb.collections().includes(video.title));
+    // The analysis travels with the library; the run's steps stay private.
+    const [analysis] = wb.analyses(item.id);
+    assert.equal(analysis.id, done.id); assert.equal(analysis.summary, 'Theo explains the new limits.'); assert.deepEqual(analysis.counts, { prompt: 1, tool: 2, technique: 1 });
+    assert.deepEqual(analysis.created, done.createdItemIds); assert.equal(analysis.collection, video.title); assert.equal(wb.detail(item.id).analyses.length, 1);
+    assert.ok(!JSON.stringify(analysis).includes('steps') && !JSON.stringify(analysis).includes(wb.local));
+    assert.deepEqual(new Set(wb.madeFrom(item.id).map(i => i.id)), new Set(done.createdItemIds));
   } finally { wb.close(); }
 });
 test('a failed transcript fetch leaves the link item intact and reports the reason', async () => {

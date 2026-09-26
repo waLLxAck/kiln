@@ -8,7 +8,8 @@ import type { UpdateStage } from '../protocol/schema';
 import { invariant } from '../domain/errors';
 import { noLinks, readJson, writeJson } from '../storage/files';
 
-export const installerPattern = /^Kiln Setup (\d+\.\d+\.\d+)\.exe$/i;
+/** `Kiln-Setup-<version>.exe` since 0.20.0 (GitHub release assets cannot keep spaces); `Kiln Setup <version>.exe` before. */
+export const installerPattern = /^Kiln[ -]Setup[ -](\d+\.\d+\.\d+)\.exe$/i;
 export const newerVersion = (a: string, b: string) => {
   const left = a.split('.').map(Number), right = b.split('.').map(Number);
   for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i];

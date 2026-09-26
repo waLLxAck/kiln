@@ -113,9 +113,10 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe('Do not change this on Escape');
     await createItem(page, { kind: 'prompt', title: 'Untrusted markup', content: '<img src=x onerror="window.compromised=true"><script>window.compromised=true</script>' });
     await expect(page.getByRole('heading', { name: 'Untrusted markup' })).toBeVisible();
-    expect(await page.evaluate(() => Boolean((window as unknown as { compromised?: boolean }).compromised))).toBe(false);
-    await page.getByRole('button', { name: 'Raw text', exact: true }).click();
     await expect(page.locator('.content-preview')).toContainText('<script>');
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await expect(page.locator('.markdown-content')).toBeVisible();
+    expect(await page.evaluate(() => Boolean((window as unknown as { compromised?: boolean }).compromised))).toBe(false);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
