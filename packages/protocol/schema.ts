@@ -3,7 +3,8 @@ import { z } from 'zod';
 
 export const idSchema = z.string().uuid();
 export const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
-export const kindSchema = z.enum(['prompt', 'skill', 'agent', 'instruction', 'link', 'insight', 'technique', 'tool', 'resource', 'image', 'file', 'reference']);
+/** `source` is material an agent analysed into entries (a pasted chat, a page, a video); those entries point back to it through `origin`. */
+export const kindSchema = z.enum(['prompt', 'skill', 'agent', 'instruction', 'link', 'insight', 'technique', 'tool', 'resource', 'image', 'file', 'reference', 'source']);
 export const statusSchema = z.enum(['captured', 'testing', 'approved', 'rejected', 'archived']);
 /** Libraries written before v0.2 stored `inbox`; read it as `captured`. Files are rewritten on their next save. */
 const legacyStatuses: Record<string, string> = { inbox: 'captured' };
@@ -63,6 +64,17 @@ export const observationSchema = z.object({
   source: z.string().max(100), confidence: z.enum(['observed', 'inferred']),
   sessionId: z.string().max(200).default(''), occurredAt: z.string(),
 });
+/**
+ * What one analysis of a source produced, shared with the library so it shows on every machine. The run itself (steps, commands,
+ * session transcript) stays in the machine-private job; nothing here names a path.
+ */
+export const analysisSchema = z.object({
+  schemaVersion: z.literal(1), id: idSchema, itemId: idSchema, revision: hashSchema, provider: z.enum(['codex', 'claude']),
+  model: z.string().max(200), effort: z.string().max(40), usage: z.object({ input: z.number(), cached: z.number(), output: z.number(), reasoning: z.number() }).optional(),
+  startedAt: z.string(), finishedAt: z.string(), summary: z.string().max(2000), takeaway: z.string().max(600), skipped: z.string().max(2000),
+  counts: z.record(z.string(), z.number().int().nonnegative()), created: z.array(idSchema).max(200), collection: z.string().max(80),
+});
+export type Analysis = z.infer<typeof analysisSchema>;
 export type Item = z.infer<typeof itemSchema>;
 export type Revision = z.infer<typeof revisionSchema>;
 export type Authoring = z.infer<typeof authoringSchema>;
@@ -71,7 +83,7 @@ export type Trial = z.infer<typeof trialSchema>;
 export type Target = z.infer<typeof targetSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type Bundle = z.infer<typeof bundleSchema>;
-export type ItemDetail = { item: Item; revision: Revision; revisions: Revision[]; approvals: Approval[]; trials: Trial[]; observations: Observation[]; validation: string[]; duplicates: Item[] };
+export type ItemDetail = { item: Item; revision: Revision; revisions: Revision[]; approvals: Approval[]; trials: Trial[]; observations: Observation[]; validation: string[]; duplicates: Item[]; /** Recorded analyses of this source, newest first. */ analyses: Analysis[] };
 export type Plan = { id: string; itemId: string; revision: string; targetId: string; destination: string; operation: 'create' | 'replace'; expectedState: string | null; proposedHash: string; files: Record<string, string>; createdAt: string; expiresAt: string; blocked: string | null };
 export type Receipt = { id: string; planId: string; itemId: string; revision: string; targetId: string; destination: string; hash: string; previousHash: string | null; previousFiles: Record<string, string> | null; previousRevision: string | null; status: 'applied' | 'rolled_back' | 'uninstalled' | 'partial'; createdAt: string; newSessionRequired: true; error?: string };
 export type Activity = { id: string; at: string; itemId: string | null; kind: string; message: string; revision?: string };
@@ -92,7 +104,7 @@ export type PublishStatus = 'queued' | 'composing' | 'committing' | 'pushing' | 
 export type PublishJob = { id: string; itemId: string; revision: string; title: string; action: PublishAction; status: PublishStatus; /** Final commit message; empty until composed. */ message: string; /** 'agent' when the model wrote the message, 'fallback' for the deterministic one. */ composer: 'agent' | 'fallback' | ''; commit: string; error?: string; startedAt: string; finishedAt?: string };
 /** Result of a local update check. `available` is the newest installer in the update source whose version is above the running app. */
 export type UpdateStage = { state: 'idle' } | { state: 'preparing'; version: string; progress: number } | { state: 'ready'; version: string } | { state: 'failed'; message: string };
-export type UpdateStatus = { current: string; source: string; /** setting: chosen in Settings; build: the release folder of the repository this build came from; off: checks disabled; none: nothing to watch. */ sourceKind: 'setting' | 'build' | 'off' | 'none'; packaged: boolean; available: { version: string; path: string } | null; stage: UpdateStage; /** Git commit this build was made from, when known. */ commit: string; /** False on macOS and Linux: the in-app updater runs the Windows installer, so those builds update from the releases page. */ supported?: boolean; error?: string };
+export type UpdateStatus = { current: string; source: string; /** github: published releases (the default for published builds); setting: a folder chosen in Settings; build: the release folder of the repository this build came from; off: checks disabled; none: nothing to watch. */ sourceKind: 'github' | 'setting' | 'build' | 'off' | 'none'; packaged: boolean; /** For GitHub, `path` is the release page. */ available: { version: string; path: string } | null; stage: UpdateStage; /** Git commit this build was made from, when known. */ commit: string; /** False for a watched folder on macOS and Linux: that path runs the Windows installer. */ supported?: boolean; /** GitHub only. app: downloads and installs in place; download: the new version is downloaded from the release page by hand. */ install?: 'app' | 'download'; /** GitHub only: when the last check finished. */ checkedAt?: string; error?: string };
 export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string };
 export type RpcResponse = { ok: true; data: unknown } | { ok: false; error: { code: string; message: string } };
 export interface Bridge { call<T = unknown>(method: string, args?: unknown): Promise<T>; /** `process.platform` of the desktop app, for platform-specific wording and controls. */ platform?: string; }

@@ -140,7 +140,7 @@ test('the item chat starts fresh on a plain item, writes context.md with the ite
     assert.equal(calls[0].workdir, workdir); assert.equal(calls[0].persist, true); assert.equal(calls[0].resume, undefined);
     const context = fs.readFileSync(path.join(workdir, 'context.md'), 'utf8');
     assert.match(context, /## Open item: Plain prompt/); assert.match(context, /Summarise \{\{text\}\} in three bullets\./); assert.doesNotMatch(context, /## Video/);
-    assert.match(calls[0].prompt, /Kiln CLI, the only way to change the library/); assert.doesNotMatch(calls[0].prompt, /transcript\.md/);
+    assert.match(calls[0].prompt, /Kiln CLI, the only way to change the library/); assert.match(calls[0].prompt, /reserve placeholders for what only the user can supply or decide/); assert.doesNotMatch(calls[0].prompt, /transcript\.md/);
     assert.deepEqual((service.list().find(j => j.id === first.id)!.result as ChatResult), { reply: 'Reply to: Make it stricter.' });
     const second = service.chat({ message: 'Shorter.', itemId: plain.id }); await wait(service);
     assert.equal(second.threadId, freshThread, 'the second turn continues the first'); assert.equal(second.parentJobId, undefined); assert.equal(calls[1].resume, freshThread);
@@ -176,4 +176,21 @@ test('simultaneous chats on two entries from one video have isolated folders and
     assert.match(fs.readFileSync(path.join(calls[1].workdir!, 'context.md'), 'utf8'), /## Open item: Second entry/);
     release(); await wait(service);
   } finally { release(); close(); }
+});
+
+test('an entry made from a pasted source brings the source material and its siblings into the chat', async () => {
+  const { wb, close } = fixture();
+  try {
+    const source = wb.create({ title: 'Design chat', kind: 'source', content: 'We compared three homepage designs and kept the grounded copy.' });
+    const entry = (title: string) => wb.createFrom({ id: source.id, revision: source.revision, author: 'fixture', item: { title, kind: 'technique', content: title } });
+    const a = entry('Compare designs side by side'); entry('Ground copy in the code');
+    const calls: RunInput[] = [];
+    const service = new AgentService(wb, () => {}, async input => { calls.push(input); return 'done'; }, async () => []);
+    service.chat({ itemId: a.id, message: 'Expand this' }); await wait(service);
+    const workdir = calls[0].workdir!, context = fs.readFileSync(path.join(workdir, 'context.md'), 'utf8');
+    assert.match(context, /## Source: Design chat/); assert.match(context, /source material: attachments\/source\.md/); assert.doesNotMatch(context, /## Video/);
+    assert.match(context, /Ground copy in the code/, 'siblings made from the same source are listed');
+    assert.equal(fs.readFileSync(path.join(workdir, 'attachments', 'source.md'), 'utf8'), 'We compared three homepage designs and kept the grounded copy.');
+    assert.match(calls[0].prompt, new RegExp(`--from ${source.id}`)); assert.doesNotMatch(calls[0].prompt, /the video item is/);
+  } finally { close(); }
 });

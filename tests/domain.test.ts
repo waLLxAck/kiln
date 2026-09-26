@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Workbench } from '../packages/domain/workbench';
 import { DeploymentService, readDestination } from '../packages/deployment/service';
 import { WorkbenchError } from '../packages/domain/errors';
+import { resolveVariables } from '../packages/domain/content';
 import { readJson, writeJson, withLock, safeRelative } from '../packages/storage/files';
 
 const content = '---\nname: careful-review\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\nRead the diff. Verify claims. Record uncertainty.\n';
@@ -64,6 +65,13 @@ test('capture, full-text retrieval, variables, file asset, close/reopen and tras
     const second = new Workbench(f.wb.root, path.join(f.root, 'second-private'));
     assert.equal(second.getRevision(item.id).content, 'First line\nUnique marmalade {{subject}}'); second.close();
   } finally { f.close(); }
+});
+
+test('every variable is optional: missing or blank values keep their placeholder as written', () => {
+  const template = 'Review {{ subject }} for {{audience}} using {{subject}}.';
+  assert.equal(resolveVariables(template, {}), template);
+  assert.equal(resolveVariables(template, { subject: 'the diff', audience: '  ' }), 'Review the diff for {{audience}} using the diff.');
+  assert.equal(resolveVariables(template, { audience: 'reviewers', extra: 'ignored' }), 'Review {{ subject }} for reviewers using {{subject}}.');
 });
 
 test('exact approved snapshots cannot change through later edits, including bundled scripts', () => {
@@ -148,7 +156,7 @@ test('manual trials retain exact revision, private inputs and explicit human jud
   const f = fixture();
   try {
     const item = f.wb.create({ title: 'Trial', kind: 'prompt', content: 'Evaluate {{case}}.' });
-    assert.throws(() => f.wb.prepareTrial({ id: item.id, revision: item.revision, provider: 'codex', task: 'Task', rubric: ['Factual'], case: 'typical' }), hasCode('MISSING_VARIABLES'));
+    assert.match(f.wb.prepareTrial({ id: item.id, revision: item.revision, provider: 'codex', task: 'Task', rubric: ['Factual'], case: 'typical' }).prompt, /^Evaluate \{\{case\}\}\./, 'variables are optional; unfilled placeholders stay visible');
     const prepared = f.wb.prepareTrial({ id: item.id, revision: item.revision, provider: 'codex', variables: { case: 'PRIVATE_SECRET_INPUT' }, task: 'PRIVATE_TASK', rubric: ['Factual'], case: 'typical' });
     assert.match(prepared.prompt, /PRIVATE_SECRET_INPUT/); assert.equal(JSON.stringify(f.wb.trials()).includes('PRIVATE_SECRET_INPUT'), false);
     f.wb.finishTrial({ id: prepared.trial.id, judgement: 'pass', note: 'Meets rubric', output: 'PRIVATE_OUTPUT' });
@@ -210,21 +218,113 @@ test('export restores authored bundles and divergent revisions without overwriti
   } finally { f.close(); }
 });
 
-test('deleting a collection trashes its items and drops the name; restoring an item brings the collection back', () => {
+test('deleting a collection with trash-items trashes its items and subfolders; restoring an item brings the collection back', () => {
   const f = fixture();
   try {
-    f.wb.saveCollections({ names: ['Personal', 'Scratch', 'Empty'] });
+    f.wb.saveCollections({ names: ['Personal', 'Scratch', 'Scratch/Deeper', 'Empty'] });
     const kept = f.wb.create({ title: 'Kept', kind: 'prompt', content: 'Stays', collection: 'Personal' });
     const gone = f.wb.create({ title: 'Gone', kind: 'prompt', content: 'Goes', collection: 'Scratch' });
-    assert.deepEqual(f.wb.deleteCollection({ name: 'Scratch', confirm: true }), { name: 'Scratch', trashed: [gone.id] });
-    assert.ok(!f.wb.collections().includes('Scratch')); assert.ok(f.wb.collections().includes('Empty'));
+    const deeper = f.wb.create({ title: 'Deeper', kind: 'prompt', content: 'Goes too', collection: 'Scratch/Deeper' });
+    assert.throws(() => f.wb.deleteCollection({ name: 'Scratch', confirm: true }), 'what happens to the items is never a default');
+    const result = f.wb.deleteCollection({ name: 'Scratch', confirm: true, items: 'trash' });
+    assert.deepEqual(new Set(result.trashed), new Set([gone.id, deeper.id])); assert.deepEqual(result.moved, []);
+    assert.deepEqual(f.wb.collections(), ['Personal', 'Empty']);
     assert.ok(f.wb.getItem(gone.id).deletedAt); assert.equal(f.wb.getItem(gone.id).revision, gone.revision, 'trashing does not create a revision');
+    assert.equal(f.wb.getItem(gone.id).collection, 'Scratch', 'trashed items keep the name');
     assert.equal(f.wb.getItem(kept.id).deletedAt, null);
-    assert.deepEqual(f.wb.deleteCollection({ name: 'Empty', confirm: true }), { name: 'Empty', trashed: [] });
+    assert.deepEqual(f.wb.deleteCollection({ name: 'Empty', confirm: true, items: 'keep' }).moved, []);
     assert.ok(!f.wb.collections().includes('Empty'));
-    assert.throws(() => f.wb.deleteCollection({ name: 'Personal' }), 'deleting needs an explicit confirm');
+    assert.throws(() => f.wb.deleteCollection({ name: 'Personal', items: 'trash' }), 'deleting needs an explicit confirm');
+    assert.throws(() => f.wb.deleteCollection({ name: 'Missing', confirm: true, items: 'trash' }), hasCode('COLLECTION_NOT_FOUND'));
     f.wb.setMeta({ id: gone.id, expect: gone.revision, deleted: false });
     assert.ok(f.wb.collections().includes('Scratch'), 'a restored item brings its collection back');
+  } finally { f.close(); }
+});
+
+test('deleting a collection with keep-items moves items and subfolders up one level without touching revisions or approval', () => {
+  const f = fixture();
+  try {
+    f.wb.saveCollections({ names: ['Skills', 'Skills/Review', 'Skills/Review/Deep', 'Other', 'Review'] });
+    const skill = approved(f.wb); f.wb.moveItems({ ids: [skill.id], collection: 'Skills/Review' });
+    const deep = f.wb.create({ title: 'Deep', kind: 'prompt', content: 'Deep one', collection: 'Skills/Review/Deep' });
+    const top = f.wb.create({ title: 'Top', kind: 'prompt', content: 'Top one', collection: 'Skills' });
+    const trashed = f.wb.create({ title: 'Trashed', kind: 'prompt', content: 'In the trash', collection: 'Skills/Review' });
+    f.wb.setMeta({ id: trashed.id, expect: trashed.revision, deleted: true });
+
+    // A subfolder: its items join the parent and its own subfolders become the parent's.
+    const result = f.wb.deleteCollection({ name: 'Skills/Review', confirm: true, items: 'keep' });
+    assert.equal(result.to, 'Skills'); assert.deepEqual(result.trashed, []);
+    assert.equal(f.wb.getItem(skill.id).collection, 'Skills');
+    assert.equal(f.wb.getItem(skill.id).revision, skill.revision); assert.equal(f.wb.getItem(skill.id).status, 'approved', 'organising keeps approval');
+    assert.equal(f.wb.getItem(deep.id).collection, 'Skills/Deep');
+    assert.equal(f.wb.getItem(trashed.id).collection, 'Skills', 'trashed items move too, so restoring one cannot bring the collection back');
+    assert.deepEqual(f.wb.collections(), ['Skills', 'Skills/Deep', 'Other', 'Review']);
+
+    // A top-level collection: its own items become unfiled, subfolders go to the top level.
+    f.wb.deleteCollection({ name: 'Skills', confirm: true, items: 'keep' });
+    assert.equal(f.wb.getItem(skill.id).collection, ''); assert.equal(f.wb.getItem(top.id).collection, '');
+    assert.equal(f.wb.getItem(skill.id).status, 'approved');
+    assert.equal(f.wb.getItem(deep.id).collection, 'Deep');
+    assert.deepEqual(f.wb.collections(), ['Deep', 'Other', 'Review'], 'unfiled is not a collection');
+    assert.equal(f.wb.getItem(skill.id).deletedAt, null);
+
+    // Nothing reads the moved items as externally edited.
+    f.wb.refresh(); assert.equal(f.wb.getItem(skill.id).revision, skill.revision); assert.equal(f.wb.getItem(skill.id).status, 'approved');
+    assert.equal(f.wb.detail(skill.id).revisions.length, 1);
+  } finally { f.close(); }
+});
+
+test('moving items files them without a new revision; later edits, attachments and restores keep the new collection', () => {
+  const f = fixture();
+  try {
+    f.wb.saveCollections({ names: ['Game Design'] });
+    const skill = approved(f.wb);
+    assert.deepEqual(f.wb.moveItems({ ids: [skill.id], collection: ' game design / Puzzles ' }), { collection: 'Game Design/Puzzles', moved: [skill.id] }, 'paths are trimmed and join the existing spelling');
+    assert.equal(f.wb.getItem(skill.id).revision, skill.revision); assert.equal(f.wb.getItem(skill.id).status, 'approved');
+    assert.equal(f.wb.getRevision(skill.id).collection, 'Personal', 'the revision keeps the collection it was saved in');
+    assert.equal(f.wb.authoring(skill.id).collection, 'Game Design/Puzzles');
+    assert.deepEqual(f.wb.moveItems({ ids: [skill.id], collection: 'Game Design/Puzzles' }).moved, [], 'already there');
+    assert.ok(f.wb.activity().some(a => a.itemId === skill.id && a.kind === 'organised' && a.message === 'Moved from “Personal” to “Game Design/Puzzles”'));
+
+    // An update that changes only the collection is a move too.
+    const moved = f.wb.update({ id: skill.id, expect: skill.revision, value: { ...f.wb.authoring(skill.id), collection: 'Game Design' } });
+    assert.equal(moved.revision, skill.revision); assert.equal(moved.status, 'approved'); assert.equal(f.wb.getItem(skill.id).collection, 'Game Design');
+
+    // Saving unchanged values is not an edit, even though the revision names another collection.
+    assert.equal(f.wb.update({ id: skill.id, expect: skill.revision, value: f.wb.authoring(skill.id) }).revision, skill.revision);
+
+    const edited = f.wb.update({ id: skill.id, expect: skill.revision, summary: 'Edit', value: { ...f.wb.authoring(skill.id), content: content + '\nMore.' } });
+    assert.notEqual(edited.revision, skill.revision); assert.equal(edited.collection, 'Game Design'); assert.equal(f.wb.getRevision(skill.id).collection, 'Game Design');
+    f.wb.moveItems({ ids: [skill.id], collection: '' });
+    const restored = f.wb.restore({ id: skill.id, expect: edited.revision, revision: skill.revision });
+    assert.equal(restored.collection, '', 'restoring brings back the content, not the old folder');
+
+    // External edits made after a move keep the item where it is.
+    fs.writeFileSync(path.join(f.wb.itemDir(skill.id), 'content.md'), content + '\nEdited outside.');
+    f.wb.refresh(); assert.equal(f.wb.getItem(skill.id).collection, '');
+
+    assert.throws(() => f.wb.moveItems({ ids: [skill.id], collection: 'A//B' }), hasCode('INVALID_COLLECTION'));
+  } finally { f.close(); }
+});
+
+test('collections form a tree: subfolders follow their parent, parents are implied, and renaming moves a whole branch', () => {
+  const f = fixture();
+  try {
+    f.wb.saveCollections({ names: ['B', 'A'] });
+    f.wb.create({ title: 'Deep', kind: 'prompt', content: 'One', collection: 'A/X/Y' });
+    assert.deepEqual(f.wb.collections(), ['B', 'A', 'A/X', 'A/X/Y']);
+    assert.deepEqual(f.wb.createCollection({ name: 'b/Sub' }).name, 'B/Sub', 'a subfolder joins its parent’s spelling');
+    assert.deepEqual(f.wb.collections(), ['B', 'B/Sub', 'A', 'A/X', 'A/X/Y']);
+    assert.throws(() => f.wb.createCollection({ name: 'a/x' }), hasCode('DUPLICATE_COLLECTION'));
+    assert.throws(() => f.wb.createCollection({ name: ' / ' }), hasCode('INVALID_COLLECTION'));
+
+    // Renaming to a path nests the collection; its subfolders and items travel with it.
+    const result = f.wb.renameCollection({ from: 'A/X', to: 'B/X' });
+    assert.equal(result.to, 'B/X');
+    assert.deepEqual(f.wb.collections(), ['B', 'B/Sub', 'B/X', 'B/X/Y', 'A']);
+    assert.equal(f.wb.listItems()[0].collection, 'B/X/Y');
+    assert.throws(() => f.wb.renameCollection({ from: 'A', to: 'b/sub' }), hasCode('DUPLICATE_COLLECTION'));
+    assert.throws(() => f.wb.renameCollection({ from: 'Missing', to: 'Other' }), hasCode('COLLECTION_NOT_FOUND'));
   } finally { f.close(); }
 });
 
@@ -280,23 +380,66 @@ test('archiving and undoing keeps an approved item approved, but metadata alone 
   } finally { f.close(); }
 });
 
-test('renaming a collection moves every item, trashed ones included, as new revisions and keeps the sidebar order', () => {
+test('renaming a collection moves every item, trashed ones included, without new revisions and keeps the sidebar order', () => {
   const f = fixture();
   try {
     f.wb.saveCollections({ names: ['Personal', 'Vendor · acme', 'Empty'] });
-    const a = f.wb.create({ title: 'A', kind: 'prompt', content: 'One', collection: 'Vendor · acme' });
+    const a = approved(f.wb); f.wb.moveItems({ ids: [a.id], collection: 'Vendor · acme' });
     const b = f.wb.create({ title: 'B', kind: 'prompt', content: 'Two', collection: 'Vendor · acme' });
     const kept = f.wb.create({ title: 'C', kind: 'prompt', content: 'Three', collection: 'Personal' });
     f.wb.setMeta({ id: b.id, expect: b.revision, deleted: true });
     const result = f.wb.renameCollection({ from: 'Vendor · acme', to: 'Acme skills' });
     assert.deepEqual(new Set(result.moved), new Set([a.id, b.id]));
-    assert.equal(f.wb.getItem(a.id).collection, 'Acme skills'); assert.notEqual(f.wb.getItem(a.id).revision, a.revision, 'the collection is part of the revision');
-    assert.equal(f.wb.getRevision(a.id).summary, 'Moved from “Vendor · acme” to “Acme skills”');
+    assert.equal(f.wb.getItem(a.id).collection, 'Acme skills');
+    assert.equal(f.wb.getItem(a.id).revision, a.revision, 'the collection is organisation, not content');
+    assert.equal(f.wb.getItem(a.id).status, 'approved');
+    assert.ok(f.wb.activity().some(e => e.itemId === a.id && e.message === 'Moved from “Vendor · acme” to “Acme skills”'));
     assert.equal(f.wb.getItem(b.id).collection, 'Acme skills', 'trashed items move too');
     assert.equal(f.wb.getItem(kept.id).collection, 'Personal');
     assert.deepEqual(f.wb.collections(), ['Personal', 'Acme skills', 'Empty']);
     assert.throws(() => f.wb.renameCollection({ from: 'Personal', to: 'acme SKILLS' }), /already exists/);
     assert.throws(() => f.wb.renameCollection({ from: 'Empty', to: 'Empty' }), /different name/);
+  } finally { f.close(); }
+});
+
+test('material distilled before sources existed becomes a source when the library opens; approved and plain items stay as they are', () => {
+  const f = fixture();
+  try {
+    const pasted = f.wb.create({ title: 'Turn my interaction with AI into a prompt:', kind: 'prompt', content: 'A long chat transcript', collection: 'Ideas' });
+    const entry = f.wb.createFrom({ id: pasted.id, revision: pasted.revision, author: 'Codex', item: { title: 'Design review', kind: 'technique', description: 'Compare options', content: '1. Compare.', files: {}, tags: [], collection: 'Design', source: '', licence: 'Unknown' } });
+    const distilled = f.wb.update({ id: pasted.id, expect: pasted.revision, value: { ...f.wb.authoring(pasted.id), collection: 'Design', description: 'A chat about designs.' }, summary: 'Codex distilled 1 entries into “Design”' });
+    f.wb.moveItems({ ids: [pasted.id], collection: 'Kept here' });
+    const video = f.wb.create({ title: 'Talk', kind: 'link', content: 'https://www.youtube.com/watch?v=abc', tags: ['video', 'youtube'], files: { 'transcript.md': Buffer.from('Words').toString('base64') } });
+    const approvedVideo = f.wb.create({ title: 'Approved talk', kind: 'link', content: 'https://www.youtube.com/watch?v=def', tags: ['youtube'], files: { 'transcript.md': Buffer.from('More words').toString('base64') } });
+    f.wb.approve({ id: approvedVideo.id, revision: approvedVideo.revision, reviewer: 'Me', scope: 'Test', note: 'Reviewed', waivedChecks: 'Fixture' });
+    const plain = f.wb.create({ title: 'Plain prompt', kind: 'prompt', content: 'Review {{thing}}', description: 'Has a description but was never analysed' });
+    const reopened = new Workbench(f.wb.root, path.join(f.root, 'private'));
+    try {
+      const source = reopened.getItem(pasted.id);
+      assert.equal(source.kind, 'source'); assert.equal(reopened.getRevision(pasted.id).summary, 'Filed as source');
+      assert.notEqual(source.revision, distilled.revision); assert.equal(source.collection, 'Kept here', 'filing as a source keeps where it was moved');
+      assert.equal(reopened.getItem(entry.id).origin?.itemId, pasted.id); assert.deepEqual(reopened.madeFrom(pasted.id).map(i => i.id), [entry.id]);
+      assert.equal(reopened.getItem(video.id).kind, 'source');
+      assert.equal(reopened.getItem(approvedVideo.id).kind, 'link'); assert.equal(reopened.getItem(approvedVideo.id).status, 'approved', 'approval is never dropped by the tidy-up');
+      assert.ok(reopened.warnings.some(w => w.includes('Approved talk')));
+      assert.equal(reopened.getItem(plain.id).kind, 'prompt'); assert.equal(reopened.getItem(plain.id).revision, plain.revision);
+    } finally { reopened.close(); }
+  } finally { f.close(); }
+});
+
+test('analysis records travel with export and import and go with a purged source', () => {
+  const f = fixture();
+  try {
+    const source = f.wb.create({ title: 'Pasted chat', kind: 'source', content: 'Chat text' });
+    const record = { schemaVersion: 1 as const, id: randomUUID(), itemId: source.id, revision: source.revision, provider: 'codex' as const, model: 'gpt-test', effort: 'low', startedAt: '2026-09-26T10:00:00.000Z', finishedAt: '2026-09-26T10:01:00.000Z', summary: 'About designs.', takeaway: 'Compare.', skipped: '', counts: { technique: 1 }, created: [], collection: 'Design' };
+    f.wb.recordAnalysis(record); f.wb.recordAnalysis({ ...record, summary: 'Changed' });
+    assert.equal(f.wb.analyses(source.id)[0].summary, 'About designs.', 'a record is written once and never changes');
+    assert.throws(() => f.wb.recordAnalysis({ ...record, id: randomUUID(), itemId: randomUUID() }), hasCode('ITEM_NOT_FOUND'));
+    const file = path.join(f.root, 'export.json'); f.wb.exportLibrary(file);
+    const clone = new Workbench(path.join(f.root, 'clone'), path.join(f.root, 'clone-private'));
+    try { clone.importLibrary(file); assert.deepEqual(clone.analyses(source.id).map(a => a.summary), ['About designs.']); } finally { clone.close(); }
+    f.wb.setMeta({ id: source.id, expect: source.revision, deleted: true }); f.wb.purge({ id: source.id, confirm: true });
+    assert.deepEqual(f.wb.analyses(), []);
   } finally { f.close(); }
 });
 

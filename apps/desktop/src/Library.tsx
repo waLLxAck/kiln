@@ -9,8 +9,8 @@ import { emptyLibraryFilters, filterDimensions, type FilterDimension, type Libra
 
 /** One tab per kind of item, plus two cross-cutting views. Skills is a tab like any other; its rows carry install marks. */
 export type LibraryTab = 'recent' | 'favourites' | Item['kind'];
-export const KINDS: Item['kind'][] = ['prompt', 'skill', 'agent', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
-export const tabLabel: Record<LibraryTab, string> = { recent: 'All', favourites: 'Favourites', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References' };
+export const KINDS: Item['kind'][] = ['source', 'prompt', 'skill', 'agent', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
+export const tabLabel: Record<LibraryTab, string> = { recent: 'All', favourites: 'Favourites', source: 'Sources', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References' };
 export const inTab = (item: Item, tab: LibraryTab) => tab === 'recent' || (tab === 'favourites' ? item.favourite : item.kind === tab);
 
 export function LibraryTabs({ tab, counts, onChange }: { tab: LibraryTab; counts: Record<string, number>; onChange: (tab: LibraryTab) => void }) {
@@ -91,7 +91,8 @@ export type SortKey = 'title' | 'kind' | 'collection' | 'status' | 'updatedAt' |
 export type Sort = { key: SortKey; dir: 'asc' | 'desc' } | null;
 /** `opt` columns give way when the list is narrow; the title and the State column always stay. */
 type Column = { label: string; key: SortKey; opt?: boolean };
-export const columns = (tab: LibraryTab): Column[] => tab === 'skill' ? [{ label: 'Skill', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
+export const columns = (tab: LibraryTab): Column[] => tab === 'source' ? [{ label: 'Source', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'Made', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
+  : tab === 'skill' ? [{ label: 'Skill', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
   : tab === 'link' ? [{ label: 'Title', key: 'title' }, { label: 'Site', key: 'site', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Saved', key: 'createdAt', opt: true }]
   : tab === 'recent' || tab === 'favourites' ? [{ label: 'Title', key: 'title' }, { label: 'Type', key: 'kind', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
   : [{ label: 'Title', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }];
@@ -116,7 +117,9 @@ export function RowHead({ tab, sort, onSort }: { tab: LibraryTab; sort: Sort; on
  * The same cell on every tab, so state is never hidden: for an approved item the GitHub mark alone tells the story
  * (green once pushed, muted while the push is pending); drafts keep their status badge. Skills add install marks per agent.
  */
-export function StateCell({ item, locations, installations, published }: { item: Item; locations: Location[]; installations: Installation[]; published: boolean }) {
+export function StateCell({ item, locations, installations, published, made = 0 }: { item: Item; locations: Location[]; installations: Installation[]; published: boolean; /** Items made from this source. */ made?: number }) {
+  // A source is material, not something to approve or install: its state is what came out of it.
+  if (item.kind === 'source') return <span className="lib-cell status"><span className="lib-made" title="Items made from this source">{made} made</span></span>;
   const mark = item.status === 'approved' ? <span className={`lib-mark ${published ? 'on' : 'pending'}`} title={published ? 'Approved and on GitHub' : 'Approved; the push to GitHub has not finished'} role="img" aria-label={published ? 'On GitHub' : 'Approved, push pending'}><Github size={14} /></span>
     : item.status === 'testing' ? <span className="lib-mark testing" title={statusHelp.testing} role="img" aria-label="Testing"><FlaskConical size={14} /></span>
     : ['archived', 'rejected'].includes(item.status) ? <Badge status={item.status} />
@@ -125,10 +128,10 @@ export function StateCell({ item, locations, installations, published }: { item:
 }
 /** The inside of one list row. `opt` cells give way when the list is narrow; the title and the State cell always stay. */
 /** `from` names the item's source when another item has the same title, so the two can be told apart. */
-export function ItemRow({ item, tab, collectionShown, locations, installations, published, from }: { item: Item; tab: LibraryTab; collectionShown: boolean; locations: Location[]; installations: Installation[]; published: boolean; from?: { label: string; full: string } }) {
+export function ItemRow({ item, tab, collectionShown, locations, installations, published, from, made }: { item: Item; tab: LibraryTab; collectionShown: boolean; locations: Location[]; installations: Installation[]; published: boolean; from?: { label: string; full: string }; made?: number }) {
   const cols = columns(tab);
-  const cell = (key: SortKey) => key === 'status' ? <StateCell key="state" item={item} locations={locations} installations={installations} published={published} />
+  const cell = (key: SortKey) => key === 'status' ? <StateCell key="state" item={item} locations={locations} installations={installations} published={published} made={made} />
     : <span key={key} className="lib-cell opt muted">{key === 'kind' ? <span className="item-kind-label">{item.kind}</span> : key === 'collection' ? item.collection : key === 'site' ? site(item) : key === 'createdAt' ? date(item.createdAt) : date(item.updatedAt)}</span>;
   const subtitle = [from ? `from ${from.label}` : '', item.description || (tab === 'recent' || tab === 'favourites' || collectionShown ? '' : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
-  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}</span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
+  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}</span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown || !item.collection ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
 }

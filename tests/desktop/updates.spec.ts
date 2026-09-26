@@ -44,7 +44,7 @@ test('prepare keeps the app open and usable; restart waits for a second click ev
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('on macOS and Linux the Updates panel points to the releases page instead of the Windows updater', async () => {
+test('a local build on macOS or Linux offers GitHub releases instead of the Windows folder updater', async () => {
   test.skip(process.platform === 'win32', 'Windows has the in-app updater, covered above.');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-update-other-'));
   const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
@@ -55,8 +55,9 @@ test('on macOS and Linux the Updates panel points to the releases page instead o
     await expect(page.evaluate(() => window.kiln.call('desktop.updatePrepare', { version: '99.0.0' }))).rejects.toThrow(/UPDATE_UNSUPPORTED/);
     await page.getByRole('button', { name: 'Settings & repository' }).click();
     const panel = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Updates', exact: true }) });
-    await expect(panel).toContainText('updates come from the releases page');
-    await expect(panel.getByRole('button', { name: 'Open the releases page' })).toBeVisible();
+    await expect(panel).toContainText('On this platform, follow GitHub releases instead.');
+    await expect(panel.getByRole('button', { name: 'Use GitHub releases' })).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Releases page' })).toBeVisible();
     await expect(panel.getByRole('button', { name: 'Check now' })).toHaveCount(0);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

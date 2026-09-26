@@ -5,13 +5,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot } from '../protocol/schema';
+import { analysisSchema, approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
+import { collectionPath, collectionTree, isWithin, parentOf, relocate } from './collections';
 
 /** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
 function workingFingerprint(dir: string, revision: string) {
@@ -54,7 +55,7 @@ export class Workbench {
     if (fs.existsSync(formatFile)) z.object({ format: z.literal('kiln-library'), schemaVersion: z.literal(1), library: z.literal('workbench') }).parse(readJson(formatFile));
     this.canonical = path.join(root, 'workbench');
     this.local = path.join(localRoot, digest(path.resolve(root)).slice(0, 24));
-    for (const dir of ['items', 'approvals', 'experiments', 'activity']) fs.mkdirSync(path.join(this.canonical, dir), { recursive: true });
+    for (const dir of ['items', 'approvals', 'experiments', 'activity', 'analyses']) fs.mkdirSync(path.join(this.canonical, dir), { recursive: true });
     for (const dir of ['runs', 'plans', 'receipts', 'targets', 'observations', 'journals', 'keys']) fs.mkdirSync(path.join(this.local, dir), { recursive: true });
     const marker = path.join(this.canonical, 'workbench.json');
     if (!fs.existsSync(marker)) writeJson(marker, { schemaVersion: 1, application: 'Kiln', assetsLimitBytes: 10_485_760 });
@@ -67,6 +68,7 @@ export class Workbench {
     this.refresh();
     this.cleanPrivateContent();
     this.fileEntriesByKind();
+    this.fileSources();
     this.watcher = fs.watch(this.canonical, { recursive: true }, (_event, filename) => {
       const name = filename?.toString().replaceAll('\\', '/') ?? '';
       if (!filename) { this.dirty = true; this.changedItems = null; return; } // Unknown path: reconcile everything next time.
@@ -88,11 +90,32 @@ export class Workbench {
         for (const item of pending) {
           const kind = types.find(t => item.tags.includes(t))!;
           const revision = this.getRevision(item.id);
-          const updated = this.saveRevision(item, authoringSchema.parse({ ...revision, kind, tags: item.tags.filter(t => !(types as readonly string[]).includes(t)) }), `Filed as ${kind}`);
+          const updated = this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection, kind, tags: item.tags.filter(t => !(types as readonly string[]).includes(t)) }), `Filed as ${kind}`);
           this.record('revised', `Filed as ${kind}`, item.id, updated.revision);
         }
       });
     } catch (error) { this.warnings.push(`Entries could not be re-filed by kind yet: ${error instanceof Error ? error.message : error}`); }
+  }
+  /**
+   * One-time tidy-up for libraries analysed before sources existed: material that was distilled into entries becomes a source.
+   * Recognised by the revision note every distillation writes, or by a video transcript. Approved items are left as they are,
+   * because changing the kind makes a new revision; the rest keep their collection and everything made from them.
+   */
+  private fileSources() {
+    const distilled = / distilled \d+ entries into “/;
+    const candidates = this.listItems(true).filter(i => ['prompt', 'link', 'file', 'image'].includes(i.kind) && !i.origin && (i.description || i.tags.includes('youtube')));
+    const found = candidates.filter(item => { try { return (item.tags.includes('youtube') && Boolean(this.getRevision(item.id).files['transcript.md'])) || this.revisionHistory(item.id).some(r => distilled.test(r.summary)); } catch { return false; } });
+    if (!found.length) return;
+    const approved = new Set(this.approvals().filter(a => a.trust === 'local').map(a => `${a.itemId}:${a.revision}`));
+    try {
+      this.mutate(() => {
+        for (const item of found) {
+          if (approved.has(`${item.id}:${item.revision}`)) { this.warnings.push(`“${item.title}” was analysed into entries but stays a ${item.kind} while it is approved. Unapprove it and reopen Kiln to file it as a source.`); continue; }
+          const updated = this.saveRevision(item, authoringSchema.parse({ ...this.getRevision(item.id), collection: item.collection, kind: 'source' }), 'Filed as source');
+          this.record('revised', 'Filed as source', item.id, updated.revision);
+        }
+      });
+    } catch (error) { this.warnings.push(`Analysed material could not be filed as sources yet: ${error instanceof Error ? error.message : error}`); }
   }
   itemDir(id: string) { return path.join(this.canonical, 'items', idSchema.parse(id)); }
   private itemFile(id: string) { return path.join(this.itemDir(id), 'item.json'); }
@@ -121,12 +144,34 @@ export class Workbench {
     invariant(value.itemId === id && value.hash === hash && revisionHash(value) === hash, 'BUNDLE_TAMPERED', 'Revision content does not match its recorded hash. Restore it from history.');
     return value;
   }
+  /**
+   * The current revision's values with the collection the item is filed in now. Moving an item between collections changes only
+   * item.json, so the revision may still name an earlier collection; start edits from this rather than from `getRevision`.
+   */
+  authoring(id: string): Authoring {
+    return { ...this.getRevision(id), collection: this.getItem(id).collection };
+  }
+  /** Whether authored values still match a revision. The collection is left out: it is organisation, kept on the item, and moving never makes a revision. */
+  private matches(next: Authoring, revision: Revision) {
+    return revisionHash({ ...next, collection: revision.collection }, revision.hashVersion ?? 1) === revision.hash && next.description === revision.description;
+  }
   listItems(includeDeleted = false) {
     return fs.readdirSync(path.join(this.canonical, 'items'), { withFileTypes: true }).filter(d => d.isDirectory()).flatMap(d => {
       try { const item = this.getItem(d.name); return includeDeleted || !item.deletedAt ? [item] : []; }
       catch (error) { this.warnings.push(`${d.name}: ${error instanceof Error ? error.message : error}`); return []; }
     }).sort((a, b) => Number(b.favourite) - Number(a.favourite) || a.order - b.order || b.updatedAt.localeCompare(a.updatedAt));
   }
+  /** Recorded analyses, newest first; one item's when `itemId` is given. */
+  analyses(itemId?: string) { return readRecords(path.join(this.canonical, 'analyses'), value => analysisSchema.parse(value), this.warnings).filter(a => !itemId || a.itemId === itemId).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)); }
+  /** Keeps what an analysis produced beside the library. Written once per run; the record never changes afterwards. */
+  recordAnalysis(input: Analysis) {
+    const analysis = analysisSchema.parse(input); this.getItem(analysis.itemId);
+    const file = path.join(this.canonical, 'analyses', `${analysis.id}.json`);
+    if (!fs.existsSync(file)) writeJson(file, analysis);
+    return analysis;
+  }
+  /** Items made directly from this one: entries distilled from a source, skills shaped from a prompt, chat additions. Trash excluded. */
+  madeFrom(id: string) { return this.listItems().filter(i => i.origin?.itemId === id); }
   approvals(includeRevoked = false) { return readRecords(path.join(this.canonical, 'approvals'), value => approvalSchema.parse(value), this.warnings).filter(a => includeRevoked || !a.revokedAt); }
   trials(includeDeleted = false) { return readRecords(path.join(this.canonical, 'experiments'), value => trialSchema.parse(value), this.warnings).filter(t => includeDeleted || !t.deletedAt); }
   targets() { return readRecords(path.join(this.local, 'targets'), value => targetSchema.parse(value), this.warnings); }
@@ -167,7 +212,7 @@ export class Workbench {
       for (const item of this.listItems(true)) {
         try {
           const revision = this.getRevision(item.id), safe = shareableAuthoring(revision);
-          if (JSON.stringify(safe) !== JSON.stringify(revision)) this.saveRevision(item, authoringSchema.parse(revision), 'Moved private session data and machine provenance out of shared content');
+          if (JSON.stringify(safe) !== JSON.stringify(revision)) this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection }), 'Moved private session data and machine provenance out of shared content');
           for (const old of readRecords(path.join(this.itemDir(item.id), 'revisions'), value => revisionSchema.parse(value))) {
             if (JSON.stringify(shareableAuthoring(old)) === JSON.stringify(old)) continue;
             invariant(revisionHash(old) === old.hash, 'BUNDLE_TAMPERED', 'Cannot archive a modified revision.');
@@ -209,7 +254,7 @@ export class Workbench {
     invariant(fs.statSync(contentFile).size <= 2_000_000, 'CONTENT_TOO_LARGE', 'External text content exceeds 2 MB. Keep large data in a referenced file.');
     const filesDir = path.join(this.itemDir(id), 'files');
     const next = authoringSchema.parse({ ...item, content: fs.readFileSync(contentFile, 'utf8'), files: fs.existsSync(filesDir) ? readFiles(filesDir) : previous.files });
-    if (revisionHash(next, previous.hashVersion ?? 1) === item.revision && next.description === previous.description) return item;
+    if (this.matches(next, previous)) return item;
     validateContent(next); const updated = this.saveRevision(item, next, 'External file edit');
     this.record('external_edit', 'External changes saved as an unapproved revision', id, updated.revision); return updated;
   }
@@ -217,6 +262,8 @@ export class Workbench {
   create(input: unknown, key?: string, announce = true): Item {
     const data = authoringSchema.parse(input); validateContent(data);
     return this.mutate(() => {
+      // Trimmed but not matched against existing spellings: bulk imports create hundreds of items and must not read the library for each.
+      data.collection = data.collection.trim() ? collectionPath(data.collection) : '';
       const timestamp = now();
       const item: Item = { schemaVersion: 1, id: randomUUID(), title: data.title, kind: data.kind, description: data.description, tags: data.tags, collection: data.collection, source: data.source, licence: data.licence, status: 'captured', revision: revisionHash(data), favourite: false, order: Date.now(), createdAt: timestamp, updatedAt: timestamp, deletedAt: null, origin: null };
       const saved = this.saveRevision(item, data, 'Captured into library'); if (announce) this.record('captured', `Captured “${item.title}”`, item.id, item.revision);
@@ -231,6 +278,9 @@ export class Workbench {
     return this.mutate(() => {
       const item = this.reconcileItem(data.id);
       invariant(item.revision === data.expect, 'REVISION_CONFLICT', 'This item changed elsewhere. Reload and compare before saving; your draft is still in the editor.');
+      if (data.value.collection !== item.collection) data.value.collection = this.filedName(data.value.collection);
+      // Only the collection changed: file the item there and keep its revision, and with it any approval.
+      if (this.matches(data.value, this.getRevision(item.id))) return data.value.collection === item.collection ? item : this.fileItems([item], data.value.collection)[0];
       const updated = this.saveRevision(item, data.value, summary);
       this.record('revised', summary, item.id, updated.revision); return updated;
     }, key);
@@ -266,7 +316,7 @@ export class Workbench {
             const working = path.join(this.itemDir(item.id), 'files');
             if (!fs.existsSync(working)) writeWorkingFiles(working, previous.files);
             const next = authoringSchema.parse({ ...item, content, files: readFiles(working) });
-            if (revisionHash(next, previous.hashVersion ?? 1) !== item.revision || next.description !== previous.description) {
+            if (!this.matches(next, previous)) {
               validateContent(next); const updated = this.saveRevision(item, next, 'External file edit');
               this.record('external_edit', 'External changes saved as an unapproved revision', item.id, updated.revision);
             }
@@ -321,7 +371,7 @@ export class Workbench {
     const item = this.getItem(id), revision = this.getRevision(id);
     const contentHash = digest(revision.content);
     const duplicates = this.dirty ? this.listItems().filter(other => other.id !== id && this.getRevision(other.id).content === revision.content) : this.indexedItems.filter(other => other.id !== id && this.indexedContentHashes.get(other.id) === contentHash);
-    return { item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id), validation: validateContent(revision), duplicates };
+    return { analyses: this.analyses(id), item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id), validation: validateContent(revision), duplicates };
   }
   setMeta(input: unknown) {
     this.dirty = true;
@@ -342,6 +392,7 @@ export class Workbench {
       const item = this.getItem(data.id);
       invariant(item.deletedAt, 'NOT_IN_TRASH', 'Move this item to the trash before deleting it permanently.');
       for (const approval of this.approvals(true).filter(a => a.itemId === item.id)) fs.rmSync(path.join(this.canonical, 'approvals', `${approval.id}.json`), { force: true });
+      for (const analysis of this.analyses(item.id)) fs.rmSync(path.join(this.canonical, 'analyses', `${analysis.id}.json`), { force: true });
       for (const trial of this.trials(true).filter(t => t.itemId === item.id)) { fs.rmSync(path.join(this.canonical, 'experiments', `${trial.id}.json`), { force: true }); fs.rmSync(path.join(this.local, 'runs', trial.id), { recursive: true, force: true }); }
       const installs = this.installs(); if (installs[item.id]) { delete installs[item.id]; writeJson(this.installsFile(), installs); }
       fs.rmSync(this.itemDir(item.id), { recursive: true, force: true });
@@ -352,7 +403,8 @@ export class Workbench {
   }
   restore(input: unknown) {
     const data = z.object({ id: idSchema, expect: hashSchema, revision: hashSchema }).parse(input);
-    const revision = this.getRevision(data.id, data.revision);
+    // Restoring brings back the content, not the folder the item was in back then.
+    const revision = { ...this.getRevision(data.id, data.revision), collection: this.getItem(data.id).collection };
     return this.update({ id: data.id, expect: data.expect, summary: `Restored revision ${data.revision.slice(0, 8)}`, value: revision });
   }
   approve(input: unknown) {
@@ -503,50 +555,121 @@ export class Workbench {
     const file = path.join(this.local, 'settings.json');
     return z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(fs.existsSync(file) ? readJson(file) : {});
   }
+  /** Every collection in sidebar order, subfolders after their parent. Custom names come from workbench.json; the rest from the items filed in them. */
   collections(items = this.listItems()) {
     const config = readJson(path.join(this.canonical, 'workbench.json')) as { collections?: string[] };
-    return [...new Set([...(config.collections ?? []), ...items.map(i => i.collection)])];
+    return collectionTree([...(config.collections ?? []), ...items.map(i => i.collection)]);
+  }
+  private saveCollectionNames(names: string[]) {
+    const file = path.join(this.canonical, 'workbench.json'), config = readJson(file) as Record<string, unknown>;
+    const lower = new Set<string>(), unique = collectionTree(names).filter(name => !lower.has(name.toLowerCase()) && lower.add(name.toLowerCase()));
+    writeJson(file, { ...config, collections: unique }); return unique;
+  }
+  /** An existing collection spelled the same apart from case wins, level by level, so "game design/puzzles" joins "Game Design". */
+  private existingSpelling(name: string, names = this.collections(this.listItems(true))) {
+    const known = new Map(names.map(n => [n.toLowerCase(), n]));
+    let result = '';
+    for (const part of name ? name.split('/') : []) { const next = result ? `${result}/${part}` : part; result = known.get(next.toLowerCase()) ?? next; }
+    return result;
+  }
+  /** A typed collection as it is stored: levels trimmed, an existing spelling reused, '' for unfiled. */
+  private filedName(collection: string) { return collection.trim() ? this.existingSpelling(collectionPath(collection)) : ''; }
+  /** Files items under `collection` ('' leaves them unfiled). Only item.json changes: revisions, approvals and installs are untouched. */
+  private fileItems(items: Item[], collection: string, note = (from: string) => from ? `Moved from “${from}” to ${collection ? `“${collection}”` : 'no collection'}` : `Filed in “${collection}”`) {
+    return items.map(item => {
+      if (item.collection === collection) return item;
+      const next = { ...item, collection, updatedAt: now() };
+      writeJson(this.itemFile(item.id), next); this.itemCache.delete(item.id);
+      this.record('organised', note(item.collection), item.id, item.revision); return next;
+    });
+  }
+  /** Adds an empty collection, or a subfolder when the name contains "/". Its parents appear with it. */
+  createCollection(input: unknown) {
+    const name = collectionPath(z.object({ name: z.string() }).parse(input).name);
+    return this.mutate(() => {
+      const names = this.collections();
+      invariant(!names.some(n => n.toLowerCase() === name.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${name}” already exists.`);
+      const spelled = this.existingSpelling(name, names);
+      this.saveCollectionNames([...names, spelled]); this.record('collection_created', `Created the “${spelled}” collection`);
+      return { name: spelled, collections: this.collections() };
+    });
   }
   /**
-   * Renames a collection everywhere: the sidebar list and every item in it, trashed ones included. The collection is part of each
-   * revision, so every moved item gets a new revision; an approved item therefore returns to Captured and needs approving again.
+   * Moves items into a collection, or out of every collection with an empty name. Organising never makes a revision, so approved
+   * items stay approved and installed copies keep matching.
+   */
+  moveItems(input: unknown) {
+    const value = z.object({ ids: z.array(idSchema).min(1).max(10_000), collection: z.string() }).parse(input);
+    invariant(new Set(value.ids).size === value.ids.length, 'INVALID_INPUT', 'List each item once.');
+    if (value.collection.trim()) collectionPath(value.collection);
+    return this.mutate(() => {
+      const collection = this.filedName(value.collection);
+      const items = value.ids.map(id => this.reconcileItem(id));
+      const moved = this.fileItems(items, collection).filter((item, index) => item !== items[index]);
+      return { collection, moved: moved.map(i => i.id) };
+    });
+  }
+  /**
+   * Renames a collection everywhere: the sidebar list, its subfolders, and every item in them, trashed ones included. A path moves
+   * it: "Puzzles" → "Game Design/Puzzles" makes it a subfolder. Items keep their revisions and approvals.
    */
   renameCollection(input: unknown) {
-    const value = z.object({ from: z.string().trim().min(1).max(80), to: z.string().trim().min(1).max(80) }).parse(input);
+    const raw = z.object({ from: z.string(), to: z.string() }).parse(input);
+    const value = { from: collectionPath(raw.from), to: collectionPath(raw.to) };
     invariant(value.from !== value.to, 'SAME_NAME', 'Choose a different name.');
     return this.mutate(() => {
-      const existing = this.collections(this.listItems(true)).filter(name => name !== value.from);
-      invariant(!existing.some(name => name.toLowerCase() === value.to.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${value.to}” already exists.`);
-      const items = this.listItems(true).filter(i => i.collection === value.from).map(i => this.reconcileItem(i.id));
-      for (const item of items) {
-        const updated = this.saveRevision(item, authoringSchema.parse({ ...this.getRevision(item.id), collection: value.to }), `Moved from “${value.from}” to “${value.to}”`);
-        this.record('revised', `Collection renamed to “${value.to}”`, item.id, updated.revision);
+      const all = this.collections(this.listItems(true));
+      invariant(all.includes(value.from), 'COLLECTION_NOT_FOUND', `There is no collection called “${value.from}”.`);
+      const remaining = all.filter(name => !isWithin(name, value.from));
+      invariant(!remaining.some(name => name.toLowerCase() === value.to.toLowerCase()), 'DUPLICATE_COLLECTION', `A collection called “${value.to}” already exists.`);
+      const to = this.existingSpelling(value.to, remaining);
+      const moved: string[] = [];
+      for (const item of this.listItems(true).filter(i => isWithin(i.collection, value.from))) {
+        const destination = relocate(item.collection, value.from, to);
+        this.fileItems([this.reconcileItem(item.id)], destination, from => `Moved from “${from}” to “${destination}”`); moved.push(item.id);
       }
-      const file = path.join(this.canonical, 'workbench.json'), config = readJson(file) as { collections?: string[] };
-      const names = (config.collections ?? []).map(name => name === value.from ? value.to : name);
-      writeJson(file, { ...config, collections: names.includes(value.to) ? names : [...names, value.to] });
-      this.record('collection_renamed', `Renamed the “${value.from}” collection to “${value.to}”${items.length ? ` (${items.length} item${items.length === 1 ? '' : 's'})` : ''}`);
-      return { from: value.from, to: value.to, moved: items.map(i => i.id) };
+      this.saveCollectionNames(this.collections().map(name => relocate(name, value.from, to)));
+      this.record('collection_renamed', `Renamed the “${value.from}” collection to “${to}”${moved.length ? ` (${moved.length} item${moved.length === 1 ? '' : 's'})` : ''}`);
+      return { from: value.from, to, moved };
     });
   }
+  /** Replaces the custom collection list, which sets the sidebar order. Collections that still hold items stay listed regardless. */
   saveCollections(input: unknown) {
-    const value = z.object({ names: z.array(z.string().trim().min(1).max(80)).max(100) }).parse(input);
-    invariant(new Set(value.names).size === value.names.length, 'DUPLICATE_COLLECTION', 'Collection names must be unique.');
-    return this.mutate(() => {
-      const file = path.join(this.canonical, 'workbench.json'), config = readJson(file) as Record<string, unknown>;
-      writeJson(file, { ...config, collections: value.names }); return value.names;
-    });
+    const value = z.object({ names: z.array(z.string()).max(500) }).parse(input);
+    const names = value.names.map(collectionPath);
+    invariant(new Set(names.map(n => n.toLowerCase())).size === names.length, 'DUPLICATE_COLLECTION', 'Collection names must be unique.');
+    return this.mutate(() => this.saveCollectionNames(names));
   }
-  /** Removes a collection from the sidebar and moves the items still in it to the trash. Trashed items keep the name, so restoring one brings the collection back. */
+  /**
+   * Removes a collection and its subfolders from the sidebar. `items: 'keep'` moves everything up one level, subfolders included:
+   * items directly in a top-level collection become unfiled, and no revision or approval changes. `items: 'trash'` moves the
+   * items to the trash instead; they keep the name, so restoring one brings the collection back.
+   */
   deleteCollection(input: unknown) {
-    const value = z.object({ name: z.string().trim().min(1).max(80), confirm: z.literal(true) }).parse(input);
+    const raw = z.object({ name: z.string(), confirm: z.literal(true), items: z.enum(['keep', 'trash']) }).parse(input);
+    const name = collectionPath(raw.name), parent = parentOf(name);
     return this.mutate(() => {
-      const items = this.listItems().filter(i => i.collection === value.name).map(i => this.reconcileItem(i.id));
-      for (const item of items) { writeJson(this.itemFile(item.id), { ...item, deletedAt: now(), updatedAt: now() }); this.record('deleted', `Moved to trash with the “${value.name}” collection; recoverable`, item.id, item.revision); }
-      const file = path.join(this.canonical, 'workbench.json'), config = readJson(file) as { collections?: string[] };
-      writeJson(file, { ...config, collections: (config.collections ?? []).filter(n => n !== value.name) });
-      this.record('collection_deleted', items.length ? `Deleted the “${value.name}” collection; ${items.length} item${items.length === 1 ? '' : 's'} moved to the trash` : `Deleted the empty “${value.name}” collection`);
-      return { name: value.name, trashed: items.map(i => i.id) };
+      const all = this.collections(this.listItems(true));
+      invariant(all.includes(name), 'COLLECTION_NOT_FOUND', `There is no collection called “${name}”.`);
+      const remaining = all.filter(n => !isWithin(n, name)), within = (i: Item) => isWithin(i.collection, name);
+      const trashed: string[] = [], moved: string[] = [];
+      if (raw.items === 'trash') {
+        for (const item of this.listItems().filter(within).map(i => this.reconcileItem(i.id))) {
+          writeJson(this.itemFile(item.id), { ...item, deletedAt: now(), updatedAt: now() }); this.itemCache.delete(item.id);
+          this.record('deleted', `Moved to trash with the “${name}” collection; recoverable`, item.id, item.revision); trashed.push(item.id);
+        }
+      } else {
+        // Trashed items move too, or restoring one would bring the deleted collection back.
+        for (const item of this.listItems(true).filter(within)) {
+          const destination = this.existingSpelling(relocate(item.collection, name, parent), remaining);
+          this.fileItems([this.reconcileItem(item.id)], destination, from => `Moved from “${from}” to ${destination ? `“${destination}”` : 'no collection'} when “${name}” was deleted`); moved.push(item.id);
+        }
+      }
+      const names = this.collections().filter(n => raw.items === 'keep' || !isWithin(n, name)).map(n => this.existingSpelling(relocate(n, name, parent), remaining));
+      this.saveCollectionNames(names);
+      const count = (n: number) => `${n} item${n === 1 ? '' : 's'}`;
+      this.record('collection_deleted', trashed.length ? `Deleted the “${name}” collection; ${count(trashed.length)} moved to the trash` : moved.length ? `Deleted the “${name}” collection; ${count(moved.length)} moved to ${parent ? `“${parent}”` : 'no collection'}` : `Deleted the empty “${name}” collection`);
+      return { name, items: raw.items, to: parent, trashed, moved };
     });
   }
   reorderItems(input: unknown) {
@@ -610,14 +733,15 @@ export class Workbench {
       }
       const approvals = this.approvals(true).filter(a => mapped.get(`${a.itemId}:${a.revision}`) === a.revision);
       const trials = this.trials(true).map(t => ({ ...shareableTrial(t), revision: mapped.get(`${t.itemId}:${t.revision}`) ?? t.revision }));
-      const exported = { schemaVersion: 1, exportedAt: now(), items, collections: this.collections(), approvals, trials, activity: this.activity().map(event => ({ ...event, message: event.kind.replaceAll('_', ' '), ...(event.revision && event.itemId ? { revision: mapped.get(`${event.itemId}:${event.revision}`) ?? event.revision } : {}) })), excluded: ['Machine paths and deployment ownership', 'Private inputs and session transcripts', 'Private activity details and observation logs', 'Approvals for privacy-transformed revisions'] };
+      const analyses = this.analyses().map(a => ({ ...a, revision: mapped.get(`${a.itemId}:${a.revision}`) ?? a.revision }));
+      const exported = { schemaVersion: 1, exportedAt: now(), items, collections: this.collections(), approvals, trials, analyses, activity: this.activity().map(event => ({ ...event, message: event.kind.replaceAll('_', ' '), ...(event.revision && event.itemId ? { revision: mapped.get(`${event.itemId}:${event.revision}`) ?? event.revision } : {}) })), excluded: ['Machine paths and deployment ownership', 'Private inputs and session transcripts', 'Private activity details and observation logs', 'Approvals for privacy-transformed revisions'] };
       writeJson(destination, exported); return { destination, items: items.length, excluded: exported.excluded };
     });
   }
   importLibrary(file: string) {
     this.dirty = true;
     noLinks(file); invariant(fs.statSync(file).size < 150_000_000, 'IMPORT_TOO_LARGE', 'Export exceeds 150 MB.');
-    const data = z.object({ schemaVersion: z.literal(1), items: z.array(z.object({ item: itemSchema, revisions: z.array(revisionSchema) })), collections: z.array(z.string().min(1).max(100)).default([]), approvals: z.array(approvalSchema), trials: z.array(trialSchema), activity: z.array(z.unknown()).default([]) }).parse(readJson(file));
+    const data = z.object({ schemaVersion: z.literal(1), items: z.array(z.object({ item: itemSchema, revisions: z.array(revisionSchema) })), collections: z.array(z.string().min(1).max(100)).default([]), approvals: z.array(approvalSchema), trials: z.array(trialSchema), analyses: z.array(analysisSchema).default([]), activity: z.array(z.unknown()).default([]) }).parse(readJson(file));
     for (const { item, revisions } of data.items) {
       invariant(revisions.some(r => r.hash === item.revision), 'INVALID_EXPORT', 'Current revision is missing.');
       for (const r of revisions) { validateContent(r); invariant(r.itemId === item.id && r.hash === revisionHash(r), 'BUNDLE_TAMPERED', 'Export contains a modified revision.'); }
@@ -644,6 +768,10 @@ export class Workbench {
       for (const approval of data.approvals) {
         const file = path.join(this.canonical, 'approvals', `${approval.id}.json`);
         if (!fs.existsSync(file)) writeJson(file, { ...approval, trust: 'imported' });
+      }
+      for (const analysis of data.analyses) {
+        const file = path.join(this.canonical, 'analyses', `${analysis.id}.json`);
+        if (!fs.existsSync(file) && fs.existsSync(this.itemFile(analysis.itemId))) writeJson(file, analysis);
       }
       for (const value of data.activity) {
         const event = z.object({ id: idSchema, at: z.string(), itemId: idSchema.nullable(), kind: z.string().max(100), message: z.string().max(5000), revision: hashSchema.optional() }).parse(value);
@@ -681,11 +809,11 @@ export class Workbench {
   addAttachment(id: string, expect: string, file: string, relative: string) {
     noLinks(file); safeRelative(relative);
     invariant(fs.statSync(file).isFile() && fs.statSync(file).size <= MAX_ATTACHMENT_BYTES, 'ASSET_TOO_LARGE', 'Choose a regular file no larger than 25 MB.');
-    const revision = this.getRevision(id);
+    const revision = this.authoring(id);
     return this.update({ id, expect, summary: `Updated bundled file ${relative}`, value: { ...revision, files: { ...revision.files, [relative]: fs.readFileSync(file).toString('base64') } } });
   }
   removeAttachment(id: string, expect: string, relative: string) {
-    safeRelative(relative); const revision = this.getRevision(id); const files = { ...revision.files }; delete files[relative];
+    safeRelative(relative); const revision = this.authoring(id); const files = { ...revision.files }; delete files[relative];
     return this.update({ id, expect, summary: `Removed bundled file ${relative}`, value: { ...revision, files } });
   }
   importResource(root: string, relative: string) {

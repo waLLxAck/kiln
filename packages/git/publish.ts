@@ -101,7 +101,8 @@ export class Publisher {
       const folder = `${relative}/items/${item.id}`;
       replace.push(folder);
       const { content, files: assets, hash, parent: _parent, author: _author, createdAt: _created, summary: _summary, itemId: _id, schemaVersion: _schema, hashVersion: _version, ...metadata } = revision;
-      json(`${folder}/item.json`, { ...item, ...metadata, revision: hash, status: 'approved', deletedAt: null, conflictHeads: [] });
+      // The collection is organisation kept on the item; the revision may name the one it was saved in.
+      json(`${folder}/item.json`, { ...item, ...metadata, collection: item.collection, revision: hash, status: 'approved', deletedAt: null, conflictHeads: [] });
       const published = new Map([[hash, revision]]);
       for (const approval of this.wb.approvals(true).filter(a => a.itemId === item.id && a.trust === 'local')) {
         const old = this.wb.getRevision(item.id, approval.revision);

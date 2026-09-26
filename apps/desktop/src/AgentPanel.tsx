@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep, ChatResult } from '../../../packages/agent/service';
-import type { Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
-import { api } from './api';
+import type { Analysis, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
+import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { Field, Modal, providerName } from './components';
 
@@ -108,7 +108,19 @@ export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOp
   </>;
 }
 /** Result cards for this item's runs. `kinds` limits the card set to what belongs on the current tab. Conversations live in the library chat, not here. */
-export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection }: { itemId: string; jobs: AgentJob[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void }) {
+/** What an analysis produced, from the record kept in the library: shown when the run itself is not on this machine. */
+export function AnalysisRecord({ analysis }: { analysis: Analysis }) {
+  const counts = Object.entries(analysis.counts);
+  return <section className="agent-result" aria-label="Recorded analysis">
+    <div className="section-heading"><b>{providerName[analysis.provider]} {heading.distill}</b><span className="inline">{date(analysis.finishedAt)}</span></div>
+    <div className="run-meta"><span>{analysis.model || 'CLI default model'}</span>{analysis.effort && <span>{analysis.effort} reasoning</span>}{analysis.usage && <span>{tokens(analysis.usage.input)} in · {tokens(analysis.usage.output)} out</span>}</div>
+    <p>{analysis.summary}</p><p><b>Takeaway:</b> {analysis.takeaway}</p>
+    <p className="distill-counts">{counts.map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!counts.length && <span>Nothing reusable found</span>}</p>
+    {analysis.skipped && <p className="muted">Skipped: {analysis.skipped}</p>}
+    <p className="muted small">The run’s steps and session stay on the machine that ran it; this summary travels with the library.</p>
+  </section>;
+}
+export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, collections }: { itemId: string; jobs: AgentJob[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; /** Current collections: a run's collection may have been renamed or deleted since. */ collections?: string[] }) {
   const [error,setError] = useState('');
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
   const retry = (job: AgentJob) => { void api('agent.start', { id: itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind)).catch(e => setError(String(e))); };
@@ -118,7 +130,7 @@ export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection }: { 
     {job.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
     <Steps job={job} />
     {job.error && <p className="error-box">{job.error}</p>}
-    {job.result && ('entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>
+    {job.result && ('entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>
       : 'summary' in job.result ? <><p>{job.result.summary}</p>{job.result.extractedText && <details><summary>Extracted text</summary><pre className="prompt-preview">{job.result.extractedText}</pre></details>}<p><b>Next test:</b> {job.result.nextTest}</p>{job.result.limitations && <p className="muted">{job.result.limitations}</p>}</>
       : 'judgement' in job.result ? <><p><b>{job.result.judgement}</b> · Agent assessment</p><p>{job.result.note}</p><pre className="prompt-preview">{job.result.output}</pre></>
       : 'reply' in job.result ? <pre className="chat-text">{job.result.reply}</pre>

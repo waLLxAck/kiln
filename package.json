@@ -1,6 +1,6 @@
 {
   "name": "kiln-workbench",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "private": true,
   "description": "A local home for prompts, experiments, and approved agent skills",
   "author": "Kiln contributors",
@@ -48,6 +48,7 @@
     "@vitejs/plugin-react": "^5.1.0",
     "electron": "44.2.0",
     "electron-builder": "^26.8.0",
+    "electron-updater": "^6.8.9",
     "esbuild": "^0.28.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
@@ -69,6 +70,14 @@
       "assets/kilnTemplate*.png"
     ],
     "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "waLLxAck",
+        "repo": "kiln",
+        "releaseType": "release"
+      }
+    ],
     "asarUnpack": [
       "dist/cli/**"
     ],
@@ -79,7 +88,8 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Kiln-Setup-${version}.${ext}"
     },
     "mac": {
       "target": [

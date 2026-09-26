@@ -14,6 +14,8 @@ export default function Palette() {
   useEffect(() => { const focus = () => { input.current?.focus(); setQuery(''); }; window.addEventListener('focus', focus); input.current?.focus(); return () => window.removeEventListener('focus', focus); }, []);
   useEffect(() => { let active = true; setLoading(true); setError(''); const timer = setTimeout(() => void api<Item[]>('items.list', { query }).then(result => { if (active) { setItems(result.slice(0, 30)); setSelected(0); setLoading(false); } }).catch(e => { if (active) { setError(String(e)); setLoading(false); } }), 100); return () => { active = false; clearTimeout(timer); }; }, [query]);
   const copy = async (item: Item) => {
+    // A source is material to read, not to paste: Enter opens it instead.
+    if (item.kind === 'source') { try { await api('desktop.workbench', { id: item.id }); } catch (e) { setError(String(e)); } return; }
     try { const detail = await api<ItemDetail>('items.read', { id: item.id }); if (variablesIn(detail.revision.content).length) { setVariableItem(detail); return; } await api('desktop.copy', { id: item.id, revision: item.revision }); await api('desktop.hide'); } catch (e) { setError(String(e)); }
   };
   const item = items[selected];
@@ -36,7 +38,7 @@ export default function Palette() {
     <div className="palette-label">{loading ? 'SEARCHING…' : query ? 'SEARCH RESULTS' : 'YOUR LIBRARY'}</div>
     {error && <div className="error-box" role="alert">{error}</div>}
     <div className="palette-body"><div className="palette-results" role="listbox" id="palette-results" aria-busy={loading}>
-      {!loading && items.map((item, i) => <button id={`result-${item.id}`} role="option" aria-selected={selected === i} key={item.id} className={selected === i ? 'active' : ''} onMouseEnter={() => setSelected(i)} onFocus={() => setSelected(i)} onClick={() => void copy(item)}><KindIcon kind={item.kind} /><span><b>{item.title}</b><small>{item.collection} · {item.tags.join(', ')}</small></span><Copy size={14} /></button>)}
+      {!loading && items.map((item, i) => <button id={`result-${item.id}`} role="option" aria-selected={selected === i} key={item.id} className={selected === i ? 'active' : ''} onMouseEnter={() => setSelected(i)} onFocus={() => setSelected(i)} onClick={() => void copy(item)}><KindIcon kind={item.kind} /><span><b>{item.title}</b><small>{[item.collection, item.tags.join(', ')].filter(Boolean).join(' · ')}</small></span><Copy size={14} /></button>)}
       {!loading && !items.length && <p className="empty-inline">{query ? 'No matching items. Try another search.' : 'Your library is empty. Capture something in the workbench.'}</p>}
     </div><section className="palette-preview" aria-label="Search preview">{!loading && item ? <><h2>{item.title}</h2><Badge status={item.status} />{preview ? <Markdown>{preview.revision.content}</Markdown> : <p className="muted">Loading preview…</p>}</> : <p className="muted">Select a result to preview its content.</p>}</section></div>
     <div className="palette-footer"><span><kbd>Enter</kbd> copy · <kbd>Ctrl Enter</kbd> open</span><button className="button" disabled={!item || loading} onClick={() => void open()}>Open item <ArrowRight size={13} /></button><button className="text-button" onClick={() => void api('desktop.workbench')}>Open workbench</button></div>

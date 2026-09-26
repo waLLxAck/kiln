@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { AgentService } from '../packages/agent/service';
 import { Workbench } from '../packages/domain/workbench';
 const fixture = () => { const root = fs.mkdtempSync(path.join(os.tmpdir(),'kiln-agent-test-')); return new Workbench(path.join(root,'library'),path.join(root,'private')); };
@@ -98,21 +99,21 @@ test('deleting completed evidence preserves existing approval history and surviv
   } finally { wb.close(); }
 });
 
-test('mixed imports create one file item and preserve every attachment without Codex', async () => {
+test('mixed imports create one source item and preserve every attachment without Codex', async () => {
   const wb = fixture();
   try {
     const service = new AgentService(wb, () => {}, async () => { throw new Error('Offline'); }, async () => []);
     const files = Object.fromEntries(['notes.txt', 'photo.png', 'clip.mp4', 'audio.mp3', 'paper.pdf', 'notes (2).txt'].map((name, i) => [name, Buffer.from(`bytes-${i}`).toString('base64')]));
     const { item } = service.capture({ text: 'https://example.com/reference\nMy notes', files });
     await wait(service);
-    assert.equal(item.kind, 'file');
+    assert.equal(item.kind, 'source', 'captured for analysis, so a source even when the analysis could not run');
     assert.equal(wb.snapshot().items.length, 1);
     assert.deepEqual(wb.getRevision(item.id).files, files);
     assert.equal(wb.getRevision(item.id).content, 'https://example.com/reference\nMy notes');
     assert.equal(service.list()[0].status, 'failed');
     const image = service.capture({ files: { 'photo.png': files['photo.png'] } });
     await wait(service);
-    assert.equal(image.item.kind, 'image');
+    assert.equal(image.item.kind, 'source');
     assert.equal(image.item.title, 'photo.png');
   } finally { wb.close(); }
 });
@@ -155,6 +156,7 @@ for (const [label, text, files] of [
     const service = new AgentService(wb, () => {}, async input => {
       assert.equal(input.persist, true);
       assert.match(input.prompt, /inaccessible links and unreadable or unsupported files in skipped/);
+      assert.match(input.prompt, /Never make a \{\{placeholder\}\} for what is discoverable in the repository/, 'prompts leave repository facts to the executing agent');
       for (const [name, bytes] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(input.folder, 'attachments', name)).toString('base64'), bytes);
       assert.equal(input.images.length, label === 'image' ? 1 : 0);
       return { collection: 'Workflow review', summary: 'A way to improve decisions.', takeaway: 'Review before repeating.', skipped: '', entries:
@@ -189,5 +191,33 @@ test('unreadable capture reports limitations without inventing entries; legacy c
     assert.deepEqual(job.createdItemIds, []); assert.equal(wb.listItems().length, 1);
     assert.ok(job.result && 'skipped' in job.result && job.result.skipped.includes('Login required'));
     assert.equal(wb.getRevision(item.id).content, 'https://example.com/private');
+  } finally { wb.close(); }
+});
+
+test('analysing a saved item makes it a source that links to its entries', async () => {
+  const wb = fixture();
+  try {
+    const service = new AgentService(wb, () => {}, async () => ({ collection: 'Reading', summary: 'An article on reviews.', takeaway: 'Review twice.', skipped: '', entries: [{ type: 'technique', title: 'Two-pass review', description: 'Catch more.', content: '1. Read.\n2. Read again.', tags: [], url: '', timestamp: '' }] }), async () => [], async () => { throw new Error('Not a video'); });
+    const { item } = service.capture({ text: 'https://example.com/article', files: {}, analyze: false });
+    assert.equal(item.kind, 'link');
+    service.start({ id: item.id, kind: 'distill' }); await wait(service);
+    const done = service.list()[0]; assert.equal(done.status, 'completed', done.error);
+    assert.equal(wb.getItem(item.id).kind, 'source');
+    assert.deepEqual(wb.madeFrom(item.id).map(i => i.title), ['Two-pass review']);
+    assert.equal(wb.analyses(item.id).length, 1);
+  } finally { wb.close(); }
+});
+
+test('a source keeps its latest analysis in the job list however many chat turns come after it', () => {
+  const wb = fixture();
+  try {
+    const folder = path.join(wb.local, 'agent-jobs'); fs.mkdirSync(folder, { recursive: true });
+    const base = { revision: 'a'.repeat(64), provider: 'codex', status: 'completed', phase: 'Completed', model: '', effort: '', steps: [] };
+    const source = randomUUID(), old = randomUUID();
+    fs.writeFileSync(path.join(folder, `${old}.json`), JSON.stringify({ ...base, id: old, itemId: source, kind: 'distill', startedAt: '2026-01-01T00:00:00.000Z' }));
+    for (let i = 0; i < 101; i++) { const id = randomUUID(); fs.writeFileSync(path.join(folder, `${id}.json`), JSON.stringify({ ...base, id, itemId: randomUUID(), kind: 'chat', startedAt: `2026-02-01T00:00:${String(i % 60).padStart(2, '0')}.${String(i).padStart(3, '0')}Z` })); }
+    const listed = new AgentService(wb, () => {}, async () => ({})).list();
+    assert.equal(listed.filter(j => j.kind === 'chat').length, 100);
+    assert.ok(listed.some(j => j.id === old), 'the analysis behind a source is never cut off');
   } finally { wb.close(); }
 });

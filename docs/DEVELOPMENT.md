@@ -48,15 +48,23 @@ The CLI runs with `npm run cli -- <command>`; after building, `npm link` makes `
 
 On Windows, run `release/0.19.1/win-unpacked/Kiln.exe` or install the setup executable from `release/0.19.1`; keep the unpacked executable beside its supporting files. On macOS and Linux, `npm run dist:mac` and `npm run dist:linux` leave `release/mac-arm64/Kiln.app` (or `mac/` for Intel) and `release/linux-unpacked/kiln-workbench` next to the packages (on Linux, the AppImage, the .deb and a `tar.gz` of that same folder).
 
-## In-app updates for local builds
+## Updates
 
-The in-app update flow is for Windows builds made from a local checkout. Installs from GitHub update from the releases page (see the [user guide](GUIDE.md#updating-the-installed-app)).
+Published builds update from GitHub releases through `electron-updater`, the same setup T3 Code uses. electron-builder's `publish` block in `package.json` puts `app-update.yml` into the packaged app and writes the feeds `latest.yml` (Windows), `latest-linux.yml` and `latest-mac.yml` next to the installers. A release must include them, or the in-app updater won't see it.
 
-Every build records where it was made. Kiln watches that repository's `release` folder (top level or one folder down) for a newer `Kiln Setup <version>.exe`. Checks run on startup and window focus. **Prepare update** copies the installer into Kiln's private update cache and verifies it while the app stays open. A progress indicator becomes **Restart to update** when ready. Preparation never launches the installer; closing Kiln normally does not install it, and the ready state survives reopening even if the original release folder disappears.
+- `apps/desktop/github-updates.ts` decides whether this copy can install an update itself. Windows NSIS installs, AppImages (`APPIMAGE` is set) and `.deb` packages (`resources/package-type`) can. The `.deb` install asks for the administrator password through `pkexec`. macOS builds can't, because they are ad-hoc signed and macOS only lets apps signed with an Apple Developer ID replace themselves. The Linux tar.gz can't either, because it has no installer. Those copies open the release page instead.
+- `packages/updates/github.ts` checks 15 seconds after launch and then every 30 minutes. A check is one small request, and nothing is downloaded until the user clicks **Download**. Installable copies check through electron-updater. The others send a `HEAD` request to `github.com/waLLxAck/kiln/releases/latest`, follow the redirect and read the tag from the final URL, which avoids the rate-limited API. The renderer only reads the last result, so focusing the window or opening Settings never touches the network.
+- **Restart to update** runs `quitAndInstall` silently and Kiln starts again. `KILN_DISABLE_AUTO_UPDATE=1` turns checks off. Unpackaged runs never install.
+
+### Local builds (developers)
+
+A build made without `KILN_PUBLIC_BUILD=1` records the checkout it came from and watches that repository's `release` folder instead of GitHub. Settings → Updates can switch any build to GitHub releases, choose a different folder, or stop checking. The folder watcher runs the Windows installer, so it only works on Windows.
+
+It looks for a newer `Kiln-Setup-<version>.exe` (or the older `Kiln Setup <version>.exe`) at the top level of the folder or one folder down. Checks run on startup and window focus. **Prepare update** copies the installer into Kiln's private update cache and verifies it while the app stays open. A progress indicator becomes **Restart to update** when ready. Preparation never launches the installer; closing Kiln normally does not install it, and the ready state survives reopening even if the original release folder disappears.
 
 Only **Restart to update** verifies the cached installer again, starts it silently for the current user, and quits Kiln so Windows can replace the running files. The installer then relaunches Kiln. Save your work before restarting. If verification or starting the installer fails, Kiln stays open and offers a retry. Settings → Updates can choose a different source folder or stop checking.
 
-Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they don't watch for local builds.
+Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they follow GitHub releases instead.
 
 ## Build-time switches
 
@@ -64,7 +72,18 @@ Build a newer installer with `npm run dist:win` after increasing `version` in `p
 
 ## Releases
 
-Pushing a version tag such as `v0.19.1` runs `.github/workflows/release.yml`, which builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes all the files with one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running that workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
+Pushing a version tag such as `v0.20.0` runs `.github/workflows/release.yml`. It builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes every installer together with the `latest*.yml` update feeds, one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running the workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
+
+To publish without Actions, build each platform on its own machine and upload with `gh`:
+
+```sh
+KILN_PUBLIC_BUILD=1 npm run dist:linux -- --publish never     # AppImage, .deb, tar.gz and latest-linux.yml in release/
+KILN_PUBLIC_BUILD=1 npm run dist:win -- --publish never       # Kiln-Setup-<version>.exe, its .blockmap and latest.yml
+KILN_PUBLIC_BUILD=1 npm run dist:mac -- --publish never       # dmg, zip and latest-mac.yml
+gh release create v<version> --title "Kiln <version>" --notes-file docs/releases/<version>.md <installers> latest*.yml SHA256SUMS.txt
+```
+
+Keep the file names electron-builder gives them, because the feeds refer to them. On Arch, the `.deb` step needs `libcrypt.so.1` (`libxcrypt-compat`).
 
 ## Performance diagnostics
 
