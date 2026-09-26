@@ -1,10 +1,15 @@
 # Builds the marketing site (apps/marketing) and publishes it to GitHub Pages at https://wallxack.github.io/kiln/.
 # Only the marketing workspace is installed, so Electron and the desktop dependencies are never downloaded.
+# The download links come from the newest published release, read at build time, so the site is rebuilt whenever a release is
+# published: by the release event for releases made by hand, and by release.yml dispatching this workflow for its own (a release
+# created with the workflow token raises no events for other workflows).
 name: Marketing site
 
 on:
   push:
     branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +27,10 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
+      # Always the site on main: a release event would otherwise check out the tagged commit.
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -33,6 +41,8 @@ jobs:
         run: npm run build:marketing
         env:
           BASE_PATH: /kiln/
+          # Reads the latest release's assets without the unauthenticated API rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

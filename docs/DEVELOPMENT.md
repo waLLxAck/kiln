@@ -102,7 +102,7 @@ Verification: `npm test`, `npm run build`, and `npx playwright test tests/deskto
 
 The marketing homepage is a founder’s printout reviewed in red pen: skill folders tidy themselves into a Kiln skills panel, then a captured video prompt is tested, fixed, rerun and approved onto the same panel. It uses real HTML text and controls, with keyboard and tap fallbacks for every drag and calm end states for reduced motion. `node scripts/verify-marketing.mjs` checks it and the support page in Chromium. See [the marketing site](../apps/marketing/README.md).
 
-The site is published at [wallxack.github.io/kiln](https://wallxack.github.io/kiln/) by the [Pages workflow](../.github/workflows/pages.yml) on every push to `main`. It installs only the marketing workspace and builds with `BASE_PATH=/kiln/`; set the same variable locally to check a build served under that path.
+The site is published at [wallxack.github.io/kiln](https://wallxack.github.io/kiln/) by the [Pages workflow](../.github/workflows/pages.yml) on every push to `main` and whenever a release is published. The download links always point at the newest published release: the build reads its assets from the GitHub API, so nothing changes by hand when a version ships. It installs only the marketing workspace and builds with `BASE_PATH=/kiln/`; set the same variable locally to check a build served under that path.
 
 ## Screenshots
 
