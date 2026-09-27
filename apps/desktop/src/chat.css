@@ -80,7 +80,7 @@
 .chat-popover.chat-dock .chat-activity > summary:hover { color: var(--text); }
 .chat-popover.chat-dock .chat-activity ol { max-height: 260px; }
 .chat-popover.chat-dock .chat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.chat-popover.chat-dock .chat-meta > * + *::before { content: '·'; margin: 0 6px; color: var(--faint); }
+.chat-popover.chat-dock .chat-meta > * + *::before { content: '·'; display: inline-block; margin: 0 6px; color: var(--faint); text-decoration: none; }
 .chat-popover.chat-dock .chat-meta code { font-size: 11px; color: var(--faint); background: none; padding: 0; }
 .chat-popover.chat-dock .chat-link { font-size: 11.5px; color: var(--faint); text-decoration: underline; text-underline-offset: 2px; }
 .chat-popover.chat-dock .chat-link:hover { color: var(--accent-text); }

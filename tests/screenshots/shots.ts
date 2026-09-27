@@ -75,9 +75,9 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await detailTab('overview');
   await page.getByRole('button', { name: 'Toggle theme' }).click();
   await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
-  const chat = page.getByRole('dialog', { name: 'Ask the agent' });
+  const chat = page.getByRole('complementary', { name: 'Ask the agent' });
   await chat.getByLabel('Your message').fill('What did they change between the first and the second run?');
   await chat.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(chat.locator('.chat-text')).toBeVisible({ timeout: 120_000 });
+  await expect(chat.locator('.chat-reply-text')).toBeVisible({ timeout: 120_000 });
   await shot('ask-agent-dark', 'Asking the agent about a distilled prompt: it answers from the video’s transcript and your library. Dark theme.');
 }
