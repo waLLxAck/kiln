@@ -121,7 +121,10 @@
 .lib-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--subtle-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .lib-dots i.on { background: var(--ok); box-shadow: none; }
 .lib-dots i.changed { background: var(--warn); box-shadow: none; }
+/* There but not installed by Kiln: a ring in the accent colour rather than a filled dot. */
+.lib-dots i.found, .lib-dots i.linked { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .lib-changed { font-size: 11.5px; font-weight: 600; color: var(--warn); }
+.lib-unmanaged { font-size: 11.5px; font-weight: 600; color: var(--accent-text); }
 .lib-test { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .lib-group { flex-shrink: 0; display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 12px 0 10px; background: var(--subtle); border-bottom: 1px solid var(--line); font-size: 12.5px; font-weight: 600; color: var(--text); text-align: left; position: sticky; top: 0; z-index: 1; }
 .lib-group:hover { background: var(--subtle-2); }

@@ -46,22 +46,26 @@ export function StatusCell({ item, approvals, published, made = 0 }: { item: Ite
 
 /** Copy states that no longer match the library revision. */
 const changedStates = ['drifted', 'differs'];
+/** Copies that are there but Kiln did not install: an identical copy it found, or a link. Kiln can take them over. */
+const unmanagedStates = ['found', 'linked'];
+/** The dot for one folder: installed by Kiln, there but unmanaged, changed, or empty. */
+const dotClass = (state: string) => state === 'off' ? 'off' : changedStates.includes(state) ? 'changed' : state;
 /**
- * "2 of 3" personal folders with one dot per folder, and a warning when a copy changed outside Kiln. Copies in enrolled project
- * folders are counted after. Kinds that cannot be installed show a dash.
+ * "2 of 3" personal folders with one dot per folder, then a note when a copy changed outside Kiln or is there without Kiln
+ * managing it. Copies in enrolled project folders are counted after. Kinds that cannot be installed show a dash.
  */
 export function InstalledCell({ item, locations, installations }: { item: Item; locations: Location[]; installations: Installation[] }) {
   if (!installable(item)) return <span className="faint" title="Only skills and agent definitions install into agent folders">—</span>;
   const places = locationsFor(item, locations).map(l => ({ ...l, state: skillState(item, l.target, installations).state }));
-  const present = places.filter(p => p.state !== 'off'), changed = places.filter(p => changedStates.includes(p.state)).length;
+  const present = places.filter(p => p.state !== 'off'), changed = places.filter(p => changedStates.includes(p.state)).length, unmanaged = places.filter(p => unmanagedStates.includes(p.state)).length;
   const personal = new Set(places.map(p => p.target.id));
   const project = installations.filter(i => i.itemId === item.id && !personal.has(i.targetId) && i.scope === 'project').length;
-  const title = [...places.map(p => `${locationName(item, p.provider)}: ${p.state === 'off' ? 'not installed' : p.state === 'on' ? 'installed' : p.state}`), ...(project ? [`${project} project cop${project === 1 ? 'y' : 'ies'}`] : [])].join('\n');
+  const title = [...places.map(p => `${locationName(item, p.provider)}: ${p.state === 'off' ? 'not installed' : p.state === 'on' ? 'installed' : p.state === 'found' ? 'identical copy, not managed by Kiln' : p.state === 'linked' ? 'a link, not managed by Kiln' : p.state}`), ...(project ? [`${project} project cop${project === 1 ? 'y' : 'ies'}`] : [])].join('\n');
   if (!places.length && !project) return <span className="faint" title="No skill folder is set up. Choose one in Settings.">Not set up</span>;
   return <span className="lib-installed" title={title}>
-    {places.length > 0 && <span className="lib-dots" aria-hidden="true">{places.map(p => <i key={p.target.id} className={p.state === 'off' ? '' : changedStates.includes(p.state) ? 'changed' : 'on'} />)}</span>}
+    {places.length > 0 && <span className="lib-dots" aria-hidden="true">{places.map(p => <i key={p.target.id} className={dotClass(p.state)} />)}</span>}
     <span className={present.length || project ? '' : 'faint'}>{places.length ? present.length ? `${present.length} of ${places.length}` : 'Not installed' : ''}{project ? `${places.length ? ' · ' : ''}${project} project` : ''}</span>
-    {changed > 0 && <span className="lib-changed">{changed} changed</span>}
+    {changed > 0 ? <span className="lib-changed">{changed} changed</span> : unmanaged > 0 && <span className="lib-unmanaged">{unmanaged} unmanaged</span>}
   </span>;
 }
 
