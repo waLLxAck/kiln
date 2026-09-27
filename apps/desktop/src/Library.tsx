@@ -6,7 +6,7 @@ import { Badge, ContextMenu, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
 import { skillState } from './Skills';
 import { installable } from './library-filters';
-import { sortChoices, sortLabel, type GroupKey, type Sort, type SortKey } from './library-sort';
+import { sortChoices, sortLabel, type GroupKey, type Sort } from './library-sort';
 import './library.css';
 
 export { arrangeItems, defaultSort, groupItems, KINDS, kindPlural, moveInOrder, nextSort, sortItems, type GroupKey, type Sort, type SortKey } from './library-sort';
@@ -16,19 +16,6 @@ export type Location = { provider: Provider; target: Target };
 /** The locations an item can be installed into: its own agent's folder for a native agent, every skill folder but Copilot's otherwise. */
 export const locationsFor = (item: Item, locations: Location[]) => locations.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot');
 export const locationName = (item: Item, provider: Provider) => item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id);
-
-/** The table's columns. Collection gives way when a collection is chosen; the rest always show, narrowing with the window. */
-export type Column = { key: SortKey | 'installed' | 'test'; label: string; sortable: boolean };
-export const columns = (collectionShown: boolean): Column[] => [
-  { key: 'title', label: 'Title', sortable: true }, ...(collectionShown ? [] : [{ key: 'collection' as const, label: 'Collection', sortable: true }]),
-  { key: 'status', label: 'Status', sortable: true }, { key: 'installed', label: 'Installed', sortable: false }, { key: 'test', label: 'Last test', sortable: false }, { key: 'updatedAt', label: 'Updated', sortable: true },
-];
-export function TableHead({ collectionShown, sort, onSort }: { collectionShown: boolean; sort: NonNullable<Sort>; onSort: (key: SortKey) => void }) {
-  const cols = columns(collectionShown);
-  return <div className={`lib-row head ${collectionShown ? 'no-collection' : ''}`} role="row"><span role="columnheader" aria-label="Kind" />{cols.map(c => c.sortable
-    ? <button key={c.key} role="columnheader" type="button" className={`lib-cell col-${c.key} ${sort.key === c.key ? 'sorted' : ''}`} onClick={() => onSort(c.key as SortKey)} title={`Sort by ${c.label.toLowerCase()}`} aria-sort={sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>{c.label}{sort.key === c.key && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}</button>
-    : <span key={c.key} role="columnheader" className={`lib-cell col-${c.key}`}>{c.label}</span>)}</div>;
-}
 
 /**
  * Draft, Testing or Approved in plain words. An approved revision shows whether it reached GitHub; a draft on top of an earlier

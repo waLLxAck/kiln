@@ -91,12 +91,19 @@
 /* Table */
 .lib-table { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0 16px; border-top: 1px solid var(--line); }
 .lib-table .item-list { padding: 0 0 16px; gap: 0; }
-.lib-row { display: grid; grid-template-columns: 26px minmax(220px, 1fr) minmax(90px, 150px) 150px 150px 130px 110px; column-gap: 12px; align-items: center; padding: 0 12px 0 8px; }
-.lib-row.no-collection { grid-template-columns: 26px minmax(220px, 1fr) 150px 150px 130px 110px; }
-.lib-row.head { height: 32px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); font-weight: 600; border-bottom: 1px solid var(--line); }
-.lib-row.head button, .lib-row.head span { display: inline-flex; align-items: center; gap: 3px; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; text-align: left; padding: 0; border-radius: 4px; justify-self: start; }
-.lib-row.head button:hover { color: var(--text-2); }
-.lib-row.head button.sorted { color: var(--accent-text); }
+.lib-row { display: grid; grid-template-columns: var(--lib-cols); column-gap: 12px; align-items: center; padding: 0 12px 0 8px; }
+/* The tracks follow the column order the user chose (library-columns.ts sets --lib-cols*). */
+.lib-row.head { position: relative; height: 32px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); font-weight: 600; border-bottom: 1px solid var(--line); }
+.lib-row.head .lib-cell { display: inline-flex; align-items: center; gap: 3px; align-self: stretch; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; text-align: left; padding: 0; border-radius: 4px; cursor: default; touch-action: none; }
+.lib-row.head button.lib-cell { cursor: pointer; }
+.lib-row.head .lib-cell:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--ring); }
+.lib-row.head .lib-cell:hover { color: var(--text-2); }
+.lib-row.head .lib-cell.sorted { color: var(--accent-text); }
+/* Dragging a heading: it dims where it was and a line marks where it will land. */
+.lib-row.head.dragging .lib-cell { cursor: grabbing; }
+.lib-row.head .lib-cell.moving { color: var(--accent-text); background: var(--accent-tint); padding: 0 6px; margin: 0 -6px; }
+.col-drop { position: absolute; z-index: 3; top: 4px; width: 2px; margin-left: -1px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 2px var(--ring); pointer-events: none; }
+body.col-dragging, body.col-dragging * { cursor: grabbing !important; user-select: none; }
 /* Rows are click and swipe targets like the buttons they replaced: selectable text let a second swipe start a native drag of the selection. */
 .item-card.lib-row { display: grid; align-items: center; height: 40px; padding: 0 12px 0 8px; border-radius: 0; border-bottom: 1px solid var(--line); gap: 0 12px; cursor: default; outline: none; user-select: none; }
 .item-card.lib-row:hover { background: var(--subtle); }
@@ -106,10 +113,12 @@
 .item-card.lib-row.picked { background: var(--accent-tint); }
 .lib-row .item-kind { width: 24px; height: 24px; border-radius: 6px; }
 .lib-row .item-kind svg { width: 14px; height: 14px; }
-.lib-title { display: flex; flex-direction: row; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
-.lib-title .item-title { display: block; flex-shrink: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
-.lib-star { color: #e0a520; flex-shrink: 0; align-self: center; margin-left: -4px; }
-.lib-sub { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.lib-title { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.lib-title .item-kind { flex-shrink: 0; }
+.lib-title .item-title { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
+.lib-star { color: #e0a520; flex-shrink: 0; margin-left: -4px; }
+/* Two items share a title: where each came from tells them apart. */
+.lib-from { flex-shrink: 1; min-width: 40px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); padding: 1px 7px; border-radius: 999px; background: var(--subtle-2); }
 .lib-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .lib-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .lib-newer { font-size: 11.5px; font-weight: 600; color: var(--warn); }
@@ -146,13 +155,12 @@
 
 /* Narrower windows: Last test gives way first, then Installed; Title and Status always stay. */
 @media (max-width: 1320px) {
-  .lib-row { grid-template-columns: 26px minmax(200px, 1fr) minmax(80px, 130px) 140px 120px 100px; }
-  .lib-row.no-collection { grid-template-columns: 26px minmax(200px, 1fr) 140px 120px 100px; }
-  .lib-row .col-test { display: none; }
+  .lib-row { grid-template-columns: var(--lib-cols-mid); }
+  .lib-row .col-test, .lib-row.head .col-test { display: none; }
 }
 @media (max-width: 1080px) {
-  .lib-row, .lib-row.no-collection { grid-template-columns: 26px minmax(160px, 1fr) 140px 100px; }
-  .lib-row .col-test, .lib-row .col-installed, .lib-row .col-collection { display: none; }
+  .lib-row { grid-template-columns: var(--lib-cols-narrow); }
+  .lib-row .col-test, .lib-row .col-installed, .lib-row .col-collection, .lib-row.head :is(.col-test, .col-installed, .col-collection) { display: none; }
 }
 
 /* Capture composer */
