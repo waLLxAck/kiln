@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, type MouseEvent } fr
 import { Activity, Archive, ArrowDown, ChevronDown, FolderInput, FolderPlus, Inbox, ArrowRight, ArrowUp, Check, ChevronRight, Copy, Download, ExternalLink, FileCog, FileText, FlaskConical, Folder, FolderGit2, FolderOpen, FolderX, Github, MessageSquare, Pencil, Layers3, Loader2, Monitor, Moon, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Sun, Terminal, Trash2, Undo2, Upload, X } from 'lucide-react';
 import { Setup, type PreviousLibrary } from './Setup';
 import { ChatPopover } from './Chat';
+import { useKilnCommands } from './commands';
 import { CollectionNameInput, CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog, useCollectionDrag } from './Collections';
 import { ancestorsOf, depthOf, isWithin, leafOf, relocate, untitledName } from '../../../packages/domain/collections';
 import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
@@ -180,6 +181,17 @@ export default function App() {
   const showMadeFrom = (sourceId: string) => { setSection('library'); setCollection(''); setTab('recent'); setQuery(''); setFilter('all'); setInstallFilter('any'); setAdvancedFilters({ ...emptyLibraryFilters, source: sourceId }); };
   const revealItem = (id: string, destination = 'library') => { setSection(destination); setCollection(''); setTab('recent'); setQuery(''); setFilter('all'); setInstallFilter('any'); setAdvancedFilters(emptyLibraryFilters); select(id); };
   useEffect(() => { const open = () => { const id = new URLSearchParams(location.hash.slice(1)).get('item'); if (id) { revealItem(id); history.replaceState(null, '', location.pathname + location.search); } }; open(); window.addEventListener('hashchange', open); return () => window.removeEventListener('hashchange', open); }, []);
+  // Quick search (Palette.tsx) asks for these through desktop.command; main.ts has already shown this window.
+  useKilnCommands({
+    capture: () => setDialog({ name: 'capture' }),
+    'open-item': id => { if (id) revealItem(id); },
+    'test-item': id => { if (id) void perform(async () => { const data = await api<ItemDetail>('items.read', { id }); revealItem(id); setDetail(data); setDialog({ name: 'trial' }); }); },
+    navigate: id => { if (id) navigate(id); },
+    'sync-installs': () => { navigate('settings'); void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); }); },
+    'new-collection': () => { setSection('library'); newCollection(); },
+    'toggle-theme': toggleTheme,
+    'ask-item': id => { if (id) { revealItem(id); setChatOpen(true); } },
+  });
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
   const copyItem = async (item: Item) => {
     const data = await api<ItemDetail>('items.read', { id: item.id });

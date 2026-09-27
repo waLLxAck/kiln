@@ -18,6 +18,7 @@ import { defaultLibrary, privateRoot, selectLibrary } from '../../packages/stora
 import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '../../packages/updates/service';
 import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
+import { commandSections } from './src/command-names';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -43,8 +44,10 @@ app.on('second-instance', () => { main?.show(); main?.focus(); });
 app.on('before-quit', () => { quitting = true; });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); backend?.close(); });
 
+/** Quick search: a list beside a preview with variable fields needs more room than a plain list. */
+const PALETTE = { width: 860, height: 560 };
 function createWindow(compact: boolean) {
-  const window = new BrowserWindow({ width: compact ? 740 : 1440, height: compact ? 500 : 940, minWidth: compact ? 600 : 1000, minHeight: compact ? 350 : 650, show: false, icon: path.join(app.getAppPath(), 'assets/kiln.png'), title: 'Kiln', backgroundColor: '#f5f5f8', autoHideMenuBar: true, ...(compact ? { frame: false, resizable: false, skipTaskbar: true } : {}), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+  const window = new BrowserWindow({ width: compact ? PALETTE.width : 1440, height: compact ? PALETTE.height : 940, minWidth: compact ? 600 : 1000, minHeight: compact ? 350 : 650, show: false, icon: path.join(app.getAppPath(), 'assets/kiln.png'), title: 'Kiln', backgroundColor: '#f5f5f8', autoHideMenuBar: true, ...(compact ? { frame: false, resizable: false, skipTaskbar: true } : {}), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
@@ -59,7 +62,7 @@ function createWindow(compact: boolean) {
 function openPalette() {
   if (!palette || palette.isDestroyed()) palette = createWindow(true);
   const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-  palette.setPosition(Math.round(area.x + (area.width - 740) / 2), Math.round(area.y + area.height * .2));
+  palette.setPosition(Math.round(area.x + (area.width - PALETTE.width) / 2), Math.round(area.y + area.height * .2));
   palette.show(); palette.focus();
 }
 async function registerShortcut(shortcut: string) {
@@ -184,6 +187,17 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     }
     case 'desktop.palette': openPalette(); return true;
     case 'desktop.hide': sender.hide(); return true;
+    case 'desktop.command': {
+      // Quick search asks the main window to act (capture, open or test an item, go to a section…); the renderer handles it in useKilnCommands.
+      const command = z.union([
+        z.object({ name: z.enum(['open-item', 'test-item', 'ask-item']), id: idSchema }),
+        z.object({ name: z.literal('navigate'), id: z.enum(commandSections) }),
+        z.object({ name: z.enum(['capture', 'sync-installs', 'new-collection', 'toggle-theme']) }),
+      ]).parse(args);
+      // An item that no longer exists fails here, in the palette, rather than as a blank page in the main window.
+      if (command.name !== 'navigate' && 'id' in command) await backend.call('rpc', 'items.read', { id: command.id });
+      main.show(); main.focus(); main.webContents.send('kiln:command', command); palette?.hide(); return true;
+    }
     case 'desktop.workbench': {
       const { id } = z.object({ id: idSchema.optional() }).parse(args);
       if (id) {
