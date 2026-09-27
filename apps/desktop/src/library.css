@@ -97,7 +97,8 @@
 .lib-row.head button, .lib-row.head span { display: inline-flex; align-items: center; gap: 3px; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; text-align: left; padding: 0; border-radius: 4px; justify-self: start; }
 .lib-row.head button:hover { color: var(--text-2); }
 .lib-row.head button.sorted { color: var(--accent-text); }
-.item-card.lib-row { display: grid; align-items: center; height: 40px; padding: 0 12px 0 8px; border-radius: 0; border-bottom: 1px solid var(--line); gap: 0 12px; cursor: default; outline: none; }
+/* Rows are click and swipe targets like the buttons they replaced: selectable text let a second swipe start a native drag of the selection. */
+.item-card.lib-row { display: grid; align-items: center; height: 40px; padding: 0 12px 0 8px; border-radius: 0; border-bottom: 1px solid var(--line); gap: 0 12px; cursor: default; outline: none; user-select: none; }
 .item-card.lib-row:hover { background: var(--subtle); }
 .item-card.lib-row:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
 .item-card.lib-row.selected { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
