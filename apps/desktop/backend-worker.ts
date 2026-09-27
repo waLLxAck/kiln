@@ -36,6 +36,7 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'agent.chat') data = agent.chat(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.exportSession') data = agent.exportSession(request.args[1].id);
       else if (request.method === 'rpc' && request.args[0] === 'agent.jobs') data = agent.list();
+      else if (request.method === 'rpc' && request.args[0] === 'agent.chatHistory') data = agent.chatHistory(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.models') data = await agent.models();
       else if (request.method === 'rpc' && request.args[0] === 'agent.cancel') data = agent.cancel(request.args[1].id);
       else if (request.method === 'rpc' && request.args[0] === 'trials.delete') data = agent.deleteTrial(request.args[1]);
@@ -51,6 +52,6 @@ parentPort!.on('message', request => {
       parentPort!.postMessage({ id: request.id, error: { code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) } });
     }
   };
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch'].includes(request.args[0])) void run();
   else queue = queue.then(run);
 });

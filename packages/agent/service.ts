@@ -13,6 +13,8 @@ import { experimentOn } from '../protocol/experiments';
 import { TRIAL_LOOP_TIMEOUT_MS, trialContext } from './trial-loop';
 import { activeRun } from './run-notice';
 import { findSession, restoreSession } from './session';
+import { chatTurns } from './chat-history';
+import { WorkbenchError } from '../domain/errors';
 import { fetchTranscript, timestamp, transcriptMarkdown, youtubeId, type TranscriptFetcher, type VideoTranscript } from './youtube';
 const captureResult = z.object({ title: z.string().min(1).max(160), summary: z.string().min(1), extractedText: z.string(), tags: z.array(z.string().min(1).max(60)).max(10), collection: z.enum(['Ideas','Techniques']), nextTest: z.string().min(1), limitations: z.string() });
 const trialResult = z.object({ output: z.string().min(1), judgement: z.enum(['pass','fail','uncertain']), note: z.string().min(1) });
@@ -148,6 +150,11 @@ export class AgentService {
     // The newest hundred runs, plus the latest analysis, experiment or skill draft of every item, so a busy chat never hides what made an item.
     const recent = all.slice(0, 100), kept = new Set(recent.map(j => `${j.itemId}:${j.kind}`));
     return [...recent, ...all.slice(100).filter(j => j.kind !== 'chat' && !kept.has(`${j.itemId}:${j.kind}`) && kept.add(`${j.itemId}:${j.kind}`))];
+  }
+  /** chatHistory experiment: every chat turn about one item on this machine, oldest first. `list()` keeps only the newest hundred runs, so older conversations need this. */
+  chatHistory(input: unknown) {
+    if (!experimentOn(this.wb.settings(), 'chatHistory')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Turn on “Docked chat with history” in Settings → Experimental features.');
+    return chatTurns([...this.jobs.values()], z.object({ itemId: idSchema }).parse(input).itemId);
   }
   deleteTrial(input: unknown) {
     const trial = this.wb.deleteTrial(input);
@@ -373,7 +380,7 @@ export class AgentService {
       // Claude Code stream-json: system/init carries the model, assistant turns carry text and tool_use blocks, result carries usage.
       const e = event as { type: string; subtype?: string; model?: string; session_id?: string; message?: { content?: { type: string; text?: string; name?: string; input?: Record<string, unknown>; id?: string }[] }; usage?: Record<string, number>; is_error?: boolean; result?: string };
       if (e.type === 'system') { if (e.model) job.model = e.model; if (e.session_id) job.threadId = e.session_id; job.phase = `${label} connected`; }
-      else if (e.type === 'assistant') { for (const block of e.message?.content ?? []) { if (block.type === 'text' && block.text) this.addStep(job, { id: `${block.id ?? job.steps.length}-text`, kind: 'message', text: block.text }); else if (block.type === 'tool_use') { const target = typeof block.input?.file_path === 'string' ? block.input.file_path : typeof block.input?.pattern === 'string' ? block.input.pattern : ''; this.addStep(job, { id: block.id ?? `tool-${job.steps.length}`, kind: 'tool', text: `${block.name ?? 'tool'} ${target}`.trim() }); } } job.phase = `${label} is working`; }
+      else if (e.type === 'assistant') { for (const block of e.message?.content ?? []) { if (block.type === 'text' && block.text) this.addStep(job, { id: `${block.id ?? job.steps.length}-text`, kind: 'message', text: block.text }); else if (block.type === 'tool_use') { const target = typeof block.input?.file_path === 'string' ? block.input.file_path : typeof block.input?.pattern === 'string' ? block.input.pattern : ''; /* chatHistory: a chat's shell commands are shown, as Codex's are, so the changes card sees which items its CLI calls named. */ const command = !target && job.kind === 'chat' && typeof block.input?.command === 'string' && experimentOn(this.wb.settings(), 'chatHistory') ? block.input.command.slice(0, 2500) : ''; this.addStep(job, { id: block.id ?? `tool-${job.steps.length}`, kind: 'tool', text: `${block.name ?? 'tool'} ${target || command}`.trim() }); } } job.phase = `${label} is working`; }
       else if (e.type === 'result') { const u = e.usage ?? {}; job.usage = { input: u.input_tokens ?? 0, cached: u.cache_read_input_tokens ?? 0, output: u.output_tokens ?? 0, reasoning: 0 }; job.phase = 'Saving result'; if (e.is_error) this.addStep(job, { id: 'result-error', kind: 'error', text: e.result ?? 'Run failed' }); }
     }
     this.save(job);
