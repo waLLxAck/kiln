@@ -1052,3 +1052,8 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .experiments-grouped .table-subgroup { display: flex; gap: 12px; align-items: baseline; padding: 6px 20px 6px 32px; font-size: 12px; color: var(--muted); background: var(--subtle); }
 .experiments-grouped .table-row { padding-left: 32px; }
 .trial-loop-card .button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+/* Experimental: Update installed copies (installUpdates). Solid accent, so "Update" stands apart from the tinted found/linked states. */
+.skill-toggle.outdated { color: var(--accent-text); background: var(--accent-tint-2); border-color: var(--accent); }
+.skill-toggle.outdated:hover { background: var(--accent-tint); border-color: var(--accent-strong); }
+.install-mark.outdated { color: var(--accent-ink); background: var(--accent); }
+.badge.update_available { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }

@@ -4,6 +4,8 @@ import type { ComparedFile, Comparison } from '../../../packages/deployment/serv
 import { api } from './api';
 import { InlineError, Modal } from './components';
 import { LineDiff } from './Diff';
+import type { Item, Snapshot } from '../../../packages/protocol/schema';
+import { KeepButton, KeptDialog, keepExplanation, type KeepResult } from './InstallUpdates';
 
 const statusLabel: Record<ComparedFile['status'], string> = { same: 'identical', changed: 'changed', only_library: 'only in the approved version', only_installed: 'only in the installed copy' };
 const kb = (n: number | null) => n === null ? '' : n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
@@ -29,10 +31,14 @@ export function FolderComparison({ itemId, targetId }: { itemId: string; targetI
     <ul className="compare-files">{data.files.map(file => <li key={file.path} className={file.status}><button className={`compare-file ${open === file.path ? 'open' : ''}`} onClick={() => setOpen(open === file.path ? null : file.path)}><FileDiff size={13} /><code>{file.path}</code><span className={`badge ${file.status === 'same' ? 'current' : file.status === 'changed' ? 'review' : file.status === 'only_library' ? 'create' : 'drifted'}`}>{statusLabel[file.status]}</span></button>{open === file.path && <FileView file={file} />}</li>)}</ul>
   </div>;
 }
-export function CompareDialog({ itemId, targetId, title, destination, onClose }: { itemId: string; targetId: string; title: string; destination: string; onClose: () => void }) {
+/** `keep` (experimental keepOutsideEdits) is passed only for an edited or differing copy, and adds Keep these changes. */
+export function CompareDialog({ itemId, targetId, title, destination, onClose, keep }: { itemId: string; targetId: string; title: string; destination: string; onClose: () => void; keep?: { item: Item; settings: Snapshot['settings']; onDone: (message: string) => void } }) {
+  const [kept, setKept] = useState<KeepResult | null>(null), [error, setError] = useState('');
+  if (keep && kept) return <KeptDialog item={keep.item} targetId={targetId} result={kept} settings={keep.settings} onDone={keep.onDone} />;
   return <Modal title="Approved version vs installed copy" subtitle={title} onClose={onClose} wide>
     <code className="path-text">{destination}</code>
     <FolderComparison itemId={itemId} targetId={targetId} />
-    <div className="modal-actions"><button className="button" onClick={() => void api('desktop.revealPath', { path: destination })}><FolderOpen size={14} />Open folder</button><button className="button primary" onClick={onClose}>Close</button></div>
+    {keep && <p className="notice">{keepExplanation}</p>}{keep && <InlineError error={error} />}
+    <div className="modal-actions"><button className="button" onClick={() => void api('desktop.revealPath', { path: destination })}><FolderOpen size={14} />Open folder</button>{keep && <KeepButton item={keep.item} targetId={targetId} onKept={setKept} onError={setError} />}<button className="button primary" onClick={onClose}>Close</button></div>
   </Modal>;
 }

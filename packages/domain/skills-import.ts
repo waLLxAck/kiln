@@ -13,6 +13,8 @@ import { targetSkillsFolder } from '../providers/skill-locations';
 import { providerIds, skillsFolder } from '../providers/service';
 
 const LIMIT = MAX_ATTACHMENT_BYTES;
+/** Folder entries a skill import leaves out: version control, dependencies and OS litter. */
+export const IGNORED_SKILL_ENTRIES = ['.git', 'node_modules', '__pycache__', '.DS_Store'];
 /**
  * Reads a skill folder for import, following links so a skill that points at shared files elsewhere arrives complete.
  * Unlike the library's own bundle reader this dereferences symlinks and junctions; a cycle guard and the 25 MB cap keep it bounded.
@@ -23,7 +25,7 @@ export function readSkillFolder(root: string): Record<string, string> {
     let real: string; try { real = fs.realpathSync(directory).toLowerCase(); } catch { return; }
     if (seen.has(real) || depth > 12) return; seen.add(real);
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (['.git', 'node_modules', '__pycache__', '.DS_Store'].includes(entry.name)) continue;
+      if (IGNORED_SKILL_ENTRIES.includes(entry.name)) continue;
       const name = relative ? `${relative}/${entry.name}` : entry.name;
       const full = path.join(directory, entry.name);
       let stat: fs.Stats; try { stat = fs.statSync(full); } catch { continue; } // A dangling link has nothing to copy.
