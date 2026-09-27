@@ -12,7 +12,8 @@ async function openSkillInstalls(page: Page) {
   await page.evaluate(() => window.kiln.call('items.create', { kind: 'skill', title: 'review', content: '---\nname: review\ndescription: Review a change\n---\nRead the diff.', collection: 'Personal' }));
   await page.getByRole('button', { name: 'Refresh library' }).click();
   await page.locator('.item-card', { hasText: 'review' }).click();
-  await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'installs', exact: true }).click();
+  // Installs are a section of the item page's rail; there is no tab to open.
+  await expect(page.getByRole('region', { name: 'Installs' })).toBeVisible();
 }
 
 test('development builds keep the full Machines section', async () => {

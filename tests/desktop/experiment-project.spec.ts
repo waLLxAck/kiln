@@ -19,7 +19,9 @@ test('experiments offer enrolled projects and browsing, preserve manual selectio
     }, { project });
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
     await page.getByText('Project experiment fixture', { exact: true }).first().click();
-    await page.getByRole('button', { name: 'Test', exact: true }).click();
+    // A prompt's primary action is Copy; Test is in the ⋯ menu.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Test', exact: true }).click();
     const selector = page.getByLabel('Project / repository', { exact: true });
     await expect(selector).toHaveValue('');
     await selector.selectOption(project); await expect(selector).toHaveValue(project);
@@ -33,7 +35,9 @@ test('experiments offer enrolled projects and browsing, preserve manual selectio
     await page.getByRole('button', { name: 'Prepare trial', exact: false }).click();
     await expect(page.getByRole('dialog')).toContainText(browsed);
     await page.getByRole('button', { name: 'Done', exact: true }).click();
-    await page.getByRole('button', { name: 'Test', exact: true }).click();
+    // A prompt's primary action is Copy; Test is in the ⋯ menu.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Test', exact: true }).click();
     await selector.selectOption(project);
     fs.rmdirSync(project);
     await app.evaluate(({ dialog }) => { dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox; });
