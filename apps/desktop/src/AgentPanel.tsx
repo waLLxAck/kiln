@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Brain, Clock, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep, ChatResult } from '../../../packages/agent/service';
+import { activeRun } from '../../../packages/agent/run-notice';
 import type { Analysis, ItemDetail, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
 import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
@@ -16,7 +17,7 @@ const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLoca
 const kilobytes = (n: number) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
 function useElapsed(job: AgentJob) {
   const [, tick] = useState(0);
-  useEffect(() => { if (job.status !== 'running') return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
+  useEffect(() => { if (!activeRun(job)) return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
   const seconds = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000));
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
 }
@@ -24,7 +25,7 @@ function useElapsed(job: AgentJob) {
 function RunMeta({ job }: { job: AgentJob }) {
   const elapsed = useElapsed(job);
   return <div className="run-meta">
-    <span title="Model the CLI was asked to use">{job.model || (job.status === 'running' ? 'Resolving model…' : 'CLI default model')}</span>
+    <span title="Model the CLI was asked to use">{job.model || (activeRun(job) ? 'Resolving model…' : 'CLI default model')}</span>
     {job.kind === 'trial' && <span title={job.workspace || 'Private run folder'}>Project: {job.workspace || 'Isolated example'}</span>}
     {job.effort && <span title="Reasoning effort">{job.effort} reasoning</span>}
     <span title="Wall-clock time">{elapsed}</span>
@@ -35,8 +36,9 @@ function RunMeta({ job }: { job: AgentJob }) {
 }
 /** Compact one-line strip shown on every tab while a run is active, so the tab content underneath stays visible. */
 export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: AgentJob[]; onOpen: (kind: AgentKind) => void }) {
-  const running = jobs.filter(job => job.itemId === itemId && job.status === 'running');
-  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}><Loader2 size={14} className="spin"/><b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
+  // A queued run (runNotifications) shows here too, as Queued, so it can be cancelled before it starts.
+  const running = jobs.filter(job => job.itemId === itemId && activeRun(job));
+  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}>{job.status === 'queued' ? <Clock size={14} /> : <Loader2 size={14} className="spin"/>}<b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.status === 'queued' && 'Queued · '}{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
 }
 function Steps({ job }: { job: AgentJob }) {
   useElapsed(job);
@@ -96,8 +98,8 @@ export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOp
     {turns.length > 0 && <ol className="chat-turns">{turns.map(turn => <li key={turn.id}>
       <div className="chat-question"><span>You{turn.focus?.title ? <> · about {onOpenItem && turn.focus.itemId ? <button type="button" className="text-button" onClick={() => onOpenItem(turn.focus!.itemId!)}>{turn.focus.title}</button> : turn.focus.title}</> : turn.focus?.collection ? ` · in ${turn.focus.collection}` : ''}</span><p>{turn.question}</p></div>
       <div className="chat-reply"><span>{providerName[turn.provider]}</span>
-        {turn.status === 'running' && <p className="muted"><Loader2 size={13} className="spin" /> {turn.phase}</p>}
-        {turn.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: turn.id })}>Cancel</button>}
+        {activeRun(turn) && <p className="muted">{turn.status === 'queued' ? <><Clock size={13} /> Queued · </> : <Loader2 size={13} className="spin" />} {turn.phase}</p>}
+        {activeRun(turn) && <button className="text-button" onClick={() => void api('agent.cancel', { id: turn.id })}>Cancel</button>}
         {turn.error && <p className="error-box">{turn.error}</p>}
         {turn.result && 'reply' in turn.result && <pre className="chat-text">{(turn.result as ChatResult).reply}</pre>}
         <Steps job={turn} />
@@ -130,9 +132,9 @@ export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, coll
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
   const retry = (job: AgentJob) => { void api('agent.start', { id: itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind)).catch(e => setError(String(e))); };
   return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
-    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status}</span></div>
+    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
     <RunMeta job={job} />
-    {job.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
+    {activeRun(job) && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
     <Steps job={job} />
     {job.error && <p className="error-box">{job.error}</p>}
     {job.result && ('entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>

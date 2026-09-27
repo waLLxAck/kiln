@@ -29,7 +29,7 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem,
   const [sending, setSending] = useState<{ itemId: string; message: string } | null>(null);
   const [accepted, setAccepted] = useState<AgentJob | null>(null);
   const body = useRef<HTMLDivElement>(null);
-  const turns = itemTurns(accepted && !jobs.some(job => job.id === accepted.id) ? [...jobs, accepted] : jobs, item.id).filter(j => j.conversationId === conversation.current.id), busy = sending?.itemId === item.id || turns.some(turn => turn.status === 'running');
+  const turns = itemTurns(accepted && !jobs.some(job => job.id === accepted.id) ? [...jobs, accepted] : jobs, item.id).filter(j => j.conversationId === conversation.current.id), busy = sending?.itemId === item.id || turns.some(turn => turn.status === 'running' || turn.status === 'queued');
   const who = providerName[turns.at(-1)?.provider ?? jobs.find(j => j.itemId === (source ?? item).id && j.kind === 'distill' && j.threadId)?.provider ?? provider];
   useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !document.querySelector('dialog[open], .context-menu')) { event.stopPropagation(); onClose(); } }; window.addEventListener('keydown', key, true); return () => window.removeEventListener('keydown', key, true); }, [onClose]);
   const last = turns.at(-1); const lastKey = last ? `${last.id}:${last.status}:${last.phase}:${last.steps.at(-1)?.text}` : '';

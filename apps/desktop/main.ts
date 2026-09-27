@@ -19,6 +19,7 @@ import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '.
 import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
 import { experimentIds, experimentOn, type ExperimentId } from '../../packages/protocol/experiments';
+import { notifyRunFinished, openRunScript } from './run-notifications';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -327,6 +328,12 @@ if (singleInstance) void app.whenReady().then(async () => {
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
   ({ local, canonical } = await backend.call('paths'));
+  // runNotifications: the worker reports each finished run; a notification shows when Kiln is not in front, and opens the result.
+  backend.onAgentFinished = event => void notifyRunFinished(event, { window: () => main, enabled: () => experiment('runNotifications'), log, open: async finished => {
+    if (main.isMinimized()) main.restore(); main.show(); main.focus();
+    try { await backend.call('rpc', 'items.read', { id: finished.itemId }); } catch { return; }
+    await main.webContents.executeJavaScript(openRunScript(finished));
+  } });
   syncUpdateTimer();
   log('app.started', { version: app.getVersion(), pid: process.pid });
   let tick = Date.now();
