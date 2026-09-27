@@ -11,9 +11,9 @@ export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomE
 const heading: Record<AgentKind, string> = { capture: 'notes', trial: 'experiment', derive: 'skill draft', distill: 'source analysis', chat: 'reply' };
 const entryLabel: Record<string, string> = { prompt: 'prompts', tool: 'tools', technique: 'techniques', resource: 'resources', insight: 'insights' };
 const stepIcon: Record<AgentStep['kind'], typeof Terminal> = { status: Loader2, message: MessageSquare, reasoning: Brain, command: Terminal, search: Search, file: FileText, tool: Wrench, todo: ListChecks, error: AlertTriangle };
-const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
+export const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
 const kilobytes = (n: number) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
-function useElapsed(job: AgentJob) {
+export function useElapsed(job: AgentJob) {
   const [, tick] = useState(0);
   useEffect(() => { if (job.status !== 'running') return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
   const seconds = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000));
@@ -37,7 +37,7 @@ export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: Ag
   const running = jobs.filter(job => job.itemId === itemId && job.status === 'running');
   return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}><Loader2 size={14} className="spin"/><b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
 }
-function Steps({ job }: { job: AgentJob }) {
+export function Steps({ job }: { job: AgentJob }) {
   useElapsed(job);
   const quietSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.lastActivityAt ?? job.startedAt)) / 1000));
   return <>
@@ -47,17 +47,20 @@ function Steps({ job }: { job: AgentJob }) {
 }
 
 /** Lets the user pick which signed-in CLI runs a job. Unavailable clients stay listed so the reason is visible. */
-export function ProviderSelect({ providers, value, onChange, label = 'Run with' }: { providers: Provider[]; value: RunProviderId; onChange: (value: RunProviderId) => void; label?: string }) {
+export function ProviderSelect({ providers, value, onChange, label = 'Run with', compact = false }: { providers: Provider[]; value: RunProviderId; onChange: (value: RunProviderId) => void; label?: string; /** Inline bars: only say something when the client is missing. */ compact?: boolean }) {
   const chosen = providers.find(p => p.id === value);
-  return <Field label={label} hint={chosen ? chosen.available ? `${chosen.version} · uses its own sign-in, no API key` : `${chosen.label} was not found on PATH. Install it and sign in, then try again.` : undefined}>
+  return <Field label={label} hint={chosen ? chosen.available ? compact ? undefined : `${chosen.version} · uses its own sign-in, no API key` : `${chosen.label} was not found on PATH. Install it and sign in, then try again.` : undefined}>
     <select value={value} onChange={e => onChange(e.target.value as RunProviderId)}>{providers.filter(p => p.id !== 'copilot').map(p => <option key={p.id} value={p.id}>{p.label}{p.available ? '' : ' · not detected'}</option>)}</select>
   </Field>;
 }
-function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
+/** Starts a run the one way every entry point shares: the main process asks for consent, then `agentStarted` announces it. `revision` tests an earlier revision; omitted means the current one. */
+export function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const start = (provider: RunProviderId, context: string, workspace?: string) => { setBusy(true); setError(''); void api('agent.start', { id: itemId, kind, context, provider, workspace }).then(() => { agentStarted(kind); onClose(); }).catch(e => { setError(String(e)); setBusy(false); }); };
-  return { busy, error, start };
+  const start = (provider: RunProviderId, context: string, workspace?: string, revision?: string) => { setBusy(true); setError(''); void api('agent.start', { id: itemId, kind, context, provider, workspace, revision }).then(() => { agentStarted(kind); setBusy(false); onClose(); }).catch(e => { setError(String(e)); setBusy(false); }); };
+  return { busy, error, setError, start };
 }
+/** Runs a job again with its exact inputs: provider, project, context and revision, even if the item has been edited since. */
+export const retryJob = (job: AgentJob) => api('agent.start', { id: job.itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind));
 export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
@@ -123,7 +126,7 @@ export function AnalysisRecord({ analysis }: { analysis: Analysis }) {
 export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, collections }: { itemId: string; jobs: AgentJob[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; /** Current collections: a run's collection may have been renamed or deleted since. */ collections?: string[] }) {
   const [error,setError] = useState('');
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
-  const retry = (job: AgentJob) => { void api('agent.start', { id: itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind)).catch(e => setError(String(e))); };
+  const retry = (job: AgentJob) => { void retryJob(job).catch(e => setError(String(e))); };
   return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
     <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status}</span></div>
     <RunMeta job={job} />
