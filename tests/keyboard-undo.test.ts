@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Item } from '../packages/protocol/schema';
-import { fieldRequests, pageStep, planUndo, progressLabel, pushUndo, rangeIds, runBatched, targetRow, typeAheadKey, typeAheadMatch, undoLabel, undoneLabel, UNDO_LIMIT, type UndoEntry } from '../apps/desktop/src/keyboard-undo';
+import { fieldRequests, pageStep, planUndo, progressLabel, pushUndo, rangeIds, runBatched, targetRow, typeAheadKey, typeAheadMatch, undoLabel, undoneLabel, unfinishedUndo, UNDO_LIMIT, type UndoEntry } from '../apps/desktop/src/keyboard-undo';
 
 const item = (id: string, extra: Partial<Item> = {}) => ({ id, title: id, revision: `rev-${id}`, status: 'captured', favourite: false, collection: '', deletedAt: null, ...extra }) as Item;
 
@@ -118,4 +118,10 @@ test('toast and progress wording', () => {
   assert.equal(undoneLabel(entry, 3, 0), 'Undone: Moved 3 items to Trash');
   assert.equal(undoneLabel(entry, 2, 1), 'Undone: Moved 3 items to Trash; 1 item had changed since and was left as it is');
   assert.equal(undoneLabel(entry, 0, 3), 'Nothing undone: all 3 items have changed since “Moved 3 items to Trash”');
+});
+
+test('an undo that partly failed keeps what is left to undo: neither the changes put back nor those skipped', () => {
+  const entry = { id: 7, label: 'Moved 3 items to Work', changes: ['a', 'b', 'c'].map(id => ({ id, field: 'collection' as const, before: '', after: 'Work' })) };
+  assert.deepEqual(unfinishedUndo(entry, ['a'], ['c']), { ...entry, changes: [entry.changes[1]] });
+  assert.equal(unfinishedUndo(entry, ['a', 'b'], ['c']), null);
 });

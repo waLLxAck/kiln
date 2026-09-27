@@ -37,7 +37,7 @@ export function BetterPalette() {
   useEffect(() => {
     if (commandMode) { setLoading(false); setSelected(0); return; }
     let active = true; setLoading(true); setError('');
-    const timer = setTimeout(() => void api<SearchResults>('items.search', { query, limit: LIMIT }).then(result => { if (active) { setResults(result); setSelected(0); setLoading(false); } }).catch(e => { if (active) { setError(String(e)); setLoading(false); } }), 100);
+    const timer = setTimeout(() => void api<SearchResults>('items.search', { query, limit: LIMIT }).then(result => { if (active) { setResults(result); setSelected(0); setLoading(false); } }).catch(e => { if (active) { setError(String(e)); setPendingEnter(null); setLoading(false); } }), 100);
     return () => { active = false; clearTimeout(timer); };
   }, [query, generation]);
   const items = commandMode ? [] : results?.items ?? [];

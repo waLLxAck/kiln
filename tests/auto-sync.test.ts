@@ -234,6 +234,28 @@ test('desired installs of published items are published by themselves', async ()
   } finally { w.close(); }
 });
 
+test('Approve & install after keeping publishes the desired install when the kept revision was already approved', async () => {
+  const w = world();
+  try {
+    w.a.wb.setExperiment({ id: 'keepOutsideEdits', enabled: true });
+    const item = await publish(w.a, 'Kept skill', 'kept-skill');
+    const home = path.join(w.root, 'agent home'); fs.mkdirSync(home);
+    const target = w.a.wb.enroll({ name: 'Claude', root: home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    const folder = path.join(home, '.claude', 'skills', 'kept-skill'); fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'SKILL.md'), skill('kept-skill', '\nWritten by hand.'));
+    const kept = w.a.router.call('deploy.keepCopy', { itemId: item.id, targetId: target.id, expect: item.revision }) as { revision: string };
+    w.a.router.approve(approveArgs({ id: item.id, revision: kept.revision })); await w.a.router.publisher.idle();
+    const head = w.a.git('rev-parse', 'HEAD');
+    const adopted = w.a.router.call('deploy.approveKept', { itemId: item.id, targetId: target.id, expect: kept.revision }) as { approved: boolean };
+    assert.equal(adopted.approved, false, 'already approved, so no approve job carries installs.json');
+    assert.ok(w.a.router.flushOrganisation());
+    await w.a.router.publisher.idle();
+    assert.equal(w.a.git('rev-list', '--count', `${head}..HEAD`), '1');
+    assert.deepEqual(w.a.git('show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean), ['workbench/installs.json']);
+    assert.deepEqual(Object.keys(JSON.parse(w.a.git('show', 'HEAD:workbench/installs.json'))), [item.id]);
+  } finally { w.close(); }
+});
+
 /** Both machines approve different revisions of one item; this machine's approval never reached GitHub. */
 async function divergedApprovals(w: ReturnType<typeof world>) {
   const shared = await publish(w.a, 'Contested', 'contested');

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, Eye, History, MessageSquare, RotateCcw, Undo2, X } from 'lucide-react';
 import type { AgentJob } from '../../../packages/agent/service';
+import { activeRun } from '../../../packages/agent/run-notice';
 import type { Item, ItemDetail, Revision, RunProviderId } from '../../../packages/protocol/schema';
 import { changeCandidates, chatSessions, chatTurns, mergeTurns, turnChange, type TurnChange } from '../../../packages/agent/chat-history';
 import { api, date, shortHash } from './api';
@@ -42,7 +43,7 @@ export function ChatDock({ jobs, items, item, source, provider, onClose, onOpenI
   // The prefill counts as used once the composer that shows it is on screen, so waiting for the history does not drop it.
   const prefilled = useRef(0), draft = initialMessage && initialMessage.nonce !== prefilled.current ? initialMessage : undefined;
   useEffect(() => { if (initialMessage && conversationId) prefilled.current = initialMessage.nonce; }, [initialMessage?.nonce, conversationId]);
-  const turns = all.filter(turn => turn.conversationId === conversationId), busy = sending?.itemId === item.id || all.some(turn => turn.status === 'running');
+  const turns = all.filter(turn => turn.conversationId === conversationId), busy = sending?.itemId === item.id || all.some(activeRun);
   const who = providerName[turns.at(-1)?.provider ?? jobs.find(j => j.itemId === (source ?? item).id && j.kind === 'distill' && j.threadId)?.provider ?? provider];
   const last = turns.at(-1); const lastKey = last ? `${last.id}:${last.status}:${last.phase}:${last.steps.at(-1)?.text}` : '';
   useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight }); }, [lastKey, item.id, conversationId]);

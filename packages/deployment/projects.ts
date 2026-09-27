@@ -87,7 +87,7 @@ export class ProjectInstalls {
     const root = path.resolve(data.root);
     let folder = false; try { folder = fs.statSync(root).isDirectory(); } catch { /* reported below */ }
     invariant(folder, 'INVALID_PATH', 'This project folder does not exist any more. Choose it again.'); noLinks(root);
-    invariant(projectKey(root) !== projectKey(this.wb.canonical) && !projectKey(root).startsWith(projectKey(this.wb.canonical) + path.sep), 'INVALID_TARGET', 'The library folder itself cannot be a project to install into.');
+    invariant(projectKey(root) !== projectKey(this.wb.root) && !projectKey(root).startsWith(projectKey(this.wb.root) + path.sep), 'INVALID_TARGET', 'The library folder itself cannot be a project to install into.');
     const item = this.wb.getItem(data.itemId), revision = this.wb.getRevision(item.id);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before installing it.');
     invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agent definitions can be installed into a project.');

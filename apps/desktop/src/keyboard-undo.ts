@@ -72,6 +72,11 @@ export function planUndo(entry: UndoEntry, items: Item[]) {
   for (const change of entry.changes) { const item = byId.get(change.id); if (item && fieldOf(item, change.field) === change.after) apply.push({ ...change, expect: item.revision }); else skipped.push(change.id); }
   return { apply, skipped };
 }
+/** What is left to undo of `entry` after an attempt: the changes neither put back (`done`) nor skipped as changed since, or null. */
+export function unfinishedUndo(entry: UndoEntry, done: string[], skipped: string[]): UndoEntry | null {
+  const changes = entry.changes.filter(c => !done.includes(c.id) && !skipped.includes(c.id));
+  return changes.length ? { ...entry, changes } : null;
+}
 /** One backend request that sets a field on some items; `ids` counts toward progress. */
 export type FieldRequest = { method: 'items.meta' | 'items.move'; args: Record<string, unknown>; ids: string[] };
 /**

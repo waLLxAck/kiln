@@ -167,3 +167,55 @@ test('code editor off: plain textareas, library Ctrl+F and no draft marks; switc
     expect(errors).toEqual([]);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('code editor turned off mid-edit: the plain editor shows and saves the kept fields and file edits, and asks before discarding them', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-code-editor-switch-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home);
+  const env = { ...desktopEnv(root), KILN_HOME: home, KILN_DESKTOP_DATA: path.join(root, 'profile') };
+  delete (env as Record<string, string | undefined>).KILN_EXPERIMENTS;
+  const app = await electron.launch({ args: ['.'], env });
+  const page = await app.firstWindow(); const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const toggle = async () => {
+    await page.getByRole('button', { name: 'Settings & repository' }).click();
+    await page.getByRole('region', { name: 'Experimental features' }).getByRole('switch', { name: 'Code editor' }).click();
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
+  };
+  try {
+    await page.locator('.item-list').waitFor();
+    const skill = await page.evaluate(async ({ content, guide }) => (window as any).kiln.call('items.create', { kind: 'skill', title: 'Switched skill', content, collection: 'Personal', tags: [], source: '', licence: 'Personal', files: { 'references/guide.md': btoa(guide) } }), { content, guide }) as { id: string };
+    await page.getByRole('button', { name: 'Refresh library' }).click();
+    await toggle();
+    await row(page, 'Switched skill').click();
+
+    // Opening and closing the editor without an edit leaves no draft, so there is nothing to confirm.
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expect(page.locator('.item-code-form')).toBeVisible();
+    await page.getByRole('button', { name: 'Discard local draft' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.item-code-form')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByLabel('Title', { exact: true }).fill('Renamed before switching');
+    await page.getByRole('region', { name: 'Bundled files in this draft' }).getByRole('button', { name: /references\/guide\.md/ }).click();
+    await page.getByRole('textbox', { name: 'references/guide.md content' }).click(); await page.keyboard.press('Control+End');
+    await page.keyboard.type('Edited before switching.');
+    await expect.poll(() => page.evaluate(id => JSON.parse(localStorage.getItem(`kiln-draft:${id}`) ?? '{}').files?.['references/guide.md'] ?? '', skill.id)).toContain('Edited before switching.');
+
+    await toggle();
+    await row(page, 'Switched skill').click();
+    expect(await page.getByLabel('Content', { exact: true }).evaluate(node => node.tagName)).toBe('TEXTAREA');
+    await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Renamed before switching');
+    await page.getByRole('button', { name: 'Discard local draft' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Discard your local draft?');
+    await page.getByRole('dialog').getByRole('button', { name: 'Keep editing' }).click();
+    const before = (await read(page, skill.id)).item.revision;
+    await page.getByRole('button', { name: 'Save revision' }).click();
+    await expect.poll(async () => (await read(page, skill.id)).item.revision).not.toBe(before);
+    const saved = await read(page, skill.id);
+    expect(saved.item.title).toBe('Renamed before switching');
+    expect(Buffer.from(saved.revision.files['references/guide.md'], 'base64').toString()).toBe(guide + 'Edited before switching.');
+    expect(await page.evaluate(id => localStorage.getItem(`kiln-draft:${id}`), skill.id)).toBeNull();
+    expect(errors).toEqual([]);
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

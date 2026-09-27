@@ -3,7 +3,7 @@ import { Check, Loader2 } from 'lucide-react';
 import type { Item, Snapshot } from '../../../packages/protocol/schema';
 import { api } from './api';
 import { UndoToast } from './UndoToast';
-import { fieldOf, fieldRequests, planUndo, progressLabel, pushUndo, runBatched, undoLabel, undoneLabel, type UndoChange, type UndoEntry, type UndoField, type UndoValue } from './keyboard-undo';
+import { fieldOf, fieldRequests, planUndo, progressLabel, pushUndo, runBatched, undoLabel, undoneLabel, unfinishedUndo, type UndoChange, type UndoEntry, type UndoField, type UndoValue } from './keyboard-undo';
 
 /** What to set on one item: `{ deleted }`, `{ status }` or `{ favourite }`; null leaves it alone. */
 type Patch = Record<string, unknown> | null;
@@ -61,13 +61,18 @@ export function useUndoStack({ on, root, perform, refresh, setMessage }: Options
     if (!top) { setMessage('Nothing to undo'); return; }
     running.current = true; stackRef.current = stackRef.current.slice(0, -1); setStack(stackRef.current); setToast(null);
     void perform(async () => {
+      let left: UndoEntry | null = top;
       try {
         const fresh = await api<Snapshot>('snapshot');
         const { apply: changes, skipped } = planUndo(top, fresh.items);
         const { done, failed } = await execute(changes.map(c => ({ ...c, to: c.before })), (n, total) => progressLabel(changes[0].field, changes[0].before, n, total, true));
+        left = unfinishedUndo(top, done.map(c => c.id), skipped);
         await refresh();
         if (failed.length) throw failure(failed, changes.length, 'put back');
         setMessage(undoneLabel(top, done.length, skipped.length));
+      } catch (error) {
+        if (left) { stackRef.current = pushUndo(stackRef.current, left); setStack(stackRef.current); }
+        throw error;
       } finally { running.current = false; }
     });
   };

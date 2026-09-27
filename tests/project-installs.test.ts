@@ -119,6 +119,15 @@ test('preview states and drift checks: an existing identical copy is adopted, a 
   } finally { f.close(); }
 });
 
+test('the library repository root is not a project to install into', () => {
+  const f = fixture();
+  try {
+    const item = f.wb.create({ kind: 'skill', title: 'Careful review', content: skill('One.') });
+    assert.throws(() => f.call('projects.preview', { itemId: item.id, root: f.wb.root, location: 'agents' }), hasCode('INVALID_TARGET'));
+    assert.equal(fs.existsSync(path.join(f.wb.root, '.agents')), false);
+  } finally { f.close(); }
+});
+
 test('project copies take part in Update installs, and agent definitions go to the client folder in the project', () => {
   const f = fixture();
   try {

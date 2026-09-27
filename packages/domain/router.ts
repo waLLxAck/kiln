@@ -24,7 +24,7 @@ import { experimentOn } from '../protocol/experiments';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 /** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
-const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback']);
+const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles };
 export class Router {
   readonly deployments: DeploymentService;
