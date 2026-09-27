@@ -7,7 +7,7 @@ import { Workbench } from '../../packages/domain/workbench';
 import { transcriptMarkdown } from '../../packages/agent/youtube';
 import { desktopEnv, readyLibrary, showKind } from './fixture';
 
-test('a source has its own tab and page: no copy or test, its analysis, what was made from it with keep and archive, and links both ways', async () => {
+test('a source has its own page: no copy or test, its analysis, what was made from it with keep and archive, and links both ways', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-sources-'));
   const library = readyLibrary(root);
   const wb = new Workbench(library, path.join(root, 'private'));
@@ -31,8 +31,10 @@ test('a source has its own tab and page: no copy or test, its analysis, what was
     // The source page: summary, one-line analysis, what was made from it and the material; no copy, test or approval.
     await row.click();
     const detail = page.getByRole('article', { name: 'Selected item' });
-    const sourcePage = detail.getByRole('region', { name: 'Source' });
-    await expect(sourcePage.getByRole('heading', { name: 'Design chat' })).toBeVisible();
+    const sourcePage = detail.getByRole('region', { name: 'Source', exact: true });
+    // The item page's header carries the title; the source page below it doesn't repeat it.
+    await expect(detail.getByRole('heading', { name: 'Design chat', level: 1 })).toBeVisible();
+    await expect(sourcePage.getByRole('heading', { name: 'Design chat' })).toHaveCount(0);
     await expect(sourcePage).toContainText('Source · text');
     await expect(sourcePage.locator('.source-callout')).toContainText('This exchange explores homepage designs.');
     await expect(sourcePage.locator('.source-callout')).toContainText('Ground claims in the code.');
@@ -85,7 +87,8 @@ test('a source has its own tab and page: no copy or test, its analysis, what was
     // An entry links back to its source.
     await page.locator('.item-card', { hasText: 'Ground the copy' }).click();
     await detail.getByRole('button', { name: 'From “Design chat”' }).click();
-    await expect(sourcePage.getByRole('heading', { name: 'Design chat' })).toBeVisible();
+    await expect(detail.getByRole('heading', { name: 'Design chat', level: 1 })).toBeVisible();
+    await expect(sourcePage).toContainText('Source · text');
 
     await page.keyboard.press('Escape');
     // The sort pill names the order. Across the library the source mixes in; inside its collection it leads, whatever the order.
@@ -126,11 +129,13 @@ test('a video source is a timeline: entries at their minutes, skipped parts shad
   const page = await app.firstWindow(); const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.getByRole('tab', { name: /^Sources/ }).click({ timeout: 15_000 });
+    await expect(page.locator('.item-card', { hasText: 'Test like a kid' }).first()).toBeVisible({ timeout: 15_000 });
+    await showKind(page, 'source');
+    await expect(page.locator('.item-card')).toHaveCount(1);
     await page.locator('.item-card', { hasText: 'Test like a kid' }).click();
-    const sourcePage = page.getByRole('region', { name: 'Source' });
+    const sourcePage = page.getByRole('region', { name: 'Source', exact: true });
     await expect(sourcePage).toContainText('Source · YouTube');
-    await expect(sourcePage.locator('.source-byline')).toHaveText(/^Pixel & Pine\s*·\s*18:24\s*·\s*Published 2026-06-12\s*·\s*Captured /);
+    await expect(sourcePage.locator('.source-byline')).toHaveText(/^Source · YouTube\s*·\s*Pixel & Pine\s*·\s*18:24\s*·\s*Published 2026-06-12\s*·\s*Captured /);
     await expect(page.getByRole('button', { name: 'Open original', exact: true })).toBeVisible();
     await expect(sourcePage.getByRole('button', { name: 'Ask about this video' })).toBeVisible();
 
@@ -148,7 +153,8 @@ test('a video source is a timeline: entries at their minutes, skipped parts shad
     await timeline.getByRole('button', { name: '11:05 · You stop seeing your own app' }).click();
     await expect(made.locator('.source-entry', { hasText: 'You stop seeing your own app' })).toBeInViewport();
 
-    await sourcePage.getByRole('button', { name: 'Show transcript' }).click();
+    // The toggle in the page's head (the transcript file under Original material has a link that opens it too).
+    await sourcePage.locator('.source-head').getByRole('button', { name: 'Show transcript' }).click();
     const transcript = sourcePage.getByRole('complementary', { name: 'Transcript' });
     await expect(transcript.locator('.source-ts')).toHaveText(['0:00', '2:05', '4:00']);
     await expect(transcript.locator('.source-line.skipped')).toContainText('Quick thanks to the sponsor.');
