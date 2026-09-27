@@ -26,9 +26,9 @@ test('live signed-in Codex: screenshot capture and automatic experiment result',
     await page.getByLabel('Select files',{exact:true}).setInputFiles(process.env.KILN_CAPTURE_IMAGE!);
     await page.getByRole('button',{name:'Analyze and add'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByText('Takeaway:',{exact:true})).toBeVisible({timeout:180000});
-    await page.getByRole('button',{name:'Test',exact:true}).click();await page.getByLabel('Test context').fill('Review only this synthetic example: function sum(xs) { return xs.reduce((a,b) => a+b, 0); }. Explain whether there is anything to delete, or whether it is already simple. Do not inspect or modify any files.');
-    await page.getByRole('button',{name:'Run experiment'}).click();
-    await expect(page.getByText(/Agent assessment/)).toBeVisible({timeout:180000});
+    await page.getByRole('button',{name:'Test',exact:true}).click();await page.getByLabel('What should it try? (optional)').fill('Review only this synthetic example: function sum(xs) { return xs.reduce((a,b) => a+b, 0); }. Explain whether there is anything to delete, or whether it is already simple. Do not inspect or modify any files.');
+    await page.getByRole('region',{name:'Run an experiment'}).getByRole('button',{name:'Run',exact:true}).click();
+    await expect(page.getByText('Agent’s assessment',{exact:true})).toBeVisible({timeout:180000});
     const data=await page.evaluate(async()=>({snapshot:await (window as any).kiln.call('snapshot'),jobs:await (window as any).kiln.call('agent.jobs')}));
     expect(data.snapshot.trials[0].mode).toBe('codex');expect(data.snapshot.trials[0].status).toBe('completed');expect(data.snapshot.items[0].status).not.toBe('approved');
     fs.writeFileSync('artifacts/agent-capture/live-ui-result.json',JSON.stringify(data,null,2));await page.screenshot({path:'artifacts/agent-capture/live-ui.png',animations:'disabled'});

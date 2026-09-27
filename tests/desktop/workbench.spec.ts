@@ -34,7 +34,7 @@ test('real desktop capture → copy → trial → approval → deploy → edit �
     await page.getByRole('button', { name: 'Copy handoff', exact: true }).click();
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toContain('known off-by-one');
     await page.getByRole('button', { name: 'Done', exact: true }).click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: /trials/ }).click();
+    // The experiments grid opened by Test selects the prepared handoff, so its result can be recorded from the panel.
     await page.getByRole('button', { name: 'Record result', exact: true }).click();
     await page.getByLabel('What happened?').fill('Found the known boundary error with a concrete fix.');
     await page.getByLabel('Output transcript (stored only on this machine)').fill('Observed output: the loop includes an extra element.');
@@ -139,7 +139,7 @@ test('delete started experiments from both lists and keep them deleted after reo
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await page.getByRole('button', { name: /Delete experiment fixture/ }).click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: /trials/ }).click();
+    await page.getByRole('button', { name: 'Test', exact: true }).click();
     await page.getByRole('button', { name: 'Delete experiment', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Delete experiment', exact: true })).toHaveCount(0);
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();
