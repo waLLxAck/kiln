@@ -10,7 +10,7 @@ export const experiments = [
   { id: 'autoSync', title: 'Background sync with GitHub', description: 'Checks GitHub every few minutes, shows what is new in the top bar with one-click Pull, and lets Merge run while you have drafts.' },
   { id: 'trialLoop', title: 'Improve and re-test from experiments', description: 'Experiment results offer "Improve with agent" and "Re-test current revision", group by revision, and get longer time limits.' },
   { id: 'runNotifications', title: 'Run notifications and runs list', description: 'A desktop notification and a toast when an agent run finishes, and a list of every active run in the top bar.' },
-  { id: 'betterSearch', title: 'Steadier, ranked search', description: 'Search keeps results on screen while typing, ranks by relevance, and quick search confirms the copy and hides when you click away.' },
+  { id: 'betterSearch', title: 'Steadier, ranked search', description: 'Search keeps results on screen while typing, ranks by relevance, forgives typos, and quick search confirms the copy, hides when you click away and runs commands after ">".' },
   { id: 'chatHistory', title: 'Docked chat with history', description: 'Ask the agent opens beside the item, keeps each item\'s conversation, renders Markdown and shows changes the agent made.' },
   { id: 'keyboardUndo', title: 'Keyboard navigation and undo', description: 'Enter, Home, End, Page keys and Shift+arrows in the list, a ? shortcut sheet, Ctrl+Z for trash, moves and status, and dragging items onto collections.' },
   { id: 'projectInstalls', title: 'Install into project folders', description: 'Install a skill into any project folder from its Installs tab, without enrolling the project from the command line first.' },

@@ -10,7 +10,8 @@ import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, 
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
-import { environmentExperiments, experimentIds, type ExperimentId } from '../protocol/experiments';
+import { environmentExperiments, experimentIds, experimentOn, type ExperimentId } from '../protocol/experiments';
+import { closeMatches } from './fuzzy';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
@@ -359,6 +360,23 @@ export class Workbench {
     if (this.dirty) this.refresh();
     const ids = query.trim() ? new Set(this.index.search(query)) : null;
     return this.indexedItems.filter(item => (!ids || ids.has(item.id)) && (includeArchived || !['archived', 'rejected'].includes(item.status)));
+  }
+  /**
+   * Search for the betterSearch experiment: best matches first (descriptions count too), a typo-tolerant fallback on titles and
+   * tags when nothing matches exactly (`close`), and `total` so a capped list can say how much it left out.
+   */
+  rankedSearch(query: string, options: { archived?: boolean; limit?: number } = {}) {
+    if (!experimentOn(this.settings(), 'betterSearch')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Ranked search is an experimental feature; turn on "Steadier, ranked search" in Settings.');
+    if (this.dirty) this.refresh();
+    const shown = (item: Item) => options.archived || !['archived', 'rejected'].includes(item.status);
+    let items: Item[], close = false;
+    if (!query.trim()) items = this.indexedItems.filter(shown);
+    else {
+      const byId = new Map(this.indexedItems.map(item => [item.id, item]));
+      items = this.index.search(query, true).flatMap(id => { const item = byId.get(id); return item && shown(item) ? [item] : []; });
+      if (!items.length) { items = closeMatches(query, this.indexedItems.filter(shown)); close = items.length > 0; }
+    }
+    return { items: options.limit ? items.slice(0, options.limit) : items, total: items.length, close };
   }
   private revisionHistory(id: string) {
     return [...readRecords(path.join(this.itemDir(id), 'revisions'), value => revisionSchema.parse(value), this.warnings),
