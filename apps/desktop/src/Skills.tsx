@@ -1,19 +1,22 @@
 import { skillLocation, skillLocationLabel, targetSkillsFolder, sharedSkillReaders, compatibilityChecked } from '../../../packages/providers/skill-locations';
 import { agentFolder } from '../../../packages/domain/agent-format';
 import { useEffect, useState } from 'react';
-import { Check, Download, FileDiff, FolderOpen, Link2, Settings, TriangleAlert } from 'lucide-react';
+import { Check, CircleArrowUp, Download, FileDiff, FolderOpen, Link2, Settings, TriangleAlert } from 'lucide-react';
 import type { Installation, Item, Provider, ProviderId, Snapshot, Target } from '../../../packages/protocol/schema';
 import { api } from './api';
 import { Badge, InlineError, Modal, providerName } from './components';
 import { FolderComparison } from './Compare';
+import { experimentOn } from './Experiments';
+import { KeepButton, KeptDialog, keepExplanation, updateMessage, type KeepResult, type UpdateResult } from './InstallUpdates';
 
 import { personalTarget } from './skill-folders';
 export { personalTarget };
-export type SkillState = 'off' | 'on' | 'linked' | 'found' | 'differs' | 'drifted';
+/** `outdated` only appears while the experimental installUpdates flag is on: the backend marks such copies only then. */
+export type SkillState = 'off' | 'on' | 'outdated' | 'linked' | 'found' | 'differs' | 'drifted';
 export function skillState(item: Item, target: Target, installations: Installation[]): { state: SkillState; installation?: Installation } {
   const installation = installations.find(i => i.itemId === item.id && i.targetId === target.id);
   if (!installation) return { state: 'off' };
-  if (installation.state === 'installed') return { state: 'on', installation };
+  if (installation.state === 'installed') return { state: installation.outdated ? 'outdated' : 'on', installation };
   if (installation.state === 'drifted') return { state: 'drifted', installation };
   if (installation.linked) return { state: 'linked', installation };
   return { state: installation.matches ? 'found' : 'differs', installation };
@@ -21,6 +24,7 @@ export function skillState(item: Item, target: Target, installations: Installati
 const stateHint: Record<SkillState, string> = {
   off: 'Not in this folder. Click to install the approved version.',
   on: 'Installed by Kiln and identical to the approved version. Click to remove.',
+  outdated: 'Installed by Kiln and unchanged since, but a newer version is approved. Click to update it or remove it.',
   linked: 'A link (junction) points somewhere else. Click to remove the link or replace it with a real copy.',
   found: 'An identical copy exists that Kiln does not manage yet. Click to let Kiln manage or remove it.',
   differs: 'The installed copy differs from the approved version. Click to replace or remove it.',
@@ -34,7 +38,7 @@ export function SkillToggles({ item, providers, snapshot, installations, onToggl
   const toggle = (provider: Provider, target: Target) => {
     const { state } = skillState(item, target, installations);
     return <button key={target.id} className={`skill-toggle ${state}`} title={`${stateHint[state]} ${target.root}/${item.kind === 'agent' ? agentFolder(target.provider, target.scope) : targetSkillsFolder(target)}`} aria-pressed={state !== 'off'} onClick={() => onToggle(provider.id, target.id)}>
-      {state === 'on' ? <Check size={14} /> : state === 'linked' ? <Link2 size={14} /> : state === 'off' ? <Download size={14} /> : <TriangleAlert size={14} />}<span>{item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)]}</span><small>{state === 'off' ? 'Install' : state === 'on' ? 'Installed' : state === 'found' ? 'found' : state === 'linked' ? 'linked' : state === 'differs' ? 'differs' : 'edited'}</small>
+      {state === 'on' ? <Check size={14} /> : state === 'linked' ? <Link2 size={14} /> : state === 'off' ? <Download size={14} /> : state === 'outdated' ? <CircleArrowUp size={14} /> : <TriangleAlert size={14} />}<span>{item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)]}</span><small>{state === 'off' ? 'Install' : state === 'on' ? 'Installed' : state === 'outdated' ? 'Update' : state === 'found' ? 'found' : state === 'linked' ? 'linked' : state === 'differs' ? 'differs' : 'edited'}</small>
     </button>;
   };
   return <div className="installation-locations"><div className="skill-toggles" role="group" aria-label="Installed for">{locations.map(({ provider, target }) => toggle(provider, target))}{!locations.length && <button className="button" onClick={onSetup}><Settings size={15} />Set up install locations</button>}</div>
@@ -52,7 +56,7 @@ export function SkillLocationSettings({ providers, targets, onSet, onScan }: { p
   return <><p>Install skills into shared Agents or Claude folders. Agent definitions keep their client’s format and folder. Removing an installation keeps the library item and its history.</p>{providers.filter(p => p.id !== 'copilot').map(p => row(p))}<p className="small muted">Agents is shared by Codex, Copilot, Cursor and other clients. Claude folders can also be read by some other clients. These labels describe locations, not exclusive access.</p><details><summary>Clients that read .agents/skills</summary><p className="small muted">Checked {compatibilityChecked}. Client versions, disabled skills, workspace trust and folder precedence affect what is loaded.</p><ul>{sharedSkillReaders.map(reader => <li key={reader.name}><a href={reader.url} target="_blank" rel="noreferrer">{reader.name}</a> — {reader.note}</li>)}</ul><p className="small muted">The <a href="https://github.com/vercel-labs/skills/blob/main/src/agents.ts" target="_blank" rel="noreferrer">skills installer registry</a> also uses this project convention for Antigravity, Antigravity CLI, Cline, Deep Agents, Dexto, Firebender, Loaf, Replit and PromptScript. Their personal-folder loading is not verified here.</p></details><details><summary>Client-specific locations</summary><p className="small muted">Optional separate copies. A missing folder does not mean skills are unavailable to that client. Codex’s .codex/skills folder is also used by older clients and installers.</p>{providers.filter(p => p.id === 'codex').map(p => row(p, true))}{providers.filter(p => p.id === 'copilot').map(p => row(p))}</details></>;
 }
 /** Explains exactly what will happen in the agent folder before installing or removing. */
-export function SkillInstallDialog({ item, provider, target, installations, approved, onClose, onDone }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; onClose: () => void; onDone: (message: string) => void }) {
+export function SkillInstallDialog({ item, provider, target, installations, approved, settings, onClose, onDone }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; /** Experimental flags: installUpdates adds Update, keepOutsideEdits adds Keep these changes. */ settings?: Snapshot['settings']; onClose: () => void; onDone: (message: string) => void }) {
   const { state, installation } = skillState(item, target, installations);
   const label = item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)];
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -63,15 +67,21 @@ export function SkillInstallDialog({ item, provider, target, installations, appr
   const install = (replace = false) => run(() => api('skills.install', { itemId: item.id, targetId: target.id, replace, confirm: true }), `${item.title}: {method} for ${label}. Start a new client session to use it.`);
   const remove = (force = false) => run(() => api('skills.remove', { itemId: item.id, targetId: target.id, force, confirm: true }), `${item.title} removed from ${label} ({method}). The item stays in your library.`);
   const reveal = () => void api('desktop.revealPath', { path: destination }).catch(e => setError(String(e)));
-  const titles: Record<SkillState, string> = { off: `Install for ${label}`, on: `Remove from ${label}`, linked: `Linked copy in ${label}`, found: `Existing copy in ${label}`, differs: `Different version in ${label}`, drifted: `Edited copy in ${label}` };
+  const update = () => run(async () => ({ destination, method: updateMessage(item.title, await api<UpdateResult>('skills.update', { itemId: item.id, targetId: target.id })) }), '{method}');
+  const keeping = experimentOn(settings, 'keepOutsideEdits') && (state === 'differs' || state === 'drifted');
+  const [kept, setKept] = useState<KeepResult | null>(null);
+  if (kept) return <KeptDialog item={item} targetId={target.id} result={kept} settings={settings} onDone={onDone} />;
+  const titles: Record<SkillState, string> = { off: `Install for ${label}`, on: `Remove from ${label}`, outdated: `Update available in ${label}`, linked: `Linked copy in ${label}`, found: `Existing copy in ${label}`, differs: `Different version in ${label}`, drifted: `Edited copy in ${label}` };
   return <Modal title={titles[state]} subtitle={item.title} onClose={onClose} wide={comparing}>
     <code className="path-text">{destination}</code>
     {state === 'off' && <><p>{item.kind === 'agent' ? 'Kiln copies the agent definition to this file.' : 'Kiln copies SKILL.md and the bundled files into this folder.'} Clients that read this location can use it in new sessions.</p>{!approved && <p className="notice">This draft is not approved yet. Installing approves exactly this revision and pushes it to your Kiln repo on GitHub.</p>}</>}
     {state === 'on' && <p>The installed copy is deleted. Your library keeps the item, its history and approvals, and you can install it again later.</p>}
     {state === 'linked' && <p>This entry is a link to a folder elsewhere on this machine, probably created by another installer. Removing deletes only the link; the folder it points to is untouched. Replacing it turns it into a real copy managed by Kiln.</p>}
     {state === 'found' && <p>These files are byte-for-byte the same as the approved version, but Kiln did not put them there. Letting Kiln manage the folder records ownership without rewriting anything, so future updates and removal work from here.</p>}
-    {state === 'differs' && <p>The installed copy differs from the approved version in Kiln. Replacing sets the current folder aside (kept under Kiln’s private data, not deleted) and installs the approved version. Open the folder first if you want to bring those changes into Kiln.</p>}
+    {state === 'outdated' && <p>Kiln installed this copy and it has not been changed since, but a newer version is approved. Updating writes the approved version over it; the install receipt keeps the previous files, so it can be rolled back.</p>}
+    {state === 'differs' && <p>The installed copy differs from the approved version in Kiln. Replacing sets the current folder aside (kept under Kiln’s private data, not deleted) and installs the approved version.{keeping ? '' : ' Open the folder first if you want to bring those changes into Kiln.'}</p>}
     {state === 'drifted' && <p>Kiln installed this item, and the copy was edited afterwards. Reinstalling sets the edited copy aside (kept, not deleted) and writes the approved version again.</p>}
+    {keeping && <p className="notice">{keepExplanation}</p>}
     {installation && <button className="text-button" aria-expanded={comparing} onClick={() => setComparing(!comparing)}><FileDiff size={14} />{comparing ? 'Hide file comparison' : 'Compare the installed copy with the approved version'}</button>}
     {installation && comparing && <FolderComparison itemId={item.id} targetId={target.id} />}
     <InlineError error={error} />
@@ -80,8 +90,10 @@ export function SkillInstallDialog({ item, provider, target, installations, appr
       <button className="button" onClick={onClose}>Cancel</button>
       {state === 'off' && <button className="button primary" disabled={busy} onClick={() => void install()}>Install</button>}
       {state === 'on' && <button className="button primary" disabled={busy} onClick={() => void remove()}>Remove</button>}
+      {state === 'outdated' && <><button className="button danger-text" disabled={busy} onClick={() => void remove()}>Remove</button><button className="button primary" disabled={busy} onClick={() => void update()}><CircleArrowUp size={14} />Update</button></>}
       {state === 'linked' && <><button className="button danger-text" disabled={busy} onClick={() => void remove()}>Remove link</button><button className="button primary" disabled={busy} onClick={() => void install()}>Replace with a copy</button></>}
       {state === 'found' && <><button className="button danger-text" disabled={busy} onClick={() => void remove()}>Remove</button><button className="button primary" disabled={busy} onClick={() => void install()}>Let Kiln manage it</button></>}
+      {keeping && <KeepButton item={item} targetId={target.id} disabled={busy} onKept={setKept} onError={setError} />}
       {(state === 'differs' || state === 'drifted') && <><button className="button danger-text" disabled={busy} onClick={() => void remove(true)}>Remove anyway</button><button className="button primary" disabled={busy} onClick={() => void install(true)}>{state === 'drifted' ? 'Reinstall approved version' : 'Replace with approved version'}</button></>}
     </div>
   </Modal>;

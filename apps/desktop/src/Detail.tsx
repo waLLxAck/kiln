@@ -11,6 +11,7 @@ import { api, date, shortHash } from './api';
 import { isTextFile } from '../../../packages/domain/text';
 import { Badge, ContextMenu, Field, KindIcon, Lightbox, imageFile, imageSource, statusHelp } from './components';
 import { Installations } from './Installations';
+import { installUpdatesButton } from './InstallUpdates';
 import { personalTarget, SkillToggles } from './Skills';
 import { machinesEnabled } from './features';
 
@@ -93,7 +94,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         </>
         : <>
           {['skill', 'agent'].includes(item.kind) && (locations.length > 0 || copies.length > 0)
-            ? <button className={`button ${copies.length ? '' : 'primary'}`} onClick={() => copies.length ? changeTab('installs') : onAction('approve-install')} title={copies.length ? 'Manage installed copies and remove them from individual locations' : undefined}>{copies.length ? <Check size={15} /> : <Download size={15} />}{copies.length ? installedNames.length || copies.some(copy => copy.state === 'drifted') ? 'Installed' : 'Manage installations' : currentApproved ? 'Install' : 'Approve & install'}</button>
+            ? installUpdatesButton({ settings: snapshot.settings, item, approved: currentApproved, copies, onAction }) ?? <button className={`button ${copies.length ? '' : 'primary'}`} onClick={() => copies.length ? changeTab('installs') : onAction('approve-install')} title={copies.length ? 'Manage installed copies and remove them from individual locations' : undefined}>{copies.length ? <Check size={15} /> : <Download size={15} />}{copies.length ? installedNames.length || copies.some(copy => copy.state === 'drifted') ? 'Installed' : 'Manage installations' : currentApproved ? 'Install' : 'Approve & install'}</button>
             : item.kind === 'link' || (['tool', 'resource'].includes(item.kind) && /^https?:\/\/\S+$/i.test(revision.content.trim().split('\n')[0]))
               ? <button className="button primary" onClick={() => void perform(() => api('desktop.openItem', { id: item.id }))}><ExternalLink size={15} />Open link</button>
               : ['file', 'image', 'reference'].includes(item.kind)

@@ -1035,3 +1035,9 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .experiment-row input[role="switch"]:checked { background: var(--accent); }
 .experiment-row input[role="switch"]:checked::after { transform: translateX(12px); }
 .experiment-row input[role="switch"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Experimental: Update installed copies (installUpdates). Solid accent, so "Update" stands apart from the tinted found/linked states. */
+.skill-toggle.outdated { color: var(--accent-text); background: var(--accent-tint-2); border-color: var(--accent); }
+.skill-toggle.outdated:hover { background: var(--accent-tint); border-color: var(--accent-strong); }
+.install-mark.outdated { color: var(--accent-ink); background: var(--accent); }
+.badge.update_available { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
