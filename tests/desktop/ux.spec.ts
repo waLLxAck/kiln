@@ -65,19 +65,26 @@ test('library views retain tokens, search, the open item and scroll across secti
     await page.locator('.item-card').filter({ hasText: 'Remember 20' }).click();
     await expect(page.getByRole('heading', { name: 'Remember 20', exact: true })).toBeVisible();
     await expect(page.getByRole('toolbar', { name: 'Item navigation' })).toContainText(/\d+ of 35/);
-    await page.getByRole('button', { name: /^Status/ }).click();
-    await page.getByRole('menuitem', { name: /^Captured/ }).click();
+    // Status changes from the item page's ⋯ menu, which names the captured status "draft" as the badge does.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: /^Move to (captured|draft)/ })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: /^Move to testing/ }).click();
     await page.locator('.detail-scroll').evaluate(node => { node.scrollTop = 300; });
     await page.getByRole('button', { name: 'Settings & repository' }).click();
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     // Coming back from another section restores the view as it was, open item included.
     await expect(page.getByRole('heading', { name: 'Remember 20', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Status/ })).toContainText('Captured');
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: /^Move to draft/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Move to testing/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
     await expect.poll(() => page.locator('.detail-scroll').evaluate(node => node.scrollTop)).toBeGreaterThan(200);
     await page.keyboard.press('Escape');
     await expect(page.getByRole('combobox', { name: 'Search library' })).toHaveValue('Remember');
     await expect(page.getByRole('button', { name: 'Remove kind: prompt' })).toBeVisible();
     await expect(page.locator('.item-card.selected')).toContainText('Remember 20');
+    await expect(page.locator('.item-card.selected .col-status')).toHaveText('Testing');
     await expect.poll(() => page.locator('.item-list').evaluate(node => node.scrollTop)).toBeGreaterThan(300);
     // Another stage is another view with its own query; coming back restores this one.
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Drafts' }).click();

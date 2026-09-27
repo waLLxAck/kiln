@@ -1,6 +1,6 @@
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { useRef, useState, type ReactNode } from 'react';
-import { ArrowDownUp, ArrowLeft, Check, ChevronDown, ChevronUp, Github, Rows3 } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, Check, ChevronDown, ChevronUp, Github, RefreshCw, Rows3 } from 'lucide-react';
 import type { Approval, Installation, Item, Provider, Target, Trial } from '../../../packages/protocol/schema';
 import { Badge, ContextMenu, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
@@ -46,22 +46,26 @@ export function StatusCell({ item, approvals, published, made = 0 }: { item: Ite
 
 /** Copy states that no longer match the library revision. */
 const changedStates = ['drifted', 'differs'];
+/** Copies that are there but Kiln did not install: an identical copy it found, or a link. Kiln can take them over. */
+const unmanagedStates = ['found', 'linked'];
+/** The dot for one folder: installed by Kiln, there but unmanaged, changed, or empty. */
+const dotClass = (state: string) => state === 'off' ? 'off' : changedStates.includes(state) ? 'changed' : state;
 /**
- * "2 of 3" personal folders with one dot per folder, and a warning when a copy changed outside Kiln. Copies in enrolled project
- * folders are counted after. Kinds that cannot be installed show a dash.
+ * "2 of 3" personal folders with one dot per folder, then a note when a copy changed outside Kiln or is there without Kiln
+ * managing it. Copies in enrolled project folders are counted after. Kinds that cannot be installed show a dash.
  */
 export function InstalledCell({ item, locations, installations }: { item: Item; locations: Location[]; installations: Installation[] }) {
   if (!installable(item)) return <span className="faint" title="Only skills and agent definitions install into agent folders">—</span>;
   const places = locationsFor(item, locations).map(l => ({ ...l, state: skillState(item, l.target, installations).state }));
-  const present = places.filter(p => p.state !== 'off'), changed = places.filter(p => changedStates.includes(p.state)).length;
+  const present = places.filter(p => p.state !== 'off'), changed = places.filter(p => changedStates.includes(p.state)).length, unmanaged = places.filter(p => unmanagedStates.includes(p.state)).length;
   const personal = new Set(places.map(p => p.target.id));
   const project = installations.filter(i => i.itemId === item.id && !personal.has(i.targetId) && i.scope === 'project').length;
-  const title = [...places.map(p => `${locationName(item, p.provider)}: ${p.state === 'off' ? 'not installed' : p.state === 'on' ? 'installed' : p.state}`), ...(project ? [`${project} project cop${project === 1 ? 'y' : 'ies'}`] : [])].join('\n');
+  const title = [...places.map(p => `${locationName(item, p.provider)}: ${p.state === 'off' ? 'not installed' : p.state === 'on' ? 'installed' : p.state === 'found' ? 'identical copy, not managed by Kiln' : p.state === 'linked' ? 'a link, not managed by Kiln' : p.state}`), ...(project ? [`${project} project cop${project === 1 ? 'y' : 'ies'}`] : [])].join('\n');
   if (!places.length && !project) return <span className="faint" title="No skill folder is set up. Choose one in Settings.">Not set up</span>;
   return <span className="lib-installed" title={title}>
-    {places.length > 0 && <span className="lib-dots" aria-hidden="true">{places.map(p => <i key={p.target.id} className={p.state === 'off' ? '' : changedStates.includes(p.state) ? 'changed' : 'on'} />)}</span>}
+    {places.length > 0 && <span className="lib-dots" aria-hidden="true">{places.map(p => <i key={p.target.id} className={dotClass(p.state)} />)}</span>}
     <span className={present.length || project ? '' : 'faint'}>{places.length ? present.length ? `${present.length} of ${places.length}` : 'Not installed' : ''}{project ? `${places.length ? ' · ' : ''}${project} project` : ''}</span>
-    {changed > 0 && <span className="lib-changed">{changed} changed</span>}
+    {changed > 0 ? <span className="lib-changed">{changed} changed</span> : unmanaged > 0 && <span className="lib-unmanaged">{unmanaged} unmanaged</span>}
   </span>;
 }
 
@@ -94,8 +98,11 @@ export function GroupMenu({ group, onGroup }: { group: GroupKey; onGroup: (group
   return <MenuPill icon={<Rows3 size={13} />} name="Group" value={groupLabel[group]} title="Group the list under headings" entries={(Object.keys(groupLabel) as GroupKey[]).map(g => ({ label: groupLabel[g], checked: g === group, onSelect: () => onGroup(g) }))} />;
 }
 
-/** The thin bar above an open item: back to the list, and where the item sits in it with steps to its neighbours. */
-export function ItemBar({ label, position, total, onBack, onStep }: { label: string; position: number; total: number; onBack: () => void; onStep: (direction: number) => void }) {
+/**
+ * The thin bar above an open item: back to the list, and where the item sits in it with steps to its neighbours. Refresh sits
+ * here too, since the list heading that has it is hidden while an item is open.
+ */
+export function ItemBar({ label, position, total, onBack, onStep, onRefresh }: { label: string; position: number; total: number; onBack: () => void; onStep: (direction: number) => void; onRefresh: () => void }) {
   return <div className="item-bar" role="toolbar" aria-label="Item navigation">
     <button type="button" className="item-bar-back" onClick={onBack} title="Back to the list (Esc)"><ArrowLeft size={14} />{label}</button>
     <span className="item-bar-sep" />
@@ -103,5 +110,6 @@ export function ItemBar({ label, position, total, onBack, onStep }: { label: str
     <button type="button" className="icon-button" aria-label="Previous item" title="Previous item (Alt+↑)" disabled={position <= 1} onClick={() => onStep(-1)}><ChevronUp size={15} /></button>
     <button type="button" className="icon-button" aria-label="Next item" title="Next item (Alt+↓)" disabled={position < 1 || position >= total} onClick={() => onStep(1)}><ChevronDown size={15} /></button>
     <kbd className="item-bar-esc">Esc</kbd>
+    <button type="button" className="icon-button" aria-label="Refresh library" title="Re-read the library and installed copies" onClick={onRefresh}><RefreshCw size={14} /></button>
   </div>;
 }

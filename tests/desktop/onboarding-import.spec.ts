@@ -75,8 +75,14 @@ test('after importing installed skills, one click manages their folders without 
     expect(listing(), 'managing a folder installs and changes nothing').toEqual(before);
     await page.getByRole('button', { name: 'Start using Kiln' }).click();
     await expect(page.locator('.item-card')).toHaveCount(2);
-    await expect(page.locator('.install-mark.found')).toHaveCount(2);
-    await expect(page.locator('.install-mark.off')).toHaveCount(2);
+    // Each skill is in one of the two folders as an identical copy Kiln found but did not install: the Installed column
+    // marks it apart from a managed copy (ringed dot, "unmanaged") and leaves the other folder empty.
+    const installed = page.locator('.item-card .col-installed');
+    await expect(installed).toHaveText([/^1 of 2/, /^1 of 2/]);
+    await expect(installed.locator('.lib-unmanaged')).toHaveText(['1 unmanaged', '1 unmanaged']);
+    await expect(installed.locator('.lib-dots i.found')).toHaveCount(2);
+    await expect(installed.locator('.lib-dots i.off')).toHaveCount(2);
+    await expect(installed.locator('.lib-dots i.on')).toHaveCount(0);
     expect(listing()).toEqual(before);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
