@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, CircleSlash, Clock, Copy, FileText, FlaskConical, FolderOpen, Hand, Loader2, Play, Plus, RotateCcw, ShieldCheck, SlidersHorizontal, Trash2, X, XCircle } from 'lucide-react';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { ItemDetail, Provider, RunProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
@@ -82,6 +82,13 @@ export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, on
 
   const cells = useMemo(() => { const map = new Map<string, Run[]>(); for (const run of runs) { const key = cellKey(run.revision, run.column); map.set(key, [...map.get(key) ?? [], run]); } return map; }, [runs]);
   const [selected, setSelected] = useState<{ cell: string; run?: string } | null>(() => runs[0] ? { cell: cellKey(runs[0].revision, runs[0].column) } : null);
+  // A run that appears while the grid is open (a handoff just prepared, a run started from the dialog) takes the panel, so its result is what you see next.
+  const known = useRef(new Set(runs.map(r => r.id)));
+  useEffect(() => {
+    const fresh = runs.find(r => !known.current.has(r.id));
+    known.current = new Set(runs.map(r => r.id));
+    if (fresh) setSelected({ cell: cellKey(fresh.revision, fresh.column), run: fresh.id });
+  }, [runs]);
   const [bar, setBar] = useState<{ revision: string; column?: Column; free: boolean } | null>(null);
   const [provider, setProvider] = useState<RunProviderId>(snapshot.settings.agentProvider);
   const [context, setContext] = useState('');

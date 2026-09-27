@@ -204,15 +204,17 @@ export default function App() {
   const revealItem = (id: string, destination = 'library', open = true) => { if (destination === 'library') setStage(''); else { setSection(destination); setCollection(''); } setQuery(''); setTokens([]); select(id); setOpen(open); };
   useEffect(() => { const open = () => { const id = new URLSearchParams(location.hash.slice(1)).get('item'); if (id) { revealItem(id); history.replaceState(null, '', location.pathname + location.search); } }; open(); window.addEventListener('hashchange', open); return () => window.removeEventListener('hashchange', open); }, []);
   // Quick search (Palette.tsx) asks for these through desktop.command; main.ts has already shown this window.
+  /** Quick search reads the library itself, so it can name an item this window has not loaded yet (made by the CLI, MCP or a sync); the page needs it in the snapshot. */
+  const revealFresh = (id: string, then?: () => void) => void perform(async () => { if (!snapshot?.items.some(i => i.id === id)) await refresh(); revealItem(id); then?.(); });
   useKilnCommands({
     capture: () => startCapture(),
-    'open-item': id => { if (id) revealItem(id); },
-    'test-item': id => { if (id) { revealItem(id); setTestRequest({ id, at: Date.now() }); } },
+    'open-item': id => { if (id) revealFresh(id); },
+    'test-item': id => { if (id) revealFresh(id, () => setTestRequest({ id, at: Date.now() })); },
     navigate: id => { if (id) navigate(id); },
     'sync-installs': () => { navigate('settings'); void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); }); },
     'new-collection': () => { setSection('library'); newCollection(); },
     'toggle-theme': toggleTheme,
-    'ask-item': id => { if (id) { revealItem(id); setChatOpen(true); } },
+    'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
   });
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
   const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows under Capture.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
