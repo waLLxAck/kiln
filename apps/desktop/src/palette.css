@@ -72,3 +72,11 @@
 .pal-key:hover { background: var(--subtle-2); color: var(--text); }
 .pal-key span { margin-left: 3px; }
 .pal-grow { flex: 1; }
+
+/* Notes inside the results: close matches, and a list cut at the first 30. */
+.pal-note { margin: 0; padding: 2px 10px 6px; font-size: 12px; color: var(--muted); }
+/* The brief confirmation after Enter copied an item; the window hides right after. */
+.palette.pal { position: relative; }
+.pal-copied { position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; max-width: 70%; padding: 9px 14px; border-radius: 999px; background: var(--text); color: var(--bg); font-size: 13px; box-shadow: var(--shadow-lg); animation: pop .12s ease-out; }
+.pal-copied b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-copied svg { color: var(--ok); flex-shrink: 0; }

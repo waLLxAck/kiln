@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchRanges, matchScore, rankItems } from '../apps/desktop/src/palette-match';
+import { actionScore, matchRanges, matchScore, mostUsed, parsePaletteQuery, preferredRow } from '../apps/desktop/src/palette-match';
 import { resolveVariables } from '../packages/domain/text';
 
 test('a substring ranks by position; word starts match across words; scattered letters do not match', () => {
@@ -19,11 +19,28 @@ test('highlight ranges cover the substring or each word start, and nothing for a
   assert.deepEqual(matchRanges('Anything', '  '), []);
 });
 
-test('title hits lead, then usage, then the backend order; with no query the most used lead', () => {
-  const items = [{ id: 'a', title: 'Notes on review' }, { id: 'b', title: 'Review code' }, { id: 'c', title: 'Tagged review elsewhere' }, { id: 'd', title: 'Content match only' }];
+test('with nothing typed the most used lead, ties keeping the backend order', () => {
+  const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
   const usage = { d: { copied: 4, used: 9 }, c: { copied: 0, used: 2 } };
-  assert.deepEqual(rankItems(items, 'review', usage).map(i => i.id), ['b', 'c', 'a', 'd']);
-  assert.deepEqual(rankItems(items, '', usage).map(i => i.id), ['d', 'c', 'a', 'b']);
+  assert.deepEqual(mostUsed(items, usage).map(i => i.id), ['d', 'c', 'a', 'b']);
+});
+
+test('> lists actions only; actions match their label first, then label and keywords together', () => {
+  assert.deepEqual(parsePaletteQuery('> sett '), { actionsOnly: true, text: 'sett' });
+  assert.deepEqual(parsePaletteQuery(' review'), { actionsOnly: false, text: 'review' });
+  const capture = { label: 'Capture…', keywords: 'new add paste' };
+  assert.equal(actionScore(capture, 'capt'), 0);
+  assert.equal(actionScore(capture, 'new capture'), 500);
+  assert.equal(actionScore(capture, 'updates'), -1);
+  assert.equal(actionScore({ label: 'Ask the agent about “Deploy”', match: 'Ask the agent about' }, 'deploy'), -1);
+});
+
+test('Enter prefers the top item unless only an action names what was typed', () => {
+  const settings = { label: 'Go to Settings' };
+  assert.equal(preferredRow(['Weekly notes', 'Deploy'], settings, 'go sett'), 2);
+  assert.equal(preferredRow(['Settings sync notes'], settings, 'sett'), 0);
+  assert.equal(preferredRow([], settings, 'sett'), 0);
+  assert.equal(preferredRow(['Weekly notes'], settings, ''), 0);
 });
 
 test('the preview fills variables exactly as the copy does: blanks stay as {{name}}', () => {

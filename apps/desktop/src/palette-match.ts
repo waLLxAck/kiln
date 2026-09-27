@@ -29,15 +29,30 @@ export function matchRanges(text: string, query: string): [number, number][] {
   return ranges.sort((a, b) => a[0] - b[0]).filter((range, i, all) => i === 0 || range[0] >= all[i - 1][1]);
 }
 
-/**
- * Search results in the order quick search shows them. The backend already decided what matches (title, content, tags); this
- * puts title hits first, best position first, then by how often each item was used. With no query, the most used come first.
- * Ties keep the backend's order.
- */
-export function rankItems<T extends { id: string; title: string }>(items: T[], query: string, usage: Usage): T[] {
+/** With nothing typed, quick search lists the most used items first; ties keep the backend's order. Typed queries keep the backend's relevance order, the same as the library's search. */
+export function mostUsed<T extends { id: string }>(items: T[], usage: Usage): T[] {
   const used = (item: T) => usage[item.id]?.used ?? 0;
-  const score = (item: T) => { const title = matchScore(item.title, query); return title < 0 ? 1000 : title; };
-  return items.map((item, index) => ({ item, index, score: score(item), used: used(item) }))
-    .sort((a, b) => a.score - b.score || b.used - a.used || a.index - b.index)
-    .map(entry => entry.item);
+  return items.map((item, index) => ({ item, index, used: used(item) })).sort((a, b) => b.used - a.used || a.index - b.index).map(entry => entry.item);
+}
+
+/** A leading `>` asks for actions only; the rest is what they are matched against. */
+export const parsePaletteQuery = (query: string) => query.startsWith('>') ? { actionsOnly: true, text: query.slice(1).trim() } : { actionsOnly: false, text: query.trim() };
+
+/**
+ * How well an action matches: its label first (lower is better), else label and keywords together at 500 so "new capture" finds
+ * "Capture…" (keywords "new add paste"); -1 for no match. `match` replaces the label when it holds an item's title.
+ */
+export function actionScore(action: { label: string; match?: string; keywords?: string }, query: string) {
+  const label = matchScore(action.match ?? action.label, query);
+  if (label >= 0) return label;
+  return action.keywords && matchScore(`${action.match ?? action.label} ${action.keywords}`, query) >= 0 ? 500 : -1;
+}
+
+/**
+ * The row Enter acts on before any arrow key: the top item, unless no item title matches and the best action's label does, so
+ * typing a command's words ("go sett") leaves it ready even though content matches still list items above it. Actions follow items.
+ */
+export function preferredRow(titles: string[], bestAction: { label: string; match?: string } | undefined, query: string) {
+  const q = query.trim();
+  return q && !titles.some(title => matchScore(title, q) >= 0) && bestAction && matchScore(bestAction.match ?? bestAction.label, q) >= 0 ? titles.length : 0;
 }

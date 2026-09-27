@@ -218,6 +218,7 @@ export default function App() {
     'new-collection': () => { setSection('library'); newCollection(); },
     'toggle-theme': toggleTheme,
     'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
+    'check-updates': () => { navigate('settings'); void perform(() => checkUpdate(true), 'Checked for updates'); },
   });
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
   const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows under Capture.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
