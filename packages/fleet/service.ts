@@ -144,8 +144,14 @@ export class FleetService {
   }
   /** Publishes this machine's report now if it changed, together with any unsent marks. */
   report() { this.schedule(0); return this.publishState(); }
-  /** Installs everything the library asks of this machine: installs.json, then entries marked for it. Never approves. */
+  /**
+   * Installs everything the library asks of this machine: installs.json, then entries marked for it. Never approves.
+   * Fetches first: marks are made on other machines and pushed to GitHub, and nobody should have to pull just to see them.
+   * Offline, it installs what the last fetch saw.
+   */
   sync(): SyncEntry[] {
+    const tracking = this.tracking();
+    if (tracking && this.wb.repositoryState().ready) { this.fetchNow(tracking.remote); this.wb.invalidateGit(); }
     const entries: SyncEntry[] = this.deployments.syncInstalls();
     const locations = targetLocations(this.wb.targets(), os.homedir()), targets = this.wb.targets();
     const token = (key: string): ProviderId | 'codex-native' | undefined => key === 'agents' ? 'codex' : key === 'codex' ? 'codex-native' : key === 'claude' || key === 'copilot' ? key : undefined;
