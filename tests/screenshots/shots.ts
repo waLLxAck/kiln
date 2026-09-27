@@ -65,8 +65,9 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   // 6. Config files.
   await nav('Config files');
   await page.getByLabel('Filter config files').fill('claude');
-  await page.locator('.item-card').filter({ hasText: 'settings.json' }).first().click();
-  await shot('config-files', 'Agent instructions, permissions and hooks in one editor, with syntax checks and previous versions.');
+  await page.locator('.cfg-file').filter({ hasText: /^settings\.json/ }).first().click();
+  await expect(page.getByRole('tab', { name: /Permissions/ })).toBeVisible();
+  await shot('config-files', 'Agent instructions and settings grouped by agent and project; Claude Code permissions as Allow, Ask and Deny, with syntax checks and private backups.');
 
   // 7. Asking the agent about a distilled entry, with the video's transcript as context, in the dark theme.
   await page.getByRole('button', { name: /I let a seven-year-old test my app/ }).first().click();
