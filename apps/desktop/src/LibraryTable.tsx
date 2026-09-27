@@ -7,6 +7,7 @@ import { InstalledCell, StatusCell, TableHead, TestCell, type Location } from '.
 import { installable } from './library-filters';
 import { site, type GroupKey, type Sort, type SortKey } from './library-sort';
 import { SwipeToArchive } from './Swipe';
+import { DraftMark } from './item-editing';
 
 type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number };
 type Props = {
@@ -65,7 +66,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
             <div role="row" data-id={item.id} tabIndex={item.id === focusable ? 0 : -1} aria-selected={item.id === selected || isPicked} className={`item-card lib-row ${collectionShown ? 'no-collection' : ''} ${selected === item.id ? 'selected' : ''} ${isPicked ? 'picked' : ''} ${install?.item.id === item.id ? 'menu-open' : ''}`}
               onClick={event => onClick(event, item)} onContextMenu={event => onMenu(event, item)}>
               <span className={`item-kind ${item.kind}`} role="cell" title={item.kind}><KindIcon kind={item.kind} size={14} /></span>
-              <span className="lib-title" role="cell"><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<span className="lib-sub" title={from ? `From ${from.full}` : subtitle || undefined}>{subtitle}</span></span>
+              <span className="lib-title" role="cell"><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} /><span className="lib-sub" title={from ? `From ${from.full}` : subtitle || undefined}>{subtitle}</span></span>
               {!collectionShown && <span className="lib-cell col-collection muted" role="cell" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>}
               <span className="lib-cell col-status" role="cell"><StatusCell item={item} approvals={approvals} published={published} made={made} /></span>
               <span className="lib-cell col-installed" role="cell"><InstalledCell item={item} locations={locations} installations={installations} /></span>

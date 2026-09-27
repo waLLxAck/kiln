@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Brain, Clock, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep } from '../../../packages/agent/service';
-import type { Analysis, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
+import { activeRun } from '../../../packages/agent/run-notice';
+import type { Analysis, ItemDetail, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
 import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
+import { RevisionSelect } from './TrialLoop';
 import { Field, Modal, providerName } from './components';
+import { Markdown } from './Markdown';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
 export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomEvent('kiln:agent-started', { detail: { kind } })); }
@@ -15,7 +18,7 @@ export const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n
 const kilobytes = (n: number) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
 export function useElapsed(job: AgentJob) {
   const [, tick] = useState(0);
-  useEffect(() => { if (job.status !== 'running') return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
+  useEffect(() => { if (!activeRun(job)) return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
   const seconds = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000));
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
 }
@@ -23,7 +26,7 @@ export function useElapsed(job: AgentJob) {
 function RunMeta({ job }: { job: AgentJob }) {
   const elapsed = useElapsed(job);
   return <div className="run-meta">
-    <span title="Model the CLI was asked to use">{job.model || (job.status === 'running' ? 'Resolving model…' : 'CLI default model')}</span>
+    <span title="Model the CLI was asked to use">{job.model || (activeRun(job) ? 'Resolving model…' : 'CLI default model')}</span>
     {job.kind === 'trial' && <span title={job.workspace || 'Private run folder'}>Project: {job.workspace || 'Isolated example'}</span>}
     {job.effort && <span title="Reasoning effort">{job.effort} reasoning</span>}
     <span title="Wall-clock time">{elapsed}</span>
@@ -34,8 +37,9 @@ function RunMeta({ job }: { job: AgentJob }) {
 }
 /** Compact one-line strip shown on every tab while a run is active, so the tab content underneath stays visible. */
 export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: AgentJob[]; onOpen: (kind: AgentKind) => void }) {
-  const running = jobs.filter(job => job.itemId === itemId && job.status === 'running');
-  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}><Loader2 size={14} className="spin"/><b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
+  // A queued run (runNotifications) shows here too, as Queued, so it can be cancelled before it starts.
+  const running = jobs.filter(job => job.itemId === itemId && activeRun(job));
+  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}>{job.status === 'queued' ? <Clock size={14} /> : <Loader2 size={14} className="spin"/>}<b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.status === 'queued' && 'Queued · '}{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
 }
 export function Steps({ job }: { job: AgentJob }) {
   useElapsed(job);
@@ -62,17 +66,19 @@ export function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
 }
 /** Runs a job again with its exact inputs: provider, project, context and revision, even if the item has been edited since. */
 export const retryJob = (job: AgentJob) => api('agent.start', { id: job.itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind));
-export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void }) {
+export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions, knownProjects = false }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail; /** projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [revision, setRevision] = useState(revisions?.item.revision ?? '');
   return <Modal title="Run an experiment" subtitle="Test this revision against a project or an isolated example. The output and agent assessment are saved together." onClose={onClose}>
     <ProviderSelect providers={providers} value={provider} onChange={setProvider} />
-    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} />
+    {revisions && <RevisionSelect detail={revisions} value={revision} onChange={setRevision} disabled={busy} />}
+    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} known={knownProjects} />
     <p className="muted small">Experiments inspect files read-only. Tasks that require edits or unavailable tools are reported as uncertain.</p>
     <Field label="What should it try? (optional)"><textarea rows={4} value={context} onChange={e => setContext(e.target.value)} placeholder="Add an example input or the situation to test." /></Field>
     {error && <p role="alert" className="error-box">{error}</p>}
-    <div className="modal-actions"><button className="text-button" disabled={busy} onClick={() => onManual(workspace)}>Manual handoff instead</button><button className="button primary" disabled={busy} onClick={() => start(provider, context, workspace)}>{busy ? 'Starting…' : 'Run experiment'}</button></div>
+    <div className="modal-actions"><button className="text-button" disabled={busy} onClick={() => onManual(workspace)}>Manual handoff instead</button><button className="button primary" disabled={busy} onClick={() => start(provider, context, workspace, revisions && revision !== revisions.item.revision ? revision : undefined)}>{busy ? 'Starting…' : 'Run experiment'}</button></div>
   </Modal>;
 }
 export function CreateSkillDialog({ itemId, title, providers, defaultProvider, onClose }: { itemId: string; title: string; providers: Provider[]; defaultProvider: RunProviderId; onClose: () => void }) {
@@ -91,7 +97,7 @@ export function ChatActivity({ job }: { job: AgentJob }) {
   useElapsed(job);
   const quietSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.lastActivityAt ?? job.startedAt)) / 1000));
   return <>
-    {job.status === 'running' && <p className="chat-phase" role="status"><Loader2 size={13} className="spin" />{job.phase}{quietSeconds >= 15 ? ` · no new activity for ${quietSeconds}s` : ''}</p>}
+    {activeRun(job) && <p className="chat-phase" role="status">{job.status === 'queued' ? <><Clock size={13} />Queued · </> : <Loader2 size={13} className="spin" />}{job.phase}{quietSeconds >= 15 ? ` · no new activity for ${quietSeconds}s` : ''}</p>}
     {job.steps.length > 0 && <details className="agent-steps chat-activity"><summary>Activity · {job.steps.length} step{job.steps.length === 1 ? '' : 's'}</summary><StepList job={job} /></details>}
   </>;
 }
@@ -100,7 +106,7 @@ export function ChatRunMeta({ job, onError }: { job: AgentJob; onError: (message
   const elapsed = useElapsed(job);
   const usage = job.usage;
   return <div className="chat-meta">
-    <span title="Model the CLI was asked to use">{job.model || (job.status === 'running' ? 'Resolving model…' : 'CLI default model')}{job.effort ? ` · ${job.effort}` : ''}</span>
+    <span title="Model the CLI was asked to use">{job.model || (activeRun(job) ? 'Resolving model…' : 'CLI default model')}{job.effort ? ` · ${job.effort}` : ''}</span>
     <span title="Wall-clock time">{elapsed}</span>
     {usage && <span title={`Input ${usage.input.toLocaleString()} (cached ${usage.cached.toLocaleString()}) · output ${usage.output.toLocaleString()}${usage.reasoning ? ` (reasoning ${usage.reasoning.toLocaleString()})` : ''}`}>{tokens(usage.input)} in · {tokens(usage.output)} out</span>}
     {job.threadId && <code title={`CLI session id${job.session ? ` · transcript saved (${kilobytes(job.session.bytes)})` : ''}`}>{job.threadId.slice(0, 8)}</code>}
@@ -125,9 +131,9 @@ export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, coll
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
   const retry = (job: AgentJob) => { void retryJob(job).catch(e => setError(String(e))); };
   return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
-    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status}</span></div>
+    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
     <RunMeta job={job} />
-    {job.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
+    {activeRun(job) && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
     <Steps job={job} />
     {job.error && <p className="error-box">{job.error}</p>}
     {job.result && ('entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>

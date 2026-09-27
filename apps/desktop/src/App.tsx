@@ -27,14 +27,19 @@ import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Tr
 import { api, date, platform, shortHash, variablesIn } from './api';
 import { Badge, ContextMenu, Empty, Field, KilnMark, Modal, providerName, shortcutEntry, statusHelp, type MenuEntry } from './components';
 import { DeployDialog, ResultDialog, TargetDialog, TrialDialog, VariablesDialog } from './dialogs';
+import { ProjectInstallDialog } from './ProjectInstalls';
 import { Detail } from './Detail';
 import { RepositoryPanel } from './RepositoryPanel';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
 import { AgentTrialDialog, CreateSkillDialog } from './AgentPanel';
 import { personalTarget, ScanDialog, SkillInstallDialog, skillState } from './Skills';
 import { CompareDialog } from './Compare';
+import { canKeep, updateInstalls } from './InstallUpdates';
 import { HomeFilesView } from './HomeFiles';
 import { UpdatesPanel } from './Updates';
+import { experimentOn } from './ExperimentalFeatures';
+import { ASK_AGENT_EVENT, type AskAgentDetail } from './TrialLoop';
+import { useCodeEditorFlag } from './code-editor-state';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 
@@ -81,6 +86,10 @@ export default function App() {
   useEffect(() => { if (update?.stage.state !== 'preparing') return; const timer = setInterval(() => void checkUpdate(), 500); return () => clearInterval(timer); }, [update?.stage.state, checkUpdate]);
   const [menu, setMenu] = useState<{ x: number; y: number; items: Item[] } | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  // `kiln:ask-agent` (TrialLoop.tsx): open the chat about an item with a message typed in. The handler is refreshed each render so it sees the open item.
+  const [chatSeed, setChatSeed] = useState<{ itemId: string; text: string; nonce: number } | null>(null); const askAgentRef = useRef<(detail: AskAgentDetail) => void>(() => {});
+  useEffect(() => { const ask = (event: Event) => askAgentRef.current((event as CustomEvent<AskAgentDetail>).detail); window.addEventListener(ASK_AGENT_EVENT, ask); return () => window.removeEventListener(ASK_AGENT_EVENT, ask); }, []);
+  useEffect(() => { if (!chatOpen) setChatSeed(null); }, [chatOpen]);
   /** The item whose experiments grid was asked for from outside its page (the list's Test, quick search). */
   const [testRequest, setTestRequest] = useState<{ id: string; at: number }>();
   // Right-click menu on a collection in the sidebar.
@@ -157,6 +166,7 @@ export default function App() {
   const [origins, setOrigins] = useState<Record<string, string>>({});
   const sharedTitles = snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '';
   useEffect(() => { if (!sharedTitles) { setOrigins({}); return; } let active = true; void api<Record<string, string>>('items.origins', { ids: sharedTitles.split(',') }).then(result => { if (active) setOrigins(result); }).catch(() => {}); return () => { active = false; }; }, [sharedTitles]);
+  useCodeEditorFlag(experimentOn(snapshot?.settings, 'codeEditor'));
   // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
   // Machines: share this machine's installs with the rest of the fleet, now and after each change (see packages/fleet).
   useEffect(() => { if (machinesEnabled) void api('fleet.start').catch(() => {}); }, []);
@@ -266,6 +276,12 @@ export default function App() {
         if (failed.length) throw new Error(`${done.length ? `Installed for ${done.join(', ')}. ` : ''}Not installed for ${failed.join('; ')}`);
         setMessage(`${isApproved ? 'Installed' : 'Approved and installed'} for ${done.join(' and ')}. Start a new agent session to use it.`);
       });
+      return;
+    }
+    if ((name === 'update-installs' || name === 'approve-update-installs') && detail) {
+      // Experimental installUpdates: the Detail header's Update installs / Approve & update installs.
+      if (busy) return;
+      void perform(async () => { const note = await updateInstalls(detail.item, name === 'approve-update-installs'); await refresh(); setMessage(note); });
       return;
     }
     if (name === 'copy' && detail && variablesIn(detail.revision.content).length === 0) { void perform(async () => { await api('desktop.copy', { id: detail.item.id, revision: detail.item.revision }); await refresh(); }, 'Copied to clipboard'); return; }
@@ -401,6 +417,7 @@ export default function App() {
   // Sources carry the material behind their entries; a video captured before sources existed counts as one too.
   const isSource = (i: Item | undefined) => Boolean(i && (i.kind === 'source' || (i.kind === 'link' && i.tags.includes('youtube'))));
   const chatItem = libraryView ? snapshot.items.find(i => i.id === selected && !i.deletedAt) ?? null : null;
+  askAgentRef.current = ({ itemId, message }) => { if (chatItem?.id !== itemId) revealItem(itemId); setChatSeed({ itemId, text: message, nonce: Date.now() }); setChatOpen(true); };
   const sourceBehind = !chatItem ? null : isSource(chatItem) ? chatItem : (() => { const origin = chatItem.origin ? snapshot.items.find(i => i.id === chatItem.origin!.itemId) : undefined; return isSource(origin) ? origin! : null; })();
   // The open item's page. It stays open when a filter hides it; the bar then says so instead of a position.
   const itemView = libraryView && itemOpen && snapshot.items.some(i => i.id === selected);
@@ -482,7 +499,7 @@ export default function App() {
           <section className="settings-card"><h3>Export & recovery</h3><button className="button" onClick={() => void perform(() => api('desktop.resetAgentConsent'), 'Agent access warning will appear before the next interaction')}>Show agent access warnings again</button><p>Export content, bundled assets, revisions, and trial summaries to a readable JSON file. Private inputs, local paths, and credentials are excluded.</p><div className="wrap-actions"><button className="button" onClick={() => void perform(async () => { const result = await api<{ destination: string } | null>('desktop.export'); if (result) setMessage(`Exported to ${result.destination}`); })}><Download size={15} />Export library</button><button className="button" onClick={() => void perform(async () => { const result = await api<{ imported: number; conflicts: string[] } | null>('desktop.importBundle'); if (result) { await refresh(); setMessage(`Imported ${result.imported}; ${result.conflicts.length} diverging items retained in History.`); } })}><Upload size={15} />Restore export</button></div><p className="muted small">Imports are repeatable. Diverging revisions are retained. Imported approvals require a fresh human review.</p></section></div>}
       </div>}
         </div>
-        {chatOpen && chatItem && <ChatPopover jobs={jobs} item={chatItem} source={sourceBehind} provider={snapshot.settings.agentProvider} items={snapshot.items} onRefresh={refresh} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} />}
+        {chatOpen && chatItem && <ChatPopover jobs={jobs} item={chatItem} source={sourceBehind} provider={snapshot.settings.agentProvider} items={snapshot.items} onRefresh={refresh} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} initialMessage={chatSeed?.itemId === chatItem.id ? chatSeed : undefined} />}
         </div>
       </main>
     </div>
@@ -499,15 +516,16 @@ export default function App() {
     {dialog?.name === 'result' && dialog.trial && <ResultDialog trial={dialog.trial} onClose={() => setDialog(null)} onDone={() => void completed()} />}
     {detail && dialog?.name === 'derive' && <CreateSkillDialog itemId={detail.item.id} title={detail.item.title} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} />}
     {detail && dialog?.name === 'deploy' && <DeployDialog detail={detail} snapshot={snapshot} onClose={() => setDialog(null)} onDone={() => void completed()} />}
+    {detail && dialog?.name === 'install-project' && experimentOn(snapshot.settings, 'projectInstalls') && <ProjectInstallDialog item={detail.item} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'target' && <TargetDialog onClose={() => setDialog(null)} onDone={() => void completed()} />}
-    {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} settings={snapshot.settings} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'scan' && dialog.provider && (() => { const provider = providers.find(p => p.id === dialog.provider), target = snapshot.targets.find(t => t.id === dialog.targetId); return provider && target ? <ScanDialog provider={provider} target={target} onClose={() => setDialog(null)} onImported={refresh} /> : null; })()}
     {purgeTarget && <Modal title="Delete permanently?" subtitle={purgeTarget.title} onClose={() => setDialog(null)}><p>This removes the item, all its revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold it.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('items.purge', { id: purgeTarget.id, confirm: true }); if (selected === purgeTarget.id) setSelected(''); await completed(); }, 'Deleted permanently')}><Trash2 size={14} />Delete permanently</button></div></Modal>}
     {dialog?.name === 'purge-many' && dialog.itemIds && <Modal title="Delete permanently?" subtitle={`${dialog.itemIds.length} items`} onClose={() => setDialog(null)}><p>This removes these items, all their revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold them.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => { const ids = dialog.itemIds!; void perform(async () => { for (const id of ids) await api('items.purge', { id, confirm: true }); if (ids.includes(selected)) setSelected(''); setBulkIds([]); await completed(); }, `${ids.length} items deleted permanently`); }}><Trash2 size={14} />Delete {dialog.itemIds.length} items</button></div></Modal>}
     {bulkReview && <BulkRemovalDialog itemIds={bulkReview} onClose={() => { setBulkReview(null); setBulkIds([]); }} onDone={async () => { await refresh(); setInstallations(await api<Installation[]>('deploy.installations')); }} />}
     {dialog?.name === 'empty-trash' && <Modal title="Empty the trash?" subtitle={`${matching.length} item${matching.length === 1 ? '' : 's'} will be deleted permanently.`} onClose={() => setDialog(null)}><p>Revisions, approvals and experiment records of these items are removed from the library folder. Installed copies in agent folders stay as they are.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { for (const item of matching) await api('items.purge', { id: item.id, confirm: true }); setSelected(''); await completed(); }, 'Trash emptied')}><Trash2 size={14} />Delete {matching.length} item{matching.length === 1 ? '' : 's'}</button></div></Modal>}
     {dialog?.name.startsWith('rollback:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Reverse this install?" subtitle="Installed files will be checked again before rollback." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>{receipt.previousRevision ? `Restore approved revision ${shortHash(receipt.previousRevision)}.` : 'Remove the snapshot Kiln created. There was no previous file at this destination.'}</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.rollback', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Install reversed')}>Confirm rollback</button></div></Modal> : null; })()}
-    {dialog?.name.startsWith('compare:') && (() => { const [, itemId, targetId] = dialog.name.split(':'); const item = snapshot.items.find(i => i.id === itemId), installation = installations.find(i => i.itemId === itemId && i.targetId === targetId); return item ? <CompareDialog itemId={itemId} targetId={targetId} title={item.title} destination={installation?.destination ?? snapshot.receipts.find(r => r.itemId === itemId && r.targetId === targetId)?.destination ?? ''} onClose={() => setDialog(null)} /> : null; })()}
+    {dialog?.name.startsWith('compare:') && (() => { const [, itemId, targetId] = dialog.name.split(':'); const item = snapshot.items.find(i => i.id === itemId), installation = installations.find(i => i.itemId === itemId && i.targetId === targetId); return item ? <CompareDialog itemId={itemId} targetId={targetId} title={item.title} destination={installation?.destination ?? snapshot.receipts.find(r => r.itemId === itemId && r.targetId === targetId)?.destination ?? ''} onClose={() => setDialog(null)} keep={experimentOn(snapshot.settings, 'keepOutsideEdits') && canKeep(installation) ? { item, settings: snapshot.settings, onDone: note => { setDialog(null); setMessage(note); void refresh(); } } : undefined} /> : null; })()}
     {dialog?.name.startsWith('uninstall:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Remove this skill?" subtitle="Only the matching Kiln-owned folder will be removed." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>The skill stays in your library, with its approvals and history. You can install it again later.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.uninstall', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Skill removed; library retained')}>Confirm removal</button></div></Modal> : null; })()}
     {inventory && <Modal title="Repository inventory" subtitle="Read-only inspection complete. No history or existing files changed." onClose={() => setInventory(null)} wide><code className="path-text">{inventory.root}</code><p>{inventory.totalFiles} tracked files · {inventory.resources.length} candidate resources · branch {inventory.branch}</p><div className="inventory-list">{inventory.resources.map(relative => <div key={relative}><code>{relative}</code><button className="text-button" onClick={() => void perform(async () => { const item = await api<Item>('desktop.importResource', { root: inventory.root, relative }); await refresh(); setSelected(item.id); }, 'Imported as an unapproved resource')}>Import copy</button></div>)}</div><p>Attaching creates a separate workbench folder. Existing dotfile installers and agent files keep their current ownership. Import selected resources deliberately.</p><div className="modal-actions"><button className="button" onClick={() => setInventory(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('desktop.attach', { root: inventory.root }); setInventory(null); setSelected(''); await refresh(); }, 'Repository attached')}>Attach this repository</button></div></Modal>}
     {dialog?.name === 'import-local' && <LocalSkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}

@@ -1,6 +1,6 @@
 # Third-party software
 
-Kiln's original source is MIT licensed. The exact dependency graph is pinned in `package-lock.json`; each package retains its own licence. React, react-markdown, remark-gfm, Electron, Vite, esbuild, diff, YAML, Zod, and the Node.js tooling carry their upstream notices. Lucide icons use the ISC licence. TypeScript and Playwright use Apache-2.0.
+Kiln's original source is MIT licensed. The exact dependency graph is pinned in `package-lock.json`; each package retains its own licence. React, react-markdown, remark-gfm, CodeMirror (MIT), Electron, Vite, esbuild, diff, YAML, Zod, and the Node.js tooling carry their upstream notices. Lucide icons use the ISC licence. TypeScript and Playwright use Apache-2.0.
 
 Electron distributions include Chromium and other components with additional notices in `LICENSE.electron.txt` and `LICENSES.chromium.html`. Keep these files with the packaged application. Dependencies' licences are not replaced by Kiln's licence.
 

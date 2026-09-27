@@ -19,6 +19,7 @@ This guide covers everything the [README](../README.md) summarises. Together the
 - [Config files](#config-files)
 - [Standard repositories](#standard-repositories)
 - [Command-line interface](#command-line-interface)
+- [Experimental features](#experimental-features)
 - [Updating the installed app](#updating-the-installed-app)
 - [Panels and performance logs](#panels-and-performance-logs)
 - [The problems behind the workflow](#the-problems-behind-the-workflow)
@@ -48,6 +49,7 @@ What ships today:
 | Git and GitHub | Create or open a Kiln repository, inspect changes, checkpoint, synchronize and resolve conflicts. GitHub access uses the official `gh` CLI. |
 | CLI | Script collections, items, experiments, approvals, installation and library operations through structured JSON results and the same domain code as the desktop. |
 | Desktop preferences | Choose theme and agent defaults, resize panels, configure quick search and startup behavior, inspect local performance logs, and, on Windows, prepare/restart into a newer installer. |
+| Experimental features | Try upcoming changes one at a time from Settings: updating installed copies, keeping outside edits, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications, ranked search, docked chat with history, keyboard navigation and undo, and installing into project folders. All start off. |
 
 ## Installing
 
@@ -117,7 +119,7 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.19.1](releases/0.19.1.md).
+See [what changed in 0.22.0](releases/0.22.0.md).
 
 ## Quick search
 
@@ -336,6 +338,50 @@ Agents organise the library with the same commands as the desktop: `collections 
 Lists return `total` and `nextOffset`; pass `--offset <nextOffset>` for another page. `--limit` defaults to 50 (maximum 500). `items read` accepts 1–100 IDs in one call. Single reads return one object; multiple IDs return `{ items: [...] }` in requested order. Add `--full` to read content and attached files. `--revision` works with one ID only. A failed batch returns an error without partial content.
 
 Other typed operations accept `--input request.json`. Results include `schemaVersion`, `ok`, and `data`; errors use structured stderr and a nonzero exit status. Unknown, misplaced, repeated and valueless options fail before storage is opened. `--library` and `--local` can isolate storage. `KILN_LIBRARY` and `KILN_LOCAL` override defaults; `KILN_DESKTOP_DATA` isolates desktop preferences for tests.
+
+## Experimental features
+
+**Settings → Experimental features** has one switch for each change that is still being tried out. They are all off until you turn them on, apply straight away without a restart, and only affect this machine (they are kept in the machine-private settings, never in the library). Turn a switch off to go back to how Kiln worked before. When a change has proved itself it becomes the normal behaviour in a later release and its switch goes away. Setting `KILN_EXPERIMENTS` to `all`, or to a comma-separated list of names such as `codeEditor,autoSync`, turns switches on for one run without saving them.
+
+### Update installed copies
+
+A copy Kiln installed that you haven't changed since, but that is behind the approved version, shows **Update** on its location button, "update available" under Installs, and a blue marker in the library list. Click it to update that copy, or use **Update installs (N)** in the item header to update them all. If the current revision is still a draft, the header offers **Approve & update installs**. Copies edited outside Kiln, different copies Kiln didn't install, and links are never overwritten; the message tells you which were skipped. Start a new agent session to pick up the change.
+
+### Keep changes made outside Kiln
+
+A copy that was edited in its folder (or a different copy of the same skill) offers **Keep these changes**, both in its location dialog and in Compare. Kiln saves the folder's SKILL.md and supporting files (or the agent file) as a new draft of the same item, noted "Kept changes from the … copy", and leaves the folder as it is. The item keeps its own title, description and tags. Choose **Approve & install** to approve that draft; Kiln then treats the folder as the installed version without rewriting it. If the item changed in the meantime, you are asked to reload instead of overwriting. A folder holding entries the importer skips (`.git`, `node_modules`, `__pycache__`, `.DS_Store`) can be kept, but it won't match the kept revision exactly, so Kiln warns and doesn't offer Approve & install.
+
+### Code editor
+
+Items and config files open in a code editor with line numbers, syntax highlighting (Markdown with frontmatter, JSON, YAML, TOML, shell and PowerShell) and find and replace: **Ctrl+F** searches inside the editor, **Ctrl+H** jumps to replace and **Ctrl+S** saves (a new unapproved revision for items, the file for config files). While you edit a skill, Kiln checks its SKILL.md as you type and lists anything that would block approval, with the line it is on. A skill's bundled text files can be edited, or new ones added by relative path; they are saved in the same revision, and binary files are kept exactly as they are. Files over 512 KB or that aren't UTF-8 text stay read-only. Everything you type, including title, tags, collection, source and licence, is kept privately on this machine until you save, so switching items loses nothing; items with such a draft show **unsaved** in the library, and **Discard local draft** asks before throwing it away.
+
+### Background sync with GitHub
+
+Kiln checks your Kiln repository on GitHub shortly after it starts, every five minutes and when you come back to the window. It never asks you to sign in and never slows other actions; without a connection the top bar simply says **Offline**. The top bar shows **Up to date**, **N new on GitHub · Pull**, or **N waiting to push** (click it to see what is on its way, retry anything that failed, or check now). **Pull** brings GitHub's changes in while your drafts stay exactly as they are; only if GitHub changed an item you also have a draft of does Kiln stop and name it, so you can approve or discard that draft first. If this machine and GitHub both have new commits, Kiln offers **Merge from GitHub**, which now also works while you have drafts of other items. Moving, reordering or favouriting approved items, changing collections and choosing where approved skills are installed are pushed to GitHub on their own a moment later, as one commit; drafts never go with them, but the names of all your collections do. When you resolve a conflict by taking a side that was approved, it stays approved.
+
+### Improve and re-test from experiments
+
+The Trials tab groups experiments under the revision they tested, newest first, with a pass/fail/uncertain tally for each. On a finished experiment, **Re-test current revision** (or **Run again** when it already tested the current revision) runs the item's current revision with the same agent, project and context. **Improve with agent** opens the item chat with a message about that result already typed in (its verdict, the agent's note and an excerpt of the output) for you to edit and send; the chat also sees the item's five most recent experiments. **Mark as passed** or **Mark as failed** records your own judgement next to the agent's assessment, which stays unchanged; with the switch off again, these judgements show as manual trials. When the current revision passes and is not approved yet, **Approve this revision** approves it the same way the header does (Approve & install for skills). The Test dialog lets you pick which revision to run, experiments and skill drafts may take up to 15 minutes, and the Experiments page groups results by item and revision with a verdict filter.
+
+### Run notifications and runs list
+
+When an experiment, distillation, skill draft or chat reply finishes while Kiln is hidden or behind another window, you get a desktop notification ("Experiment passed · …", "Distillation finished · 5 entries from …", "Run failed · …"); click it to jump straight to the result. While Kiln is in front, a toast says what finished, with **Open result**, which opens the item on the tab holding the result (Trials for experiments, Overview for analyses, the chat for replies). Click the "working" pill in the top bar to see every active run, and those that finished in the last 30 minutes, with the model, elapsed time and current step, plus **Open** and **Cancel**. Two runs go at once; further runs wait their turn as **Queued** and start by themselves, instead of being refused. A queued run can be cancelled, and one that had not started when Kiln closed is marked interrupted and can be retried.
+
+### Steadier, ranked search
+
+The library search keeps the current list on screen while you type and updates as soon as an item is renamed or edited. Results come best match first (a match in the title counts more than one in the tags, description or body), and the sort pill shows **Relevance**; pick another order to override it for this search, and clearing the search goes back to the view's own order. Descriptions are searched too, and a typo such as "reveiw" still finds "code-review", marked "No exact matches — showing close matches". Quick search works the same way: press Enter as soon as you have typed and Kiln copies the top match, shows "Copied" for a moment and hides. It also hides when you click elsewhere, keeps your last search for next time, says when it is showing only the first 30 results, and runs commands: type `>` to see them all (New capture, Go to Library, Experiments, Config files, Activity or Settings, Check for updates), or type a word such as "capture" to see matching commands under the results.
+
+### Docked chat with history
+
+Ask the agent opens as a panel beside the item instead of on top of it; drag its edge to resize it. Each item keeps its conversation: closing the panel, opening another item or restarting Kiln brings it back. **New session** starts a fresh conversation, and **Sessions** lists the earlier ones (first message, date, agent) so you can reopen and continue one. Replies are formatted (lists, code blocks, links). When the agent changes an item during a turn, a card under its reply says what changed, with **View changes** (a before-and-after comparison) and **Undo change** (puts back the version from before that turn, after asking; it refuses if the item has changed again since). The agent warning is shown once for chat each time Kiln starts, instead of before every message.
+
+### Keyboard navigation and undo
+
+In the library list, Home and End jump to the first and last item, Page Up and Page Down move a screenful, and Shift with the arrows, Home, End or the Page keys extends the selection from the open item, like Shift-click. Enter opens the focused item and moves to its main action. Type the first letters of a title to jump to it: letters that are shortcuts for the row (O, C, F, E, W, S, A, L, M, R, D, 1–4) still run the shortcut, so hold Shift for the first letter when a title starts with one; while you keep typing, every letter extends the title. Menus open with their first entry focused; use the arrows, Home and End, Enter or Space to run an entry, its letter shortcut, or Esc to go back. Press **?** outside a text field to see every shortcut. **Ctrl+Z** (Cmd+Z on macOS) undoes the last library action from the list, up to 20 of them: moving to or restoring from the trash, status changes and archiving, favourites, and moves between collections. An undo leaves alone any item you have changed since, and says so. Deleting permanently still asks first and cannot be undone. You can also drag items from the list onto a collection in the sidebar, or onto Unfiled; dragging a picked item takes the whole selection. Start the drag by moving up or down, or from the item's icon, since a sideways swipe still archives. Changes to many items at once show their progress.
+
+### Install into project folders
+
+A skill's or agent definition's Installs tab (and the More menu) offers **Install into project…**. Pick a project from one list — folders you installed into, ran experiments in, or added in Config files — or choose any folder, then choose where the skill goes: **Agents** (`.agents/skills`, read by Codex, Copilot and most other clients), **Claude** (`.claude/skills`) or **Copilot** (`.github/skills`). Agent definitions go to their client's project folder. The preview shows the exact destination and whether a copy is already there; installing works like a personal install (a draft is approved first, and an existing different folder is set aside, not deleted, after you confirm). The folder becomes one of your projects on first install. Project copies appear under **Projects** on the Installs tab with Remove, Compare and Update. They stay on this machine and are not repeated on your other machines. A project with no Kiln copies left can be forgotten from the dialog; its files are untouched. The same project list is offered when you test an item.
 
 ## Updating the installed app
 

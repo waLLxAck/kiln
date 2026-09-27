@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { AgentService } from '../../packages/agent/service';
+import { runFinished } from '../../packages/agent/run-notice';
 import { Workbench } from '../../packages/domain/workbench';
 import { Router } from '../../packages/domain/router';
 import { WorkbenchError } from '../../packages/domain/errors';
@@ -9,7 +10,12 @@ const log = (event: string, fields?: Record<string, unknown>) => parentPort!.pos
 const routerOptions = { log, composer: null };
 let wb = new Workbench(workerData.root, workerData.local);
 let router = new Router(wb, routerOptions);
-const newAgentService = (workbench: Workbench) => new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
+const newAgentService = (workbench: Workbench) => {
+  const service = new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
+  // runNotifications: main decides whether to show a desktop notification; the event is sent for every finished run.
+  service.onFinished = job => parentPort!.postMessage({ agentFinished: runFinished(job, id => { try { return workbench.getItem(id).title; } catch { return undefined; } }) });
+  return service;
+};
 let agent = newAgentService(wb);
 // One owner and one queue preserve ordering across both desktop windows.
 let queue = Promise.resolve();
@@ -19,7 +25,7 @@ parentPort!.on('message', request => {
     try {
       let data;
       if (request.method === 'attach') {
-        if (agent.running) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
+        if (agent.running || agent.queued) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
         const next = new Workbench(request.args[0], workerData.local);
         router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
@@ -30,12 +36,13 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'agent.chat') data = agent.chat(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.exportSession') data = agent.exportSession(request.args[1].id);
       else if (request.method === 'rpc' && request.args[0] === 'agent.jobs') data = agent.list();
+      else if (request.method === 'rpc' && request.args[0] === 'agent.chatHistory') data = agent.chatHistory(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.models') data = await agent.models();
       else if (request.method === 'rpc' && request.args[0] === 'agent.cancel') data = agent.cancel(request.args[1].id);
       else if (request.method === 'rpc' && request.args[0] === 'trials.delete') data = agent.deleteTrial(request.args[1]);
       else if (request.method === 'rpc') data = await router.call(...request.args as [string, unknown]);
       else {
-        const allowed = ['settings', 'saveSettings', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
+        const allowed = ['settings', 'saveSettings', 'setExperiment', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
         if (!allowed.includes(request.method)) throw new Error('Unsupported worker operation');
         data = await (wb as any)[request.method](...request.args);
       }
@@ -45,6 +52,6 @@ parentPort!.on('message', request => {
       parentPort!.postMessage({ id: request.id, error: { code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) } });
     }
   };
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'fleet.view'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view'].includes(request.args[0])) void run();
   else queue = queue.then(run);
 });

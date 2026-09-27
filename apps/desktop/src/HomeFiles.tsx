@@ -9,6 +9,9 @@ import { ConfigTree, bytes, purposeIcon } from './ConfigTree';
 import { HooksEditor, PermissionsEditor, type Apply } from './Permissions';
 import { agentLabel, countSettingsChanges, isClaudeSettings, parseSettings, purposeLabel, purposeOf, scopeName } from './configModel';
 import './config.css';
+import { CodeEditor as CodeMirrorEditor } from './CodeEditor';
+import { languageFor, type CodeLanguage } from './code-language';
+import { useCodeEditorOn } from './code-editor-state';
 
 type Props = { perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; /** Re-reads the library after a copy is saved into it. */ refresh: () => Promise<void>; onOpenLibrary: (id: string) => void };
 type Tab = 'permissions' | 'hooks' | 'raw';
@@ -181,19 +184,21 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
             {liveParse && !liveParse.ok && <div className="notice warning cfg-notice"><TriangleAlert size={15} /> Permissions and Hooks are off until the JSON is valid again.</div>}
             {activeTab === 'permissions' && liveParse?.ok && (liveParse.settings.rules ? <PermissionsEditor rules={liveParse.settings.rules} saved={parsedSaved?.ok ? parsedSaved.settings.rules : null} other={liveParse.settings.otherPermissions} apply={apply} /> : <div className="notice warning cfg-notice">{liveParse.settings.rulesProblem} Edit it in Raw.</div>)}
             {activeTab === 'hooks' && liveParse?.ok && (liveParse.settings.hooks ? <HooksEditor rows={liveParse.settings.hooks} apply={apply} /> : <div className="notice warning cfg-notice">{liveParse.settings.hooksProblem} Edit it in Raw.</div>)}
-            {activeTab === 'raw' && <CodeEditor label={current.label} value={draft} onChange={setDraft} />}
+            {activeTab === 'raw' && <CodeEditor key={current.key} label={current.label} value={draft} onChange={setDraft} language={languageFor(current.path, { comments: current.kind === 'vscode' })} />}
             <Status content={loaded} file={current.path} />
           </>
-          : <><CodeEditor label={current.label} value={draft} onChange={setDraft} /><Status content={loaded} file={current.path} /></>}
+          : <><CodeEditor key={current.key} label={current.label} value={draft} onChange={setDraft} language={languageFor(current.path, { comments: current.kind === 'vscode' })} /><Status content={loaded} file={current.path} /></>}
       </div>
     </article> : <div className="welcome-pane"><div className="welcome-content"><h1>{files ? 'Pick a file to edit.' : 'Reading your home folder…'}</h1><p>Settings and instructions for Claude Code, Codex, GitHub Copilot and your shell.</p></div></div>}
     {removing && <Modal title="Remove from this list?" subtitle={removing.label} onClose={() => setRemoving(null)}><code className="path-text">{removing.path}</code><p>The file stays where it is. Only Kiln's list entry and the versions Kiln kept for it are removed.</p><div className="modal-actions"><button className="button" onClick={() => setRemoving(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('home.remove', { key: removing.key }); localStorage.removeItem(draftKey(removing.key)); setRemoving(null); if (selected === removing.key) setSelected('claude-global'); await reloadList(); }, 'Removed from the list; the file was not touched')}><Trash2 size={14} />Remove from list</button></div></Modal>}
   </div>;
 }
 
-/** A plain text editor with line numbers. Lines do not wrap, so the numbers stay aligned. */
-function CodeEditor({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+/** A plain text editor with line numbers. Lines do not wrap, so the numbers stay aligned. With the codeEditor experiment it is CodeMirror instead. */
+function CodeEditor({ label, value, onChange, language }: { label: string; value: string; onChange: (value: string) => void; language?: CodeLanguage }) {
   const gutter = useRef<HTMLDivElement>(null);
+  const codeMirror = useCodeEditorOn();
+  if (codeMirror) return <CodeMirrorEditor className="home-code" value={value} onChange={onChange} language={language} ariaLabel={`${label} content`} />;
   const lines = value.split('\n').length;
   return <div className="cfg-code">
     <div className="cfg-gutter" ref={gutter} aria-hidden="true">{Array.from({ length: lines }, (_, i) => <span key={i}>{i + 1}</span>)}</div>

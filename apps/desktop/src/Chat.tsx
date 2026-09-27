@@ -3,6 +3,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AtSign, Check, ChevronDown, Download, ListChecks, Loader2, MessageSquare, MoreHorizontal, Plus, RotateCcw, ScrollText, Send, Sparkles, SquarePen, Undo2, X } from 'lucide-react';
 import type { AgentJob, ChatChange, ChatResult } from '../../../packages/agent/service';
+import { activeRun } from '../../../packages/agent/run-notice';
 import type { Item, ItemDetail, RunProviderId } from '../../../packages/protocol/schema';
 import { api, shortHash } from './api';
 import { KindIcon, providerName } from './components';
@@ -24,7 +25,11 @@ const readDecisions = (): Record<string, Decision> => { try { return JSON.parse(
  * transcript) and the other entries; otherwise it gets the item alone, plus any items mentioned with @. The agent edits through Kiln's CLI, so each
  * reply lists the items that changed while it ran, with Keep and Undo. Stays open while browsing; Esc closes it.
  */
-export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem, items, onRefresh }: { jobs: AgentJob[]; item: Item; /** The source behind the open item, when there is one. */ source: Item | null; provider: RunProviderId; onClose: () => void; onOpenItem: (id: string) => void; /** Library items, for @-mentions, item links and the entry count. */ items?: Item[]; /** Reloads the library after an Undo. */ onRefresh?: () => unknown }) {
+/**
+ * `initialMessage` prefills the composer without sending it, once per nonce. It is how the `kiln:ask-agent` event reaches the chat:
+ * `{ itemId, message }` opens this chat about that item with `message` typed in.
+ */
+export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem, items, onRefresh, initialMessage }: { jobs: AgentJob[]; item: Item; /** The source behind the open item, when there is one. */ source: Item | null; provider: RunProviderId; onClose: () => void; onOpenItem: (id: string) => void; /** Library items, for @-mentions, item links and the entry count. */ items?: Item[]; /** Reloads the library after an Undo. */ onRefresh?: () => unknown; initialMessage?: { text: string; nonce: number } }) {
   const video = source?.tags.includes('youtube') ? source : null;
   const conversation = useRef({ itemId: item.id, id: crypto.randomUUID() });
   const [, redraw] = useState(0);
@@ -39,7 +44,7 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem,
   const body = useRef<HTMLDivElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const mentionKeys = useRef<((event: ReactKeyboardEvent) => void) | null>(null);
   const turns = itemTurns(accepted && !jobs.some(job => job.id === accepted.id) ? [...jobs, accepted] : jobs, item.id).filter(j => j.conversationId === conversation.current.id);
-  const running = turns.find(turn => turn.status === 'running'), busy = sending?.itemId === item.id || Boolean(running);
+  const running = turns.find(activeRun), busy = sending?.itemId === item.id || Boolean(running);
   // A session stays on the CLI it started with; before the first turn the choice (or Settings) decides.
   const current: RunProviderId = turns.at(-1)?.provider ?? chosen ?? provider, who = providerName[current];
   const last = turns.at(-1);
@@ -49,6 +54,8 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem,
   const lastKey = last ? `${last.id}:${last.status}:${last.phase}:${last.steps.at(-1)?.text}` : '';
   useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight }); }, [lastKey, item.id]);
   useEffect(() => { setError(''); setText(''); setMentions([]); setMenu(null); }, [item.id]);
+  // The prefill is put in the composer once per nonce, after the item switch above has cleared the old text.
+  useEffect(() => { if (!initialMessage) return; setText(initialMessage.text); requestAnimationFrame(() => { input.current?.focus(); input.current?.setSelectionRange(0, 0); }); }, [initialMessage?.nonce]);
   useEffect(() => { if (!menu) return; const close = (event: MouseEvent) => { if (!(event.target as Element).closest('.chat-menu, .chat-menu-anchor')) setMenu(null); }; window.addEventListener('mousedown', close); return () => window.removeEventListener('mousedown', close); }, [menu]);
 
   const byId = useMemo(() => new Map((items ?? []).map(i => [i.id, i])), [items]);

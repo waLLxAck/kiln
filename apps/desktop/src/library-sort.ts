@@ -39,6 +39,12 @@ export function arrangeItems(items: Item[], sort: Sort, usage: Usage = {}, pinSo
   const sorted = sortItems(items, sort, usage);
   return pinSources ? [...sorted.filter(i => i.kind === 'source'), ...sorted.filter(i => i.kind !== 'source')] : sorted;
 }
+/** Search results best match first (`ranked` is the order search returned them in); inside a collection its sources still lead. */
+export function rankItems(items: Item[], ranked: string[], pinSources = false): Item[] {
+  const at = new Map(ranked.map((id, i) => [id, i])), rank = (item: Item) => at.get(item.id) ?? ranked.length;
+  const sorted = [...items].sort((a, b) => rank(a) - rank(b));
+  return pinSources ? [...sorted.filter(i => i.kind === 'source'), ...sorted.filter(i => i.kind !== 'source')] : sorted;
+}
 /**
  * The ids in their new custom order after moving one item a step, or null when it cannot move that way. With sources pinned,
  * a move never crosses between sources and the rest: the list would show it back in place.

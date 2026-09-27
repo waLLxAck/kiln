@@ -2,17 +2,21 @@ import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 import { WorkbenchError } from '../../packages/domain/errors';
+import type { RunFinished } from '../../packages/agent/run-notice';
 export class Backend {
   private worker: Worker;
   private sequence = 0;
   private agentProcesses = new Set<number>();
   private failure?: Error;
   private closing = false;
+  /** runNotifications: called once for every agent run that ends, with what the worker knows about it. */
+  onAgentFinished?: (event: RunFinished) => void;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void; method: string; since: number; warned: boolean }>();
   /** `cli` tells the agent service where Kiln's own CLI can be run from, so a chat agent can change the library through it. */
   constructor(root: string, local: string, private log: (event: string, fields?: Record<string, unknown>) => void, cli: { node: string; script: string }) {
     this.worker = new Worker(path.join(__dirname, 'backend-worker.cjs'), { workerData: { root, local, cli } });
     this.worker.on('message', reply => {
+      if (reply.agentFinished) { this.onAgentFinished?.(reply.agentFinished); return; }
       if (reply.telemetry) { if (reply.telemetry.event === 'agent.process') { const { pid, running } = reply.telemetry.fields; if (running) this.agentProcesses.add(pid); else this.agentProcesses.delete(pid); } this.log(reply.telemetry.event, reply.telemetry.fields); return; }
       const entry = this.pending.get(reply.id ?? reply.started);
       if (!entry) return;
