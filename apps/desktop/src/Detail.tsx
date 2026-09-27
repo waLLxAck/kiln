@@ -5,7 +5,8 @@ import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPa
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, History as HistoryIcon, Layers3, MessageSquare, MoreHorizontal, Pencil, Rocket, RotateCcw, ScanSearch, ShieldCheck, ShieldOff, Sparkles, Star, Trash2, TriangleAlert, ZoomIn } from 'lucide-react';
-import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
+import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
+import { statusLabel } from './library-filters';
 import { api, date, shortHash, variablesIn } from './api';
 import { isTextFile } from '../../../packages/domain/text';
 import { Badge, ContextMenu, Field, KindIcon, Lightbox, imageFile, imageSource, statusHelp, type MenuEntry } from './components';
@@ -112,7 +113,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   };
   const main = run[primary];
 
-  const statusEntries = (statuses: string[]): MenuEntry[] => statuses.filter(status => status !== item.status).map(status => ({ label: `Move to ${status}`, hint: statusHelp[status], onSelect: () => setMeta({ status }) }));
+  const statusEntries = (statuses: Item['status'][]): MenuEntry[] => statuses.filter(status => status !== item.status).map(status => ({ label: `Move to ${statusLabel[status]}`, hint: statusHelp[status], onSelect: () => setMeta({ status }) }));
   const views: MenuEntry[] = [
     ...(!isSource ? [{ label: 'Open tests', icon: <FlaskConical />, onSelect: () => setView('tests') }] : []),
     { label: 'Open history', icon: <HistoryIcon />, onSelect: () => setView('history') },

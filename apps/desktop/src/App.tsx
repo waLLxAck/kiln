@@ -1,7 +1,7 @@
 import { useViewMemory, useScrollMemory, useGroupBy, useSavedViews } from './view-memory';
 import { UndoToast } from './UndoToast';
 import { BulkRemovalDialog } from './BulkLibrary';
-import { inStage, matchesQuery, narrowest, parseTyped, sameToken, stages, tokenLabel, type QueryToken, type Stage } from './library-filters';
+import { inStage, matchesQuery, narrowest, parseTyped, sameToken, stages, statusLabel, tokenLabel, type QueryToken, type Stage } from './library-filters';
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { SkillLocationSettings } from './Skills';
 import { useCallback, useEffect, useMemo, useState, useRef, type KeyboardEvent, type MouseEvent } from 'react';
@@ -224,7 +224,7 @@ export default function App() {
   /** Test from the list or quick search: the item opens on its experiments grid, whose run bar starts a run. */
   const testItem = (item: Item) => { openItem(item.id); setTestRequest({ id: item.id, at: Date.now() }); };
   const archiveItem = (item: Item) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, status: 'archived' }); await refresh(); setMessage(''); setUndo({ item, previous: item.status }); });
-  const undoArchive = () => { const last = undo; if (!last) return; setUndo(null); void perform(async () => { await api('items.meta', { id: last.item.id, expect: last.item.revision, status: last.previous }); await refresh(); }, `${last.item.title} is back in ${last.previous}`); };
+  const undoArchive = () => { const last = undo; if (!last) return; setUndo(null); void perform(async () => { await api('items.meta', { id: last.item.id, expect: last.item.revision, status: last.previous }); await refresh(); }, `${last.item.title} is back in ${statusLabel[last.previous]}`); };
   /** Records approval of the current revision; the router then commits and pushes it to the Kiln repo. */
   const approveCurrent = async (target: ItemDetail) => {
     const evidence = target.trials.filter(t => t.revision === target.item.revision && t.status === 'completed');
@@ -346,7 +346,7 @@ export default function App() {
     const entries: MenuEntry[] = [{ heading: `${label} selected` }, { label: allFavourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: each(i => i.favourite === !allFavourite ? null : { favourite: !allFavourite }, allFavourite ? `${label} removed from favourites` : `${label} added to favourites`) }];
     if (!trashed) {
       entries.push('separator', { heading: 'Status' });
-      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived']) { const all = items.every(i => i.status === status); entries.push({ label: capital(status), checked: all, disabled: status === 'approved' || all, shortcut: statusKeys[status], hint: status === 'approved' ? 'Approve items one at a time; approval always names an exact revision.' : statusHelp[status], onSelect: each(i => i.status === status ? null : { status }, `${label} moved to ${status}`) }); }
+      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived'] as const) { const all = items.every(i => i.status === status); entries.push({ label: capital(statusLabel[status]), checked: all, disabled: status === 'approved' || all, shortcut: statusKeys[status], hint: status === 'approved' ? 'Approve items one at a time; approval always names an exact revision.' : statusHelp[status], onSelect: each(i => i.status === status ? null : { status }, `${label} moved to ${statusLabel[status]}`) }); }
       if (items.some(hasCopies)) entries.push('separator', { label: 'Remove local copies…', icon: <FolderX />, shortcut: 'L', hint: 'Preview and remove every installed copy of the picked skills and agents, in every configured folder. Library items stay.', onSelect: () => setBulkReview(items.map(i => i.id)) });
     }
     entries.push('separator', { label: 'Move to collection…', icon: <FolderInput />, shortcut: 'M', hint: 'File them in another collection or none. Approvals and installed copies stay.', onSelect: () => setDialog({ name: 'move-items', itemIds: items.map(i => i.id) }) }, 'separator');
@@ -370,7 +370,7 @@ export default function App() {
     else if (item.origin && snapshot.items.some(i => i.id === item.origin!.itemId && i.kind === 'source')) entries.push({ label: 'Open its source', icon: <ArrowRight />, shortcut: 'S', onSelect: () => revealItem(item.origin!.itemId) });
     if (!item.deletedAt) {
       entries.push('separator', { heading: 'Status' });
-      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived']) entries.push({ label: status[0].toUpperCase() + status.slice(1), checked: item.status === status, disabled: status === 'approved' || item.status === status, shortcut: statusKeys[status], hint: status === 'approved' ? 'Use Approve on the item; approval always names an exact revision.' : status === 'archived' ? `${statusHelp[status]} Swipe the item sideways to archive it too.` : statusHelp[status], onSelect: status === 'archived' ? () => archiveItem(item) : meta({ status }, `Moved to ${status}`) });
+      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived'] as const) entries.push({ label: capital(statusLabel[status]), checked: item.status === status, disabled: status === 'approved' || item.status === status, shortcut: statusKeys[status], hint: status === 'approved' ? 'Use Approve on the item; approval always names an exact revision.' : status === 'archived' ? `${statusHelp[status]} Swipe the item sideways to archive it too.` : statusHelp[status], onSelect: status === 'archived' ? () => archiveItem(item) : meta({ status }, `Moved to ${statusLabel[status]}`) });
       if (['skill', 'agent'].includes(item.kind) && configured.length) entries.push('separator', { heading: 'Installed for' }, ...installEntries(item));
       if (hasCopies(item)) entries.push('separator', { label: 'Remove local copies…', icon: <FolderX />, shortcut: 'L', hint: 'Preview and remove every installed copy in every configured folder, including other providers. The library item stays.', onSelect: () => setBulkReview([item.id]) });
     }
