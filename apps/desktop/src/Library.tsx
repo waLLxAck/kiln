@@ -7,6 +7,7 @@ import { date } from './api';
 import { skillState } from './Skills';
 import { defaultSort, site, sortChoices, sortLabel, type Sort, type SortKey } from './library-sort';
 import { emptyLibraryFilters, filterDimensions, type FilterDimension, type LibraryFilterKey, type LibraryFilters } from './library-filters';
+import { DraftMark } from './item-editing';
 
 /** One tab per kind of item, plus two cross-cutting views. Skills is a tab like any other; its rows carry install marks. */
 export type LibraryTab = 'recent' | 'favourites' | Item['kind'];
@@ -131,5 +132,5 @@ export function ItemRow({ item, tab, collectionShown, locations, installations, 
   const cell = (key: SortKey) => key === 'status' ? <StateCell key="state" item={item} locations={locations} installations={installations} published={published} made={made} />
     : <span key={key} className="lib-cell opt muted">{key === 'kind' ? <span className="item-kind-label">{item.kind}</span> : key === 'collection' ? item.collection : key === 'site' ? site(item) : key === 'createdAt' ? date(item.createdAt) : date(item.updatedAt)}</span>;
   const subtitle = [from ? `from ${from.label}` : '', item.description || (tab === 'recent' || tab === 'favourites' || collectionShown ? '' : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
-  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}</span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown || !item.collection ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
+  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}<DraftMark id={item.id} /></span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown || !item.collection ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
 }

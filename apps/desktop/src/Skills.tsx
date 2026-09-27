@@ -1,5 +1,5 @@
 import { skillLocation, skillLocationLabel, targetSkillsFolder, sharedSkillReaders, compatibilityChecked } from '../../../packages/providers/skill-locations';
-import { agentFolder } from '../../../packages/domain/agent-format';
+import { agentFolder } from '../../../packages/domain/agent-folder';
 import { useEffect, useState } from 'react';
 import { Check, Download, FileDiff, FolderOpen, Link2, Settings, TriangleAlert } from 'lucide-react';
 import type { Installation, Item, Provider, ProviderId, Snapshot, Target } from '../../../packages/protocol/schema';
