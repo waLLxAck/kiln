@@ -49,7 +49,7 @@ What ships today:
 | Git and GitHub | Create or open a Kiln repository, inspect changes, checkpoint, synchronize and resolve conflicts. GitHub access uses the official `gh` CLI. |
 | CLI | Script collections, items, experiments, approvals, installation and library operations through structured JSON results and the same domain code as the desktop. |
 | Desktop preferences | Choose theme and agent defaults, resize panels, configure quick search and startup behavior, inspect local performance logs, and, on Windows, prepare/restart into a newer installer. |
-| Features added in 0.22.0 | Updating installed copies, keeping outside edits, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications and a run queue, ranked search, chat history, keyboard navigation and undo, and installing into project folders. Always on. |
+| Features added in 0.22.0 | Updating installed copies, keeping outside edits, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications and a run queue, chat history, keyboard navigation and undo, and installing into project folders. Always on. |
 
 ## Installing
 
@@ -125,20 +125,20 @@ See [what changed in 0.22.0](releases/0.22.0.md).
 
 Quick search is a small window for using your library without opening Kiln. Open it with the global shortcut above, **Ctrl+K** in Kiln, or **Quick search** in the tray menu.
 
-One box searches two lists. **Items** matches titles, content and tags; title matches are highlighted and come first. **Actions** covers **Capture…**, **Install everything marked for this machine**, **Go to** Library, Machines, Config files, Activity, Experiments, Settings, Archive or Trash, **New collection**, **Toggle theme**, and **Ask the agent about** the last item you highlighted. With nothing typed, your most used items come first. Typing a command's words ("go sett") selects it.
+One box searches two lists. **Items** matches titles, descriptions, content and tags, best match first (the same ranking as the library's search), with title matches highlighted; it shows the first 30 and says so when there are more. A typo such as "reveiw" still finds "code-review", marked "No exact matches — showing close matches". **Actions** covers **Capture…**, **Install everything marked for this machine**, **Go to** Library, Machines, Config files, Activity, Experiments, Settings, Archive or Trash, **New collection**, **Check for updates**, **Toggle theme**, and **Ask the agent about** the last item you highlighted; the ones matching what you type are listed under the items, and typing `>` lists only the actions (`>sett` narrows them). With nothing typed, your most used items come first. Typing a command's words ("go sett") selects it.
 
 The right side previews the highlighted item. A prompt with `{{variables}}` shows a field for each: the preview fills in as you type, and what you copy is exactly that text. Blank fields stay as `{{name}}`, and the saved template is unchanged.
 
 | Key | Does |
 |---|---|
 | ↑ / ↓ | Move through items and actions |
-| Enter | Copy the item (prompts, skills, images and other pasteable kinds); open a link in the browser; open a source in Kiln. Runs a highlighted action. |
+| Enter | Copy the item (prompts, skills, images and other pasteable kinds), confirmed by a brief "Copied"; open a link in the browser; open a source in Kiln. Runs a highlighted action. Pressed straight after typing, it waits for the results and acts on the top one. |
 | Ctrl+Enter | Open the item in Kiln |
 | Shift+Enter | Test it: opens it in Kiln with a new experiment |
 | Tab | The item's actions: fill in variables, copy, open in Kiln, test, ask the agent, open the stored file or link. Esc goes back. |
 | Esc | Close quick search |
 
-The footer shows the keys for the highlighted row, and each one can be clicked. Opening quick search again starts with an empty box.
+The footer shows the keys for the highlighted row, and each one can be clicked. Quick search hides when you click elsewhere, and opening it again brings back your last search, selected, so typing replaces it.
 
 ## Set up a library
 
@@ -256,7 +256,7 @@ The library is a table with one line per item: its kind, title and a one-line de
 
 Click a row to open the item. It takes the whole page, with a bar above it: **← Library** (or the stage or collection you came from), its position such as "3 of 13" and arrows to step through the list (**Alt+↑** and **Alt+↓** work too), and **Refresh** to re-read the library and installed copies. **Esc** goes back to the list where you left it, with the row still highlighted. **↑** and **↓** move through the rows and **Enter** opens one. Hovering a row shows **Copy**, **Test** (opens the item with the run dialog) and **Install ▾** (one entry per skill folder, checked where a copy is).
 
-**The query bar** above the table finds things. Free text searches titles, content and tags. Filters are tokens: type a facet and a value (`kind:skill`) or pick from the suggestions, grouped by facet, each with how many items it would show. Facets are `kind:`, `status:` (draft, testing, approved, rejected, archived), `state:` (installed, not installed, changed outside Kiln, managed by Kiln, external copy, link or junction), `in:` (a skill folder: Shared Agents, Claude, Codex-specific, Copilot-specific, personal or in a project), `is:favourite`, `tag:`, `from:` (a source), `collection:`, `provider:` (native definitions or client-specific copies; shared `.agents/skills` copies use `in:`) and `scope:` (personal or project). Two tokens of one facet match either value; different facets must all match; `in:`, `scope:`, `provider:` and the copy states must hold for the same copy (**state: not installed** with an `in:` token means "not in that folder"). Remove a token with its × or Backspace. **Ctrl+F** focuses the bar. When nothing matches, the list names the narrowest token and **Remove it** brings back the most items.
+**The query bar** above the table finds things. Free text searches titles, descriptions, content and tags. The list stays on screen while you type (a spinner shows a search on its way) and follows renames and edits. Results come best match first (a title match counts more than one in the tags, description or body) and the Sort pill says **Relevance**; pick another order to override it for this search, and clearing the search goes back to the view's own order. A typo such as "reveiw" still finds "code-review", with "No exact matches — showing close matches" under the bar. Filters are tokens: type a facet and a value (`kind:skill`) or pick from the suggestions, grouped by facet, each with how many items it would show. Facets are `kind:`, `status:` (draft, testing, approved, rejected, archived), `state:` (installed, not installed, changed outside Kiln, managed by Kiln, external copy, link or junction), `in:` (a skill folder: Shared Agents, Claude, Codex-specific, Copilot-specific, personal or in a project), `is:favourite`, `tag:`, `from:` (a source), `collection:`, `provider:` (native definitions or client-specific copies; shared `.agents/skills` copies use `in:`) and `scope:` (personal or project). Two tokens of one facet match either value; different facets must all match; `in:`, `scope:`, `provider:` and the copy states must hold for the same copy (**state: not installed** with an `in:` token means "not in that folder"). Remove a token with its × or Backspace. **Ctrl+F** focuses the bar. When nothing matches, the list names the narrowest token and **Remove it** brings back the most items.
 
 Under the bar, **All** clears the query and **Favourites** shows starred items. **Save this view** names the current tokens and text as a pill of its own (kept on this machine; its × deletes it). **Group** puts the list under collapsible headings by collection, kind or status. Each view (the library, each stage, each collection, Archive and Trash) remembers its own query, order, highlighted row and open item.
 
@@ -366,10 +366,6 @@ The Trials tab groups experiments under the revision they tested, newest first, 
 ### Run notifications and runs list
 
 When an experiment, distillation, skill draft or chat reply finishes while Kiln is hidden or behind another window, you get a desktop notification ("Experiment passed · …", "Distillation finished · 5 entries from …", "Run failed · …"); click it to jump straight to the result. While Kiln is in front, a toast says what finished, with **Open result**, which opens the item on the tab holding the result (Trials for experiments, Overview for analyses, the chat for replies). Click the "working" pill in the top bar to see every active run, and those that finished in the last 30 minutes, with the model, elapsed time and current step, plus **Open** and **Cancel**. Two runs go at once; further runs wait their turn as **Queued** and start by themselves, instead of being refused. A queued run can be cancelled, and one that had not started when Kiln closed is marked interrupted and can be retried.
-
-### Steadier, ranked search
-
-The library search keeps the current list on screen while you type and updates as soon as an item is renamed or edited. Results come best match first (a match in the title counts more than one in the tags, description or body), and the sort pill shows **Relevance**; pick another order to override it for this search, and clearing the search goes back to the view's own order. Descriptions are searched too, and a typo such as "reveiw" still finds "code-review", marked "No exact matches — showing close matches". Quick search works the same way: press Enter as soon as you have typed and Kiln copies the top match, shows "Copied" for a moment and hides. It also hides when you click elsewhere, keeps your last search for next time, says when it is showing only the first 30 results, and runs commands: type `>` to see them all (New capture, Go to Library, Experiments, Config files, Activity or Settings, Check for updates), or type a word such as "capture" to see matching commands under the results.
 
 ### Docked chat with history
 
