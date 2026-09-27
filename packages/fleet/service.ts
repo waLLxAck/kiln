@@ -215,7 +215,7 @@ export class FleetService {
     } finally { fs.rmSync(index, { force: true }); }
   }
   private fetchNow(remote: string) {
-    try { this.git(['fetch', '--quiet', '--no-tags', remote]); this.lastFetch = Date.now(); this.fetchedAt = now(); this.fetchError = undefined; }
+    try { this.git(['fetch', '--quiet', '--no-tags', remote]); this.fetchedAt = now(); this.fetchError = undefined; }
     catch (error) { this.fetchError = String((error as { stderr?: string }).stderr || error).trim().split('\n').filter(Boolean).at(-1)?.slice(0, 300); }
   }
   /**
