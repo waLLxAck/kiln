@@ -67,7 +67,8 @@ export function ContextMenu({ x, y, entries, onClose }: { x: number; y: number; 
   useLayoutEffect(() => { const box = ref.current?.getBoundingClientRect(); if (!box) return; setPosition({ left: Math.min(x, window.innerWidth - box.width - 8), top: Math.min(y, window.innerHeight - box.height - 8) }); }, [x, y]);
   useEffect(() => {
     const away = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) onClose(); };
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { onClose(); return; } const hit = shortcutEntry(entries, event); if (hit) { event.preventDefault(); event.stopPropagation(); hit.onSelect?.(); onClose(); } };
+    // Esc closes only the menu: the menu is gone by the time the window's own Esc listener runs, so stop it here.
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); return; } const hit = shortcutEntry(entries, event); if (hit) { event.preventDefault(); event.stopPropagation(); hit.onSelect?.(); onClose(); } };
     window.addEventListener('mousedown', away); window.addEventListener('keydown', key, true); window.addEventListener('blur', onClose); window.addEventListener('resize', onClose);
     return () => { window.removeEventListener('mousedown', away); window.removeEventListener('keydown', key, true); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
   }, [onClose, entries]);
