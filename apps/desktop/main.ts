@@ -199,7 +199,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       const command = z.union([
         z.object({ name: z.enum(['open-item', 'test-item', 'ask-item']), id: idSchema }),
         z.object({ name: z.literal('navigate'), id: z.enum(commandSections) }),
-        z.object({ name: z.enum(['capture', 'sync-installs', 'new-collection', 'toggle-theme']) }),
+        z.object({ name: z.enum(['capture', 'sync-installs', 'new-collection', 'toggle-theme', 'check-updates']) }),
       ]).parse(args);
       // An item that no longer exists fails here, in the palette, rather than as a blank page in the main window.
       if (command.name !== 'navigate' && 'id' in command) await backend.call('rpc', 'items.read', { id: command.id });

@@ -20,6 +20,8 @@ import { MachinesView } from './Machines';
 import { arrangeItems, defaultSort, groupItems, ItemBar, locationName, locationsFor, moveInOrder, nextSort, type Location } from './Library';
 import { BulkBar, LibraryTable } from './LibraryTable';
 import { QueryBar } from './QueryBar';
+import { useLibrarySearch } from './library-search';
+import { rankItems } from './library-sort';
 import { CaptureComposer, type CaptureRequest, type CaptureSeed } from './CaptureComposer';
 import { Rail, tools, UNFILED } from './Rail';
 import { repoName, StatusBar } from './StatusBar';
@@ -63,7 +65,7 @@ export default function App() {
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   // "kind:" being typed is a filter on its way, not text to search for.
   const searchText = parseTyped(query).facet ? '' : query.trim();
-  const [searchIds, setSearchIds] = useState<string[] | null>(null);
+  const { searchIds, close: closeMatches, searching, searchSort, setSearchSort } = useLibrarySearch(searchText, snapshot, message => setError(message));
   const searchSet = useMemo(() => searchIds && new Set(searchIds), [searchIds]);
   const libraryView = ['library', 'archive', 'trash'].includes(section);
   // An open item replaces the list; coming back puts the list where it was.
@@ -169,12 +171,6 @@ export default function App() {
   useEffect(() => { if (machinesEnabled) void api('fleet.start').catch(() => {}); }, []);
   useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
   useEffect(() => {
-    if (!searchText) { setSearchIds(null); return; }
-    let active = true;
-    const timer = setTimeout(() => { void api<Item[]>('items.list', { query: searchText, archived: true }).then(items => { if (active) setSearchIds(items.map(i => i.id)); }).catch(e => { if (active) setError(String(e)); }); }, 180);
-    return () => { active = false; clearTimeout(timer); };
-  }, [searchText, snapshot?.items.length]);
-  useEffect(() => {
     const chosenTheme = theme ?? snapshot?.settings.theme;
     document.documentElement.dataset.theme = chosenTheme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : chosenTheme ?? 'light';
   }, [snapshot?.settings.theme, theme]);
@@ -222,6 +218,7 @@ export default function App() {
     'new-collection': () => { setSection('library'); newCollection(); },
     'toggle-theme': toggleTheme,
     'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
+    'check-updates': () => { navigate('settings'); void perform(() => checkUpdate(true), 'Checked for updates'); },
   });
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
   const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows under Capture.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
@@ -310,14 +307,18 @@ export default function App() {
   const lastTrial = new Map<string, Trial>(); for (const t of snapshot.trials) if (!t.deletedAt && (!lastTrial.has(t.itemId) || lastTrial.get(t.itemId)!.createdAt < t.createdAt)) lastTrial.set(t.itemId, t);
   // Each filter is a predicate, so the query bar can count what a token would show under all the others.
   const inSection = (i: Item) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i));
-  const bySearch = (i: Item) => !searchText || Boolean(searchSet?.has(i.id));
+  // Until the first results arrive the list stays as it was; after that the previous results stay until the next ones replace them.
+  const bySearch = (i: Item) => !searchText || !searchSet || searchSet.has(i.id);
   const byStage = (i: Item) => section !== 'library' || inStage(i, stage, installations);
   /** The view before search and tokens: its section, collection or stage. Suggestions count from here. */
   const base = snapshot.items.filter(i => inSection(i) && inCollection(i, collection) && byStage(i));
   const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens)).length;
   // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
-  const order = sort ?? defaultSort, pinSources = Boolean(collection);
-  const matching = arrangeItems(base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens)), order, snapshot.usage, pinSources);
+  // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
+  const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
+  const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
+  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens));
+  const matching = relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, snapshot.usage, pinSources);
   const groups = groupItems(matching, group);
   /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
   const shown = groups.flatMap(g => g.items);
@@ -436,12 +437,13 @@ export default function App() {
     <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
     {section === 'library' && <CaptureComposer request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />}
     <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} saved={savedViews}
-      sort={order} onSort={setSort} group={group} onGroup={setGroup} canReorder={bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
+      sort={order} onSort={searchText ? setSearchSort : setSort} relevance={searchText ? { active: relevance, onPick: () => setSearchSort('relevance') } : undefined} searching={searching} close={Boolean(searchText) && closeMatches}
+      group={group} onGroup={setGroup} canReorder={!relevance && bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
     <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id) })}
-      locations={configured} installations={installations} approvals={snapshot.approvals} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={order} onSort={key => setSort(current => nextSort(current ?? defaultSort, key))}
+      locations={configured} installations={installations} approvals={snapshot.approvals} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onOpen={openItem} onSelectAll={selectAll} onShortcut={listKeys}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
       scroll={listScroll} empty={emptyState}

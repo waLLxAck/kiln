@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ArrowDown, ArrowUp, Bookmark, Check, CornerDownLeft, Plus, Search, Star, X } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, Bookmark, Check, CornerDownLeft, Loader2, Plus, Search, Star, X } from 'lucide-react';
 import type { Installation, Item } from '../../../packages/protocol/schema';
-import { KindIcon } from './components';
+import { KindIcon, type MenuEntry } from './components';
 import { candidateTokens, facets, matchesQuery, parseTyped, sameToken, stateHint, tokenLabel, type Facet, type InstallState, type QueryToken } from './library-filters';
-import { GroupMenu, SortMenu } from './Library';
-import type { GroupKey, Sort } from './library-sort';
+import { GroupMenu, MenuPill } from './Library';
+import { sortChoices, sortLabel, type GroupKey, type Sort } from './library-sort';
 import type { SavedView } from './view-memory';
+import './query.css';
 
 type Suggestion = { token: QueryToken; count: number };
 type Props = {
@@ -15,17 +16,32 @@ type Props = {
   saved: { views: SavedView[]; save: (name: string, tokens: QueryToken[], query: string) => void; remove: (id: string) => void };
   sort: NonNullable<Sort>; onSort: (sort: Sort) => void; group: GroupKey; onGroup: (group: GroupKey) => void;
   canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean];
+  /** While free text is searched: whether the list is in relevance order, and how to go back to it after picking another sort. */
+  relevance?: { active: boolean; onPick: () => void };
+  /** A search is on its way; the list keeps showing the previous results meanwhile. */
+  searching?: boolean;
+  /** Nothing matched exactly, so the list holds close matches (typos). */
+  close?: boolean;
   /** Arrow down with the suggestions closed moves into the list. */
   onLeave: () => void;
 };
 const favourite: QueryToken = { facet: 'is', value: 'favourite' };
+/** The Sort pill. While searching it also offers Relevance (best match first), which is what a search starts with. */
+function SortPill({ sort, onSort, relevance }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void; relevance?: Props['relevance'] }) {
+  const byRelevance = Boolean(relevance?.active);
+  const entries: MenuEntry[] = [
+    ...(relevance ? [{ label: 'Relevance', hint: 'Best matches for the search first', checked: byRelevance, onSelect: relevance.onPick }, 'separator' as const] : []),
+    ...sortChoices.flatMap(c => [...(c.sort.key === 'order' ? ['separator' as const] : []), { label: c.label, hint: c.hint, checked: !byRelevance && c.sort.key === sort.key && c.sort.dir === sort.dir, onSelect: () => onSort(c.sort) }]),
+  ];
+  return <MenuPill icon={<ArrowDownUp size={13} />} name="Sort" value={byRelevance ? 'Relevance' : sortLabel(sort)} entries={entries} title={relevance ? 'Order of the search results' : 'Order of the list'} />;
+}
 const sameSet = (a: QueryToken[], b: QueryToken[]) => a.length === b.length && a.every(t => b.some(u => sameToken(t, u)));
 
 /**
  * One field for finding things: filter tokens as chips (picked from suggestions grouped by facet, each with the count it would
- * show) and free text that searches titles, content and tags. Saved views, Group and Sort sit on the row under it.
+ * show) and free text that searches titles, descriptions, content and tags, best match first. Saved views, Group and Sort sit on the row under it.
  */
-export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations, sources, saved, sort, onSort, group, onGroup, canReorder, reorder, reorderDisabled, onLeave }: Props) {
+export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations, sources, saved, sort, onSort, group, onGroup, canReorder, reorder, reorderDisabled, relevance, searching, close, onLeave }: Props) {
   const [open, setOpen] = useState(false), [active, setActive] = useState(-1), [naming, setNaming] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null), box = useRef<HTMLDivElement>(null);
   useEffect(() => { const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); }; window.addEventListener('mousedown', away); return () => window.removeEventListener('mousedown', away); }, []);
@@ -67,7 +83,7 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
   return <div className="query">
     <div className="query-box" ref={box}>
       <div className={`query-field ${open ? 'open' : ''}`} onMouseDown={event => { if (event.target === event.currentTarget) { event.preventDefault(); input.current?.focus(); setOpen(true); } }}>
-        <Search size={15} className="query-icon" aria-hidden="true" />
+        {searching ? <Loader2 size={15} className="query-icon spin" aria-label="Searching" /> : <Search size={15} className="query-icon" aria-hidden="true" />}
         {tokens.map(token => <span key={token.facet + token.value} className={`q-token f-${token.facet}`} title={token.facet === 'state' ? stateHint[token.value as InstallState] : undefined}>
           <span className="q-facet">{token.facet}:</span><span className="q-value">{tokenLabel(token, title)}</span>
           <button type="button" onClick={() => remove(token)} aria-label={`Remove ${token.facet}: ${tokenLabel(token, title)}`}><X size={12} /></button>
@@ -86,10 +102,11 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
             <span className="query-option-icon">{icon(row.token)}</span><span className="query-option-text"><span className="q-facet">{row.token.facet}:</span> {tokenLabel(row.token, title)}</span><span className="query-count">{row.count}</span>{index === active && <CornerDownLeft size={12} className="faint" />}
           </button>; })}
         </div>)}
-        {!flat.length && <div className="query-empty">{typed.facet ? `No ${typed.facet}: value matches here.` : query.trim() ? 'No filter matches. The list shows items whose title, content or tags match the text.' : 'Nothing to filter here yet.'}</div>}
+        {!flat.length && <div className="query-empty">{typed.facet ? `No ${typed.facet}: value matches here.` : query.trim() ? 'No filter matches. The list shows items whose title, description, content or tags match the text, best match first.' : 'Nothing to filter here yet.'}</div>}
         <div className="query-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> choose</span><span><kbd>Enter</kbd> add filter</span><span><kbd>Backspace</kbd> remove last</span><span><kbd>Esc</kbd> close</span></div>
       </div>}
     </div>
+    {close && <p className="query-note" role="status">No exact matches — showing close matches</p>}
     <div className="query-views">
       <div className="query-pills" role="group" aria-label="Saved views">
         <button type="button" className={`q-view ${current === 'all' ? 'on' : ''}`} aria-pressed={current === 'all'} onClick={() => { onTokens([]); onQuery(''); }}>All</button>
@@ -104,7 +121,7 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
       </div>
       <span className="query-tools">
         <GroupMenu group={group} onGroup={onGroup} />
-        <SortMenu sort={sort} onSort={onSort} />
+        <SortPill sort={sort} onSort={onSort} relevance={relevance} />
         {canReorder && <span className="inline"><button type="button" className="icon-button" aria-label="Move selected item up" disabled={reorderDisabled[0]} onClick={() => reorder(-1)}><ArrowUp size={13} /></button><button type="button" className="icon-button" aria-label="Move selected item down" disabled={reorderDisabled[1]} onClick={() => reorder(1)}><ArrowDown size={13} /></button></span>}
       </span>
     </div>
