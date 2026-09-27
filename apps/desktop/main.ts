@@ -18,6 +18,7 @@ import { defaultLibrary, privateRoot, selectLibrary } from '../../packages/stora
 import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '../../packages/updates/service';
 import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
+import { experimentOn, type ExperimentId } from '../../packages/protocol/experiments';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -28,6 +29,8 @@ let main: BrowserWindow;
 let palette: BrowserWindow | undefined;
 let tray: Tray;
 let backend: Backend;
+/** Whether an experimental feature (Settings → Experimental features) is on; main-process behaviour that a flag guards checks this each time. */
+async function experiment(id: ExperimentId) { try { return experimentOn(await backend.call('settings'), id); } catch { return false; } }
 let local = '';
 let canonical = '';
 const diagnostics = createDiagnostics(path.join(app.getPath('userData'), 'logs'));
@@ -296,6 +299,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       else shell.showItemInFolder(file);
       return true;
     }
+    case 'desktop.experiment': return backend.call('setExperiment', args);
     case 'desktop.settings': {
       const value = z.object({ shortcut: z.string().min(1), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex') }).parse(args);
       await registerShortcut(value.shortcut); app.setLoginItemSettings({ openAtLogin: value.launchAtLogin }); return backend.call('saveSettings', { ...(await backend.call('settings')), ...value });

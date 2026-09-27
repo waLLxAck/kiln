@@ -10,6 +10,7 @@ import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, 
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
+import { environmentExperiments, experimentIds, type ExperimentId } from '../protocol/experiments';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
@@ -31,6 +32,8 @@ function workingFingerprint(dir: string, revision: string) {
 }
 /** Summary a revision carries until a generated description replaces it. */
 export const PENDING_SUMMARY = 'Edited';
+/** Unknown flag names are kept (a flag removed from the list must not fail an older settings file); only true turns one on. */
+const experimentsSchema = z.record(z.string(), z.boolean()).catch({}).default({});
 export class Workbench {
   readonly canonical: string;
   readonly local: string;
@@ -568,7 +571,8 @@ export class Workbench {
   }
   settings(): Settings {
     const file = path.join(this.local, 'settings.json');
-    return z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(fs.existsSync(file) ? readJson(file) : {});
+    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), experiments: experimentsSchema }).parse(fs.existsSync(file) ? readJson(file) : {});
+    return { ...stored, experiments: { ...stored.experiments, ...environmentExperiments() } };
   }
   /** Every collection in sidebar order, subfolders after their parent. Custom names come from workbench.json; the rest from the items filed in them. */
   collections(items = this.listItems()) {
@@ -722,8 +726,16 @@ export class Workbench {
     });
   }
   saveSettings(input: unknown) {
-    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(input);
-    writeJson(path.join(this.local, 'settings.json'), value); return value;
+    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), experiments: experimentsSchema }).parse(input);
+    // Flags turned on only by KILN_EXPERIMENTS are not written back; the file keeps what Settings chose.
+    const file = path.join(this.local, 'settings.json'), stored = fs.existsSync(file) ? readJson(file) as { experiments?: unknown } : {};
+    writeJson(file, { ...value, experiments: experimentsSchema.parse(stored.experiments) }); return this.settings();
+  }
+  /** Turns one experimental feature on or off on this machine; see experiments.ts. */
+  setExperiment(input: unknown) {
+    const { id, enabled } = z.object({ id: z.enum(experimentIds as [ExperimentId, ...ExperimentId[]]), enabled: z.boolean() }).parse(input);
+    const file = path.join(this.local, 'settings.json'), stored = fs.existsSync(file) ? readJson(file) as Record<string, unknown> : {};
+    writeJson(file, { ...stored, experiments: { ...experimentsSchema.parse(stored.experiments), [id]: enabled } }); return this.settings();
   }
   invalidateGit() { this.gitCache = undefined; }
   /** A library can publish approvals only when it has the standard layout, is a Git repository, and has a GitHub remote. */

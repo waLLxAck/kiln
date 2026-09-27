@@ -35,7 +35,7 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'trials.delete') data = agent.deleteTrial(request.args[1]);
       else if (request.method === 'rpc') data = await router.call(...request.args as [string, unknown]);
       else {
-        const allowed = ['settings', 'saveSettings', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
+        const allowed = ['settings', 'saveSettings', 'setExperiment', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
         if (!allowed.includes(request.method)) throw new Error('Unsupported worker operation');
         data = await (wb as any)[request.method](...request.args);
       }
