@@ -20,6 +20,7 @@ import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
 import { experimentIds, experimentOn, type ExperimentId } from '../../packages/protocol/experiments';
 import { notifyRunFinished, openRunScript } from './run-notifications';
+import { paletteCommandIds } from './src/palette-command-ids';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -195,8 +196,8 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     case 'desktop.palette': openPalette(); return true;
     case 'desktop.hide': sender.hide(); return true;
     case 'desktop.workbench': {
-      // `command` is a quick search command (betterSearch; the ids in src/palette-commands.ts) for the main window to run.
-      const { id, command } = z.object({ id: idSchema.optional(), command: z.enum(['capture', 'library', 'experiments', 'home', 'activity', 'settings', 'updates']).optional() }).parse(args);
+      // `command` is a quick search command (betterSearch) for the main window to run.
+      const { id, command } = z.object({ id: idSchema.optional(), command: z.enum(paletteCommandIds).optional() }).parse(args);
       if (command) {
         invariant(await experiment('betterSearch'), 'CAPABILITY_UNSUPPORTED', 'Quick search commands are an experimental feature; turn on "Steadier, ranked search" in Settings.');
         await main.webContents.executeJavaScript(`location.hash = ${JSON.stringify('command=' + command + '&open=' + Date.now())}`);

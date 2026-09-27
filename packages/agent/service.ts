@@ -235,7 +235,7 @@ export class AgentService {
   exportSession(id: string) {
     idSchema.parse(id);
     const job = this.jobs.get(id);
-    if (!job || job.status === 'running') throw new Error('Wait for the conversation to finish before exporting it.');
+    if (!job || activeRun(job)) throw new Error('Wait for the conversation to finish before exporting it.');
     const file = path.join(this.folder, id, SESSION_FILE);
     if (!fs.existsSync(file)) throw new Error('No private transcript is available for this turn.');
     return fs.readFileSync(file, 'utf8');

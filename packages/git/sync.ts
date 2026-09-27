@@ -88,7 +88,13 @@ export type Overlap = { items: { id: string; title: string }[]; paths: string[] 
 const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`).join(',')}}` : JSON.stringify(value) ?? 'null';
 /** An item record without the bookkeeping Kiln rewrites on its own: when it last changed, and an empty list of conflict heads. */
 const essence = (value: Record<string, unknown>) => { const { updatedAt: _updated, conflictHeads, ...rest } = value; return canonicalJson({ ...rest, conflictHeads: conflictHeads ?? [] }); };
-const itemFile = /^workbench\/items\/([a-f0-9-]{36})\/item\.json$/;
+/** Where item folders sit in the repository, as Git names paths ("workbench/items/"), and which item a changed path belongs to. */
+export function itemPaths(wb: Workbench) {
+  const prefix = `${path.relative(wb.root, wb.canonical).split(path.sep).join('/')}/items/`;
+  const split = (file: string) => { if (!file.startsWith(prefix)) return null; const [id, ...rest] = file.slice(prefix.length).split('/'); return id ? { id, rest: rest.join('/') } : null; };
+  return { prefix, itemOf: (file: string) => split(file)?.id ?? null, split };
+}
+const uuid = /^[a-f0-9-]{36}$/;
 /** Paths a merge of `ref` would change here: changed on GitHub's side since the common ancestor, and different from this commit. */
 function incomingPaths(root: string, ref: string) {
   // --no-renames lists both sides of a rename, so a local change at either name counts.
@@ -102,8 +108,9 @@ function incomingPaths(root: string, ref: string) {
  * bytes; they say the same thing, and otherwise Git would refuse to update them.
  */
 export function settleBookkeeping(wb: Workbench, ref = '@{upstream}') {
-  const incoming = new Set(incomingPaths(wb.root, ref));
-  for (const file of localPaths(wb.root).filter(f => itemFile.test(f) && incoming.has(f))) {
+  const incoming = new Set(incomingPaths(wb.root, ref)), { split } = itemPaths(wb);
+  const itemFile = (file: string) => { const part = split(file); return Boolean(part && uuid.test(part.id) && part.rest === 'item.json'); };
+  for (const file of localPaths(wb.root).filter(f => itemFile(f) && incoming.has(f))) {
     let head: string; try { head = git(wb.root, ['show', `HEAD:${file}`]); } catch { continue; }
     const full = path.join(wb.root, file);
     try { if (essence(JSON.parse(fs.readFileSync(full, 'utf8'))) === essence(JSON.parse(head))) atomicWrite(full, head); } catch { /* Unreadable or deleted: a real change, left alone. */ }
@@ -114,14 +121,13 @@ export function settleBookkeeping(wb: Workbench, ref = '@{upstream}') {
  * item that is a draft here (its content, files or revision differ from the commit), because an item's files only make sense together.
  */
 export function incomingOverlap(wb: Workbench, ref = '@{upstream}'): Overlap {
-  const relative = path.relative(wb.root, wb.canonical).split(path.sep).join('/');
-  const itemOf = (file: string) => file.startsWith(`${relative}/items/`) ? file.split('/')[2] || null : null;
+  const { prefix, itemOf, split } = itemPaths(wb);
   const incomingList = incomingPaths(wb.root, ref);
   const incoming = new Set(incomingList.map(p => p.toLowerCase())), incomingItems = new Set(incomingList.map(itemOf).filter(Boolean));
   const local = localPaths(wb.root), drafts = new Set<string>();
   for (const file of local) {
-    const id = itemOf(file); if (!id) continue;
-    const rest = file.split('/').slice(3).join('/');
+    const part = split(file); if (!part) continue;
+    const { id, rest } = part;
     if (rest === 'content.md' || rest.startsWith('files/')) drafts.add(id);
     else if (rest === 'item.json') {
       try { const head = JSON.parse(git(wb.root, ['show', `HEAD:${file}`])) as { revision?: string }; if ((JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { revision?: string }).revision !== head.revision) drafts.add(id); }
@@ -135,7 +141,7 @@ export function incomingOverlap(wb: Workbench, ref = '@{upstream}'): Overlap {
     if (!id) { paths.add(file); continue; }
     if (items.has(id)) continue;
     let title = '';
-    try { title = wb.getItem(id).title; } catch { try { title = String((JSON.parse(git(wb.root, ['show', `${ref}:${relative}/items/${id}/item.json`])) as { title?: unknown }).title ?? ''); } catch { /* Neither side can name it. */ } }
+    try { title = wb.getItem(id).title; } catch { try { title = String((JSON.parse(git(wb.root, ['show', `${ref}:${prefix}${id}/item.json`])) as { title?: unknown }).title ?? ''); } catch { /* Neither side can name it. */ } }
     items.set(id, title || id);
   }
   return { items: [...items].map(([id, title]) => ({ id, title })), paths: [...paths] };

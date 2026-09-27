@@ -53,9 +53,10 @@ export function ProjectInstallDialog({ item, onClose, onDone }: { item: Item; on
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
-  const where = skill ? `${locations.find(l => l.id === location)!.label}` : 'agent definitions';
   const install = async () => {
     if (!preview) return;
+    // Named before the wait, so the message names the location that was installed into.
+    const where = skill ? locations.find(l => l.id === location)!.label : 'agent definitions';
     setBusy(true); setError('');
     try {
       const result = await api<{ method: string; name: string; enrolled: boolean }>('projects.install', { itemId: item.id, root, location: skill ? location : undefined, replace, confirm: true, expect: { state: preview.state, current: preview.current } });
@@ -72,7 +73,7 @@ export function ProjectInstallDialog({ item, onClose, onDone }: { item: Item; on
     </div>)}</div>}
     <div className="wrap-actions"><button type="button" className="button" disabled={busy} onClick={() => void choose()}><FolderOpen size={14} />Choose folder…</button></div>
     <InlineError error={listError} />
-    {skill ? <><h3 className="project-install-heading">Where in the project</h3><div className="project-choices" role="radiogroup" aria-label="Location">{locations.map(l => <div className={`project-choice ${l.id === location ? 'selected' : ''}`} key={l.id}><label><input type="radio" name="location" value={l.id} checked={l.id === location} onChange={() => setLocation(l.id)} /><span><b>{l.label} <code>{l.folder}</code></b><small>{l.readers}</small></span></label></div>)}</div></>
+    {skill ? <><h3 className="project-install-heading">Where in the project</h3><div className="project-choices" role="radiogroup" aria-label="Location">{locations.map(l => <div className={`project-choice ${l.id === location ? 'selected' : ''}`} key={l.id}><label><input type="radio" name="location" value={l.id} checked={l.id === location} disabled={busy} onChange={() => setLocation(l.id)} /><span><b>{l.label} <code>{l.folder}</code></b><small>{l.readers}</small></span></label></div>)}</div></>
       : <p className="small muted">Agent definitions keep their client’s format, so this goes into <code>{agentFolder(item.agent?.provider ?? 'claude', 'project')}</code>.</p>}
     {preview && <div className="project-preview" aria-label="Preview">
       <div className="plan-summary"><Badge status={stateBadge[preview.state]} /><code className="path-text">{preview.destination}</code></div>

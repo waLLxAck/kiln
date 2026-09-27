@@ -97,6 +97,8 @@ test('flag on: a chat turn queues too, and a queued turn blocks another message 
     const turn = service.chat({ itemId: items[2].id, message: 'What does this do?' });
     assert.equal(turn.status, 'queued');
     assert.throws(() => service.chat({ itemId: items[2].id, message: 'And again?' }), /Wait for the current reply/);
+    // A queued turn has not finished either, so its transcript cannot be exported yet.
+    assert.throws(() => service.exportSession(turn.id), /Wait for the conversation to finish/);
     await until(() => calls.length === 2);
     calls[0].finish(verdict);
     await until(() => calls.length === 3);

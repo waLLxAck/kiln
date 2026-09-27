@@ -14,7 +14,12 @@ test('every experiment has an id, a title and a description, and ids are unique'
   assert.equal(new Set(experimentIds).size, experiments.length);
   for (const e of experiments) { assert.match(e.id, /^[a-z][A-Za-z]+$/); assert.ok(e.title.length > 3); assert.ok(e.description.length > 20); }
 });
-test('experiments are off by default and switch on and off one at a time', () => {
+/** Runs `check` without a KILN_EXPERIMENTS inherited from the shell, which would turn flags on for this process. */
+function withoutEnvironment(check: () => void) {
+  const previous = process.env.KILN_EXPERIMENTS; delete process.env.KILN_EXPERIMENTS;
+  try { check(); } finally { if (previous === undefined) delete process.env.KILN_EXPERIMENTS; else process.env.KILN_EXPERIMENTS = previous; }
+}
+test('experiments are off by default and switch on and off one at a time', () => withoutEnvironment(() => {
   const { root, wb } = workbench();
   try {
     assert.deepEqual(wb.settings().experiments, {});
@@ -25,7 +30,7 @@ test('experiments are off by default and switch on and off one at a time', () =>
     assert.equal(experimentOn(wb.settings(), 'installUpdates'), false);
     assert.throws(() => wb.setExperiment({ id: 'notAFlag', enabled: true }));
   } finally { wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
-});
+}));
 test('saving preferences keeps the experiments chosen in Settings', () => {
   const { root, wb } = workbench();
   try {
@@ -35,7 +40,7 @@ test('saving preferences keeps the experiments chosen in Settings', () => {
     assert.equal(experimentOn(wb.settings(), 'autoSync'), true);
   } finally { wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('a settings file naming a removed or broken flag still opens', () => {
+test('a settings file naming a removed or broken flag still opens', () => withoutEnvironment(() => {
   const { root, wb } = workbench();
   try {
     fs.mkdirSync(wb.local, { recursive: true });
@@ -44,9 +49,9 @@ test('a settings file naming a removed or broken flag still opens', () => {
     fs.writeFileSync(path.join(wb.local, 'settings.json'), JSON.stringify({ experiments: 'yes please' }));
     assert.deepEqual(wb.settings().experiments, {});
   } finally { wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
-});
+}));
 test('KILN_EXPERIMENTS turns flags on for the process without writing them to settings', () => {
-  assert.deepEqual(environmentExperiments(undefined), {});
+  assert.deepEqual(environmentExperiments(''), {});
   assert.deepEqual(environmentExperiments('codeEditor, nope ,autoSync'), { codeEditor: true, autoSync: true });
   assert.equal(Object.keys(environmentExperiments('all')).length, experiments.length);
   const { root, wb } = workbench();

@@ -1,8 +1,8 @@
 /** Commands quick search offers (betterSearch): the palette lists them, the main window runs them. */
 import { useEffect, useRef } from 'react';
+import { paletteCommandIds, type PaletteCommandId } from './palette-command-ids';
 
-export const paletteCommandIds = ['capture', 'library', 'experiments', 'home', 'activity', 'settings', 'updates'] as const;
-export type PaletteCommandId = typeof paletteCommandIds[number];
+export { paletteCommandIds, type PaletteCommandId };
 export const paletteCommands: { id: PaletteCommandId; title: string; hint: string }[] = [
   { id: 'capture', title: 'New capture', hint: 'Save a prompt, link or idea' },
   { id: 'library', title: 'Go to Library', hint: 'Everything you keep' },

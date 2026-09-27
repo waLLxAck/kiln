@@ -11,6 +11,9 @@ export function editDistance(a: string, b: string, limit = Infinity): number {
       current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
       if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) current[j] = Math.min(current[j], before[j - 2] + 1);
     }
+    // Every cell is over the limit, and no later row can come back under it (a transposition reaches two rows back, and the
+    // row before this one can be at most one lower), so stop here.
+    if (current.every(value => value > limit)) return limit + 1;
     before = previous; previous = current;
   }
   return previous[b.length];

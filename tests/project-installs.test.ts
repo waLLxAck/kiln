@@ -128,6 +128,25 @@ test('the library repository root is not a project to install into', () => {
   } finally { f.close(); }
 });
 
+test('the library is recognised through a link on its path (such as a linked home folder), either way round', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-project-installs-link-')), home = process.env.HOME;
+  fs.mkdirSync(path.join(base, 'real', 'home'), { recursive: true }); fs.symlinkSync(path.join(base, 'real'), path.join(base, 'link'));
+  // A link above the home folder is one noLinks allows, like /home -> /var/home on Fedora Atomic.
+  process.env.HOME = path.join(base, 'link', 'home');
+  try {
+    for (const [opened, chosen] of [['link', 'real'], ['real', 'link']]) {
+      const wb = new Workbench(path.join(base, opened, 'home', `library-${opened}`), path.join(base, `private-${opened}`));
+      try {
+        wb.setExperiment({ id: 'projectInstalls', enabled: true });
+        const router = new Router(wb, { composer: null }), item = wb.create({ kind: 'skill', title: 'Careful review', content: skill('One.') });
+        const library = path.join(base, chosen, 'home', `library-${opened}`);
+        assert.throws(() => router.call('projects.preview', { itemId: item.id, root: library, location: 'agents' }), hasCode('INVALID_TARGET'), `library opened via ${opened}, chosen via ${chosen}`);
+        assert.equal(fs.existsSync(path.join(library, '.agents')), false);
+      } finally { wb.close(); }
+    }
+  } finally { if (home === undefined) delete process.env.HOME; else process.env.HOME = home; fs.rmSync(base, { recursive: true, force: true }); }
+});
+
 test('project copies take part in Update installs, and agent definitions go to the client folder in the project', () => {
   const f = fixture();
   try {

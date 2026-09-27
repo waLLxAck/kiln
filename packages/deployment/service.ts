@@ -604,6 +604,8 @@ export class DeploymentService {
    * Keep these changes: saves an installed copy (edited outside Kiln, or an external folder that differs) as a new draft of the
    * same item. The update names the revision the user was looking at, so an edit made meanwhile raises the usual conflict.
    * `exact` says whether the folder's bytes equal the new revision, which is what lets approving adopt it without rewriting.
+   * Not under the deployment lock: `wb.update` takes the same (non-reentrant) library lock itself, and approveKept re-reads the
+   * folder before adopting it, so a change after keeping is refused there.
    */
   keepCopy(input: unknown) {
     const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
@@ -620,7 +622,8 @@ export class DeploymentService {
     const summary = `Kept changes from the ${label} copy`;
     const updated = this.wb.update({ id: item.id, expect: data.expect, summary, value: { ...this.wb.authoring(item.id), content: copy.content, files: copy.files } });
     invariant(updated.revision !== data.expect, 'NOTHING_TO_KEEP', 'The installed copy already matches this revision; there is nothing to keep.');
-    let exact = false; try { exact = stateHash(readDestination(destination)) === this.renderedHash(this.wb.getRevision(item.id)); } catch { /* Ignored entries too large to read make the folder inexact anyway. */ }
+    // Exact only when nothing was left out and the bytes read are the revision just saved (not whatever is current by now).
+    const exact = !copy.ignored.length && copy.hash === this.renderedHash(this.wb.getRevision(item.id, updated.revision));
     return { itemId: item.id, revision: updated.revision, destination, label, summary, exact, ignored: copy.ignored };
   }
   /**

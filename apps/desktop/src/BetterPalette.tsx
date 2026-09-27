@@ -35,7 +35,8 @@ export function BetterPalette() {
   }, []);
   const commandMode = query.startsWith('>');
   useEffect(() => {
-    if (commandMode) { setLoading(false); setSelected(0); return; }
+    // An Enter left pending from a search must not run whichever command the new '>' query lists first.
+    if (commandMode) { setPendingEnter(null); setLoading(false); setSelected(0); return; }
     let active = true; setLoading(true); setError('');
     const timer = setTimeout(() => void api<SearchResults>('items.search', { query, limit: LIMIT }).then(result => { if (active) { setResults(result); setSelected(0); setLoading(false); } }).catch(e => { if (active) { setError(String(e)); setPendingEnter(null); setLoading(false); } }), 100);
     return () => { active = false; clearTimeout(timer); };

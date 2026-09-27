@@ -175,6 +175,22 @@ test('a differing external copy can be kept; approval refuses when the folder ch
   } finally { f.close(); }
 });
 
+test('a kept copy is exact only when nothing was left out, even an ignored folder holding no files', () => {
+  const f = fixture(['keepOutsideEdits']);
+  try {
+    const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('Version one.') });
+    f.deployment.installSkill({ itemId: item.id, targetId: f.codex.id, confirm: true });
+    fs.writeFileSync(path.join(f.agents, 'SKILL.md'), skill('Edited in the folder.'));
+    fs.mkdirSync(path.join(f.agents, 'node_modules'));
+    const kept = f.deployment.keepCopy({ itemId: item.id, targetId: f.codex.id, expect: f.wb.getItem(item.id).revision });
+    assert.deepEqual(kept.ignored, ['node_modules']); assert.equal(kept.exact, false, 'an ignored entry was not kept, so the folder is not the revision');
+    assert.equal(f.wb.getRevision(item.id, kept.revision).content, skill('Edited in the folder.'));
+    fs.rmdirSync(path.join(f.agents, 'node_modules')); fs.writeFileSync(path.join(f.agents, 'SKILL.md'), skill('Edited again.'));
+    const again = f.deployment.keepCopy({ itemId: item.id, targetId: f.codex.id, expect: kept.revision });
+    assert.deepEqual(again.ignored, []); assert.equal(again.exact, true);
+  } finally { f.close(); }
+});
+
 test('keeping refuses links inside the copy, a renamed skill and a copy that already matches', () => {
   const f = fixture(['keepOutsideEdits']);
   try {

@@ -9,7 +9,7 @@ import { revisionHash } from '../domain/content';
 import { atomicWrite, noLinks, safeRelative, withLock, writeJson } from '../storage/files';
 import { writeWorkingFiles } from '../storage/bundles';
 import { experimentOn } from '../protocol/experiments';
-import { assertMergeable, localPaths } from './sync';
+import { assertMergeable, itemPaths, localPaths } from './sync';
 
 function git(root: string, args: string[]) {
   return execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0', '-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 5_000_000, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -71,14 +71,23 @@ export function resolveItemConflict(wb: Workbench, input: unknown) {
     return conflicts(wb);
   });
 }
+/** Items both sides changed since they parted: the only ones the merge in progress can have conflicted on. */
+function mergedOnBothSides(wb: Workbench) {
+  const { prefix, itemOf } = itemPaths(wb), base = git(wb.root, ['merge-base', 'HEAD', 'MERGE_HEAD']).trim();
+  const changed = (ref: string) => new Set(git(wb.root, ['diff', '--name-only', '-z', '--no-renames', base, ref, '--', prefix]).split('\0').map(itemOf).filter((id): id is string => Boolean(id)));
+  const ours = changed('HEAD');
+  return new Set([...changed('MERGE_HEAD')].filter(id => ours.has(id)));
+}
 export function finishMerge(wb: Workbench) {
   return withLock(wb.canonical, () => {
     invariant(!unresolved(wb.root).length, 'GIT_CONFLICT', 'Resolve all conflict paths before finishing the merge.');
     git(wb.root, ['rev-parse', '--verify', 'MERGE_HEAD']);
     if (!experimentOn(wb.settings(), 'autoSync')) git(wb.root, ['add', '--', 'workbench/activity']);
     else {
-      // Drafts may be present during the merge: only its own conflict records join the commit, never other local activity.
-      const own = localPaths(wb.root).filter(file => file.startsWith('workbench/activity/') && (() => { try { return (JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { kind?: string }).kind === 'conflict_resolved'; } catch { return false; } })());
+      // Drafts may be present during the merge: only its own conflict records join the commit, never other local activity, nor a
+      // conflict record left behind by an earlier, abandoned merge about some other item.
+      const merged = mergedOnBothSides(wb);
+      const own = localPaths(wb.root).filter(file => file.startsWith('workbench/activity/') && (() => { try { const record = JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { kind?: string; itemId?: string | null }; return record.kind === 'conflict_resolved' && Boolean(record.itemId && merged.has(record.itemId)); } catch { return false; } })());
       if (own.length) git(wb.root, ['add', '--', ...own]);
     }
     return git(wb.root, ['commit', '-m', 'Merge library changes; preserve revision history']).trim();

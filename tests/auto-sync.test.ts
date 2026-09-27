@@ -284,6 +284,22 @@ test('resolving a conflict with an approved side keeps its trusted approval', as
   } finally { w.close(); }
 });
 
+test('finishing a merge commits only the conflict records about the items it conflicted on', async () => {
+  const w = world();
+  try {
+    const { id } = await divergedApprovals(w);
+    // A record left behind by an earlier, abandoned merge, about an item this merge never touched.
+    const other = w.a.wb.create({ title: 'Untouched draft', kind: 'prompt', content: 'Working notes' });
+    w.a.wb.record('conflict_resolved', 'Selected ours after comparing diverging revisions', other.id);
+    resolveItemConflict(w.a.wb, { id, choice: 'theirs' });
+    finishMerge(w.a.wb);
+    const committed = w.a.git('diff', '--name-only', 'HEAD^1', 'HEAD', '--', 'workbench/activity').split('\n').filter(Boolean).map(file => JSON.parse(fs.readFileSync(path.join(w.a.library, file), 'utf8')) as { kind: string; itemId: string | null });
+    assert.deepEqual(committed.filter(r => r.kind === 'conflict_resolved').map(r => r.itemId), [id]);
+    assert.ok(committed.every(r => r.itemId !== other.id), 'the stray record stays local');
+    assert.match(w.a.git('status', '--porcelain', '--untracked-files=all', '--', 'workbench/activity'), /\?\? workbench\/activity\//, 'and uncommitted');
+  } finally { w.close(); }
+});
+
 test('an approval that is not trusted here is not kept, and with the flag off resolving still resets to draft', async () => {
   const w = world();
   try {

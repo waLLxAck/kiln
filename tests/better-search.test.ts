@@ -148,6 +148,14 @@ test('typo tolerance grows with word length and counts a swapped pair once', () 
   assert.deepEqual(closeMatches('reveiw ops', items), [], 'every word must match');
 });
 
+test('a limited edit distance stops early and agrees with the full one up to the limit', () => {
+  assert.equal(editDistance('abcdefgh', 'zyxwvuts', 1), 2, 'over the limit after the first rows');
+  const words = ['review', 'reveiw', 'rveiew', 'deploy', 'depolyment', 'kitten', 'sitting', 'abcd', 'badc', 'acbd', 'ca', 'abc', '', 'runbook', 'runbok'];
+  for (const a of words) for (const b of words) for (const limit of [0, 1, 2, 3]) {
+    assert.equal(Math.min(editDistance(a, b, limit), limit + 1), Math.min(editDistance(a, b), limit + 1), `${a} → ${b} within ${limit}`);
+  }
+});
+
 test('relevance order keeps collection sources leading, and commands match by word prefix', () => {
   const make = (id: string, kind: Item['kind']) => ({ id, kind }) as Item;
   const items = [make('a', 'prompt'), make('b', 'source'), make('c', 'prompt')];

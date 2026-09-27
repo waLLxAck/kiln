@@ -73,7 +73,7 @@ export function SyncIndicator({ snapshot, refresh, perform, onMessage, onConflic
   }, [ready, snapshot.root, fetchNow]);
   useEffect(() => { if (!open) return; const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); }; window.addEventListener('mousedown', away); return () => window.removeEventListener('mousedown', away); }, [open]);
   const pull = useCallback(() => perform(async () => {
-    setOpen(false);
+    setOpen(false); setProblem(null);
     await fetchNow(0);
     const result = await api<PullResult>('sync.pull');
     await refresh();
