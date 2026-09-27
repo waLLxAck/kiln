@@ -1067,3 +1067,17 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .palette-copied { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px; background: color-mix(in srgb, var(--panel) 94%, transparent); font-size: 16px; color: var(--text); }
 .palette-copied svg { color: var(--ok); flex-shrink: 0; }
 .palette-copied b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Experimental: keyboard navigation and undo (keyboardUndo) */
+.context-menu button:focus-visible { outline: none; background: var(--subtle-2); box-shadow: inset 0 0 0 1px var(--accent); }
+.context-menu button.danger:focus-visible { background: var(--bad-bg); }
+.toast-stack { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: min(640px, calc(100vw - 48px)); pointer-events: none; }
+.toast-stack .toast { position: relative; bottom: auto; left: auto; transform: none; max-width: 100%; pointer-events: auto; }
+.progress-toast svg { color: inherit; opacity: .8; }
+.item-drag-image { position: fixed; top: -200px; left: 0; max-width: 260px; padding: 5px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.collection-node[data-item-drop] .nav-item, .nav-item[data-item-drop] { background: var(--accent-tint); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent); }
+.shortcut-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 6px 28px; max-height: 70vh; overflow-y: auto; }
+.shortcut-sheet h3 { margin: 14px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.shortcut-sheet dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+.shortcut-sheet dt { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; max-width: 190px; color: var(--muted); }
+.shortcut-sheet dd { margin: 0; color: var(--text-2); line-height: 1.4; }
+.shortcut-or { margin: 0 3px; color: var(--faint); }
