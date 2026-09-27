@@ -13,7 +13,7 @@ export const experiments = [
   { id: 'betterSearch', title: 'Steadier, ranked search', description: 'Search keeps results on screen while typing, ranks by relevance, forgives typos, and quick search confirms the copy, hides when you click away and runs commands after ">".' },
   { id: 'chatHistory', title: 'Docked chat with history', description: 'Ask the agent opens beside the item, keeps each item\'s conversation, renders Markdown and shows changes the agent made.' },
   { id: 'keyboardUndo', title: 'Keyboard navigation and undo', description: 'Enter, Home, End, Page keys and Shift+arrows in the list, a ? shortcut sheet, Ctrl+Z for trash, moves and status, and dragging items onto collections.' },
-  { id: 'projectInstalls', title: 'Install into project folders', description: 'Install a skill into any project folder from its Installs tab, without enrolling the project from the command line first.' },
+  { id: 'projectInstalls', title: 'Install into project folders', description: 'Install a skill or agent definition into any project folder from its Installs tab or More menu, and pick from one list of known projects when testing too.' },
 ] as const;
 
 export type ExperimentId = typeof experiments[number]['id'];

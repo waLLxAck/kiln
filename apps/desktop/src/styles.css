@@ -1120,3 +1120,18 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .code-file-editor .section-heading { margin: 4px 0 6px; }
 .code-file-editor h4 { margin: 0; font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
 .lib-draft { flex-shrink: 0; font-size: 10.5px; padding: 0 6px; }
+/* Experimental: Install into project folders (projectInstalls) */
+.project-install-heading { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+.project-choices { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-md); max-height: 240px; overflow: auto; margin-bottom: 10px; }
+.project-choice { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.project-choice:last-child { border-bottom: 0; }
+.project-choice.selected { background: var(--accent-tint); }
+.project-choice > label { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; cursor: pointer; font-size: 13px; }
+.project-choice > label input { margin: 3px 0 0; accent-color: var(--accent); flex-shrink: 0; }
+.project-choice > label > span { display: grid; gap: 2px; min-width: 0; }
+.project-choice small { font-size: 12px; color: var(--muted); }
+.project-choice code:not(.path-text) { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--text-2); margin-left: 4px; }
+.project-preview { margin-top: 14px; }
+.project-preview > p { font-size: 13px; line-height: 1.55; margin: 8px 0; color: var(--text-2); }
+.project-copies .project-group h4 { margin: 12px 0 6px; font-size: 13px; font-weight: 600; }
+.project-copies .project-group h4 small { display: block; font-weight: 400; }

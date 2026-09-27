@@ -644,4 +644,24 @@ export class DeploymentService {
     if (target.scope === 'personal') this.wb.setInstall(item.id, item.kind === 'skill' && target.skillFolder ? 'codex-native' : target.provider, true);
     return { itemId: item.id, revision: revision.hash, destination, method: unchanged ? 'unchanged' as const : 'adopted' as const, approved, receipt };
   }
+  // Experimental: projectInstalls ("Install into project folders").
+  /**
+   * Read-only preview of installing an item's current revision into `target`, which need not be enrolled yet: the destination the
+   * plan would use and what is there now. `current` is the state hash that install must still find, so a change in between refuses.
+   */
+  inspectCopy(itemId: string, target: Target): CopyPreview {
+    const item = this.wb.getItem(itemId), revision = this.wb.getRevision(item.id);
+    invariant(['skill', 'agent'].includes(revision.kind), 'NOT_DEPLOYABLE', 'Only skills and agents can be installed into a project.');
+    const name = this.folderName(item, revision); invariant(name, 'INVALID_SKILL_NAME', 'Give the skill a lowercase hyphenated name in its frontmatter first.');
+    const errors = validateContent(revision), destination = this.skillDestination(target, name, revision);
+    const base = { destination, problem: errors.join('\n'), approved: this.wb.approvals().some(a => a.itemId === item.id && a.revision === revision.hash && a.trust === 'local') };
+    const stat = fs.lstatSync(destination, { throwIfNoEntry: false });
+    if (!stat) return { ...base, state: 'absent', current: null };
+    if (stat.isSymbolicLink()) return { ...base, state: 'linked', current: null };
+    const current = this.currentState(destination), owned = this.latest(destination), wanted = this.renderedHash(revision);
+    if (owned?.itemId === item.id) return { ...base, current, state: current !== owned.hash ? 'drifted' : current === wanted ? 'installed' : 'older' };
+    return { ...base, current, state: current === wanted ? 'identical' : 'differs' };
+  }
 }
+/** What an install into a folder would meet: nothing, a Kiln copy (current, an older revision, or edited since), a link, or someone else's folder. */
+export type CopyPreview = { destination: string; state: 'absent' | 'installed' | 'older' | 'drifted' | 'linked' | 'identical' | 'differs'; current: string | null; approved: boolean; /** Validation errors that stop the install, empty when none. */ problem: string };

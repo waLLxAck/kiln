@@ -17,6 +17,7 @@ import { applyInfrastructure, defaultParent, infrastructurePlan, initialiseRepos
 import { importLocalSkills, scanLocalSkills } from './skills-import';
 import { applyMigration, migrationPlan } from '../git/migration';
 import { HomeFiles } from '../home/service';
+import { ProjectInstalls } from '../deployment/projects';
 
 import { BackgroundFetch, pullFetched, requireAutoSync } from '../git/sync';
 import { experimentOn } from '../protocol/experiments';
@@ -34,6 +35,8 @@ export class Router {
   /** Items whose desired installs changed since the last organisation job was queued. */
   private installsChanged = new Set<string>();
   readonly home: HomeFiles;
+  /** Experimental projectInstalls: install into any project folder, enrolling it on first use. */
+  readonly projects: ProjectInstalls;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
@@ -44,6 +47,7 @@ export class Router {
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
+    this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
   }
   /** Saves the revision at once, then fills in a generated note in the background when the user left "What changed?" empty. */
   private updateItem(args: unknown) {
@@ -147,6 +151,10 @@ export class Router {
       case 'skills.update': return this.published(this.deployments.updateInstalls(args));
       case 'deploy.keepCopy': return this.deployments.keepCopy(args);
       case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
+      case 'projects.known': return this.projects.known(args);
+      case 'projects.preview': return this.projects.preview(args);
+      case 'projects.install': return this.projects.apply(args);
+      case 'projects.forget': return this.projects.forget(args);
       case 'targets.list': return this.wb.targets();
       case 'targets.remove': return this.wb.removeTarget(args);
       case 'items.reorder': return this.wb.reorderItems(args);

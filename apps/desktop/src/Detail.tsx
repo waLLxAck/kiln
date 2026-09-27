@@ -16,6 +16,7 @@ import { personalTarget, SkillToggles } from './Skills';
 import { machinesEnabled } from './features';
 import { experimentOn } from './Experiments';
 import { experimentsOf, reviewOf, TrialsByRevision } from './TrialLoop';
+import { ProjectCopies } from './ProjectInstalls';
 import { DiscardDraftDialog, ItemCodeEditor } from './item-editing';
 import { withDraftContent } from './item-draft';
 import { noteDraft } from './code-editor-state';
@@ -85,6 +86,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const copies = installations.filter(copy => copy.itemId === item.id);
   const installedNames = [...new Set(copies.filter(copy => copy.state === 'installed').map(copy => { const target = snapshot.targets.find(target => target.id === copy.targetId); return copy.scope === 'project' ? target?.name ?? 'project folder' : copy.location === 'agents' ? 'Agents' : copy.provider === 'claude' ? 'Claude' : copy.provider === 'copilot' ? 'Copilot' : 'Codex'; }))];
   const changedCopies = copies.some(copy => copy.state !== 'installed');
+  // projectInstalls: install into any project folder; project copies get their own Projects group on the Installs tab.
+  const projectInstalls = experimentOn(snapshot.settings, 'projectInstalls') && ['skill', 'agent'].includes(item.kind);
   const images = Object.entries(revision.files).filter(([name]) => imageFile(name));
   const openFile = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
   return <article className="detail-pane" aria-label="Selected item">
@@ -115,7 +118,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
           {more && <ContextMenu x={more.x} y={more.y} onClose={() => setMore(null)} entries={[
             { label: 'Copy', icon: <Copy />, onSelect: () => onAction('copy') },
             { label: currentApproved ? 'Unapprove' : 'Approve', icon: <ShieldCheck />, hint: currentApproved ? 'Withdraw approval; installed copies stay in place.' : 'Approve this revision and publish it to GitHub.', onSelect: () => onAction(currentApproved ? 'unapprove' : 'approve') },
-            ...(installable ? [{ label: 'Install into a project folder…', icon: <Download />, disabled: !detail.approvals.length, onSelect: () => onAction('deploy') }] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
+            ...(projectInstalls ? [{ label: 'Install into project…', icon: <Download />, hint: 'Install into any project folder on this machine.', onSelect: () => onAction('install-project') }] : installable ? [{ label: 'Install into a project folder…', icon: <Download />, disabled: !detail.approvals.length, onSelect: () => onAction('deploy') }] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
             { label: 'Open stored file or link', icon: <ExternalLink />, onSelect: () => void perform(() => api('desktop.openItem', { id: item.id })) },
             ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: 'Ask your agent to distill it into prompts, techniques, tools and insights. It becomes a source that links to them.', onSelect: analyse }] : []),
             ...(['archived', 'rejected'].includes(item.status) ? [{ label: 'Back to library', icon: <RotateCcw />, onSelect: () => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, status: 'captured' }); await refresh(); }, 'Back in the library') }] : []),
@@ -180,8 +183,9 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
       </>}
       {tab === 'installs' && <>
         {['skill', 'agent'].includes(item.kind) && <section className="install-controls"><h3>Install locations</h3><p className="small muted">Choose a location to install, update or remove this item.</p><SkillToggles item={item} providers={providers} snapshot={snapshot} installations={installations} onToggle={onToggleInstall} onSetup={onSetup} /></section>}
+        {projectInstalls && <ProjectCopies item={item} snapshot={snapshot} installations={installations} onInstall={() => onAction('install-project')} onManage={onToggleInstall} onCompare={i => onAction(`compare:${i.itemId}:${i.targetId}`)} />}
         <div className="notice"><b>What installing does</b><p>Kiln copies the approved SKILL.md and bundled files into the agent’s skills folder, for example <code>~/.agents/skills/&lt;name&gt;</code> for Codex or <code>~/.claude/skills/&lt;name&gt;</code> for Claude Code. The agent loads it in new sessions. Removing deletes only that folder. Every install and removal leaves a receipt below.</p></div>
-        <Installations snapshot={snapshot} installations={installations} itemId={item.id} onUninstall={id => onAction(`uninstall:${id}`)} onCompare={i => onAction(`compare:${i.itemId}:${i.targetId}`)} />
+        <Installations snapshot={snapshot} installations={projectInstalls ? installations.filter(i => i.scope !== 'project') : installations} itemId={item.id} onUninstall={id => onAction(`uninstall:${id}`)} onCompare={i => onAction(`compare:${i.itemId}:${i.targetId}`)} />
         <div className="section-heading"><h3>Install receipts</h3><button className="button" onClick={() => onAction('deploy')} disabled={!detail.approvals.length || !['skill', 'agent', 'instruction'].includes(item.kind)} title={machinesEnabled ? 'Install an approved revision into a project folder or an earlier revision anywhere.' : 'Install an approved revision, including an earlier one, into a folder Kiln manages.'}><Rocket size={15} />{machinesEnabled ? 'Install into a project folder…' : 'Install a specific revision…'}</button></div><p className="muted">{machinesEnabled ? 'Receipts record what was written where. Check live drift in Machines before treating an old receipt as current.' : 'Receipts record what was written where. The install locations above show what is in each folder now.'}</p>{!deployed.length && <p className="empty-inline">No install receipts for this item.</p>}
         {[...deployed].reverse().map(r => <div className="trial-card" key={r.id}><div className="section-heading"><b>{snapshot.targets.find(t => t.id === r.targetId)?.name ?? 'Unknown environment'}</b><Badge status={r.status} /></div><code className="path-text">{r.destination}</code><p className="muted">{shortHash(r.revision)} · {date(r.createdAt)} · new session required</p>{r.status === 'applied' && <button className="button" onClick={() => onAction(`rollback:${r.id}`)}><RotateCcw size={14} />Review rollback</button>}{r.error && <p className="error-box">{r.error}</p>}</div>)}
       </>}
