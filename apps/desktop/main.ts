@@ -18,6 +18,9 @@ import { defaultLibrary, privateRoot, selectLibrary } from '../../packages/stora
 import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '../../packages/updates/service';
 import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
+import { experimentIds, experimentOn, type ExperimentId } from '../../packages/protocol/experiments';
+import { notifyRunFinished, openRunScript } from './run-notifications';
+import { paletteCommandIds } from './src/palette-command-ids';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -28,6 +31,8 @@ let main: BrowserWindow;
 let palette: BrowserWindow | undefined;
 let tray: Tray;
 let backend: Backend;
+/** Whether an experimental feature (Settings → Experimental features) is on; main-process behaviour that a flag guards checks this each time. */
+async function experiment(id: ExperimentId) { try { return experimentOn(await backend.call('settings'), id); } catch { return false; } }
 let local = '';
 let canonical = '';
 const diagnostics = createDiagnostics(path.join(app.getPath('userData'), 'logs'));
@@ -56,8 +61,14 @@ function createWindow(compact: boolean) {
   if (!compact) window.once('ready-to-show', () => window.show());
   return window;
 }
+/** betterSearch: quick search goes away when you click elsewhere, like a menu, but not while one of its dialogs (Fill in variables) is open. */
+async function hideOnBlur(window: BrowserWindow) {
+  if (!(await experiment('betterSearch')) || window.isDestroyed() || !window.isVisible() || window.isFocused()) return;
+  const dialogOpen = await window.webContents.executeJavaScript(`Boolean(document.querySelector('dialog[open]'))`).catch(() => true);
+  if (!dialogOpen && !window.isDestroyed() && !window.isFocused()) window.hide();
+}
 function openPalette() {
-  if (!palette || palette.isDestroyed()) palette = createWindow(true);
+  if (!palette || palette.isDestroyed()) { const window = palette = createWindow(true); window.on('blur', () => void hideOnBlur(window)); }
   const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   palette.setPosition(Math.round(area.x + (area.width - 740) / 2), Math.round(area.y + area.height * .2));
   palette.show(); palette.focus();
@@ -122,7 +133,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     type: 'warning', title: 'Using your agent CLI', message: 'Allow Kiln to run your installed agent CLI?',
     detail: agentConsentDetail(),
     buttons: ['Cancel', 'Agree and continue'], defaultId: 0, cancelId: 0, checkboxLabel: "Don’t show again", checkboxChecked: false,
-  }));
+  }), { chatSession: method === 'agent.chat' && await experiment('chatHistory') });
   switch (method) {
     case 'desktop.resetAgentConsent': agentConsent.reset(); return true;
     case 'desktop.exportSession': {
@@ -185,7 +196,12 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     case 'desktop.palette': openPalette(); return true;
     case 'desktop.hide': sender.hide(); return true;
     case 'desktop.workbench': {
-      const { id } = z.object({ id: idSchema.optional() }).parse(args);
+      // `command` is a quick search command (betterSearch) for the main window to run.
+      const { id, command } = z.object({ id: idSchema.optional(), command: z.enum(paletteCommandIds).optional() }).parse(args);
+      if (command) {
+        invariant(await experiment('betterSearch'), 'CAPABILITY_UNSUPPORTED', 'Quick search commands are an experimental feature; turn on "Steadier, ranked search" in Settings.');
+        await main.webContents.executeJavaScript(`location.hash = ${JSON.stringify('command=' + command + '&open=' + Date.now())}`);
+      }
       if (id) {
         await backend.call('rpc', 'items.read', { id });
         await main.webContents.executeJavaScript(`location.hash = ${JSON.stringify('item=' + encodeURIComponent(id) + '&open=' + Date.now())}`);
@@ -296,6 +312,8 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       else shell.showItemInFolder(file);
       return true;
     }
+    case 'desktop.experiment': return backend.call('setExperiment', args);
+    case 'desktop.experimentOn': return experiment(z.object({ id: z.enum(experimentIds as [ExperimentId, ...ExperimentId[]]) }).parse(args).id);
     case 'desktop.settings': {
       const value = z.object({ shortcut: z.string().min(1), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex') }).parse(args);
       await registerShortcut(value.shortcut); app.setLoginItemSettings({ openAtLogin: value.launchAtLogin }); return backend.call('saveSettings', { ...(await backend.call('settings')), ...value });
@@ -311,6 +329,12 @@ if (singleInstance) void app.whenReady().then(async () => {
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
   ({ local, canonical } = await backend.call('paths'));
+  // runNotifications: the worker reports each finished run; a notification shows when Kiln is not in front, and opens the result.
+  backend.onAgentFinished = event => void notifyRunFinished(event, { window: () => main, enabled: () => experiment('runNotifications'), log, open: async finished => {
+    if (main.isMinimized()) main.restore(); main.show(); main.focus();
+    try { await backend.call('rpc', 'items.read', { id: finished.itemId }); } catch { return; }
+    await main.webContents.executeJavaScript(openRunScript(finished));
+  } });
   syncUpdateTimer();
   log('app.started', { version: app.getVersion(), pid: process.pid });
   let tick = Date.now();

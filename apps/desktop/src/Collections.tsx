@@ -101,10 +101,10 @@ export function CollectionsDialog({ names, items, onClose, onDone, onDelete, onO
 }
 
 /** Files items in a collection, a new one, or none. Only where they are filed changes; content, approvals and installs stay. */
-export function MoveItemsDialog({ names, items, onClose, onDone }: { names: string[]; items: Item[]; onClose: () => void; onDone: (collection: string, moved: number) => Promise<void> }) {
+export function MoveItemsDialog({ names, items, onClose, onDone }: { names: string[]; items: Item[]; onClose: () => void; onDone: (collection: string, moved: number, ids?: string[]) => Promise<void> }) {
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [name, setName] = useState('');
   const current = items.length === 1 ? items[0].collection : null;
-  const move = async (collection: string) => { setBusy(true); setError(''); try { const result = await api<{ collection: string; moved: string[] }>('items.move', { ids: items.map(i => i.id), collection }); await onDone(result.collection, result.moved.length); } catch (e) { setError(String(e)); setBusy(false); } };
+  const move = async (collection: string) => { setBusy(true); setError(''); try { const result = await api<{ collection: string; moved: string[] }>('items.move', { ids: items.map(i => i.id), collection }); await onDone(result.collection, result.moved.length, result.moved); } catch (e) { setError(String(e)); setBusy(false); } };
   return <Modal title={items.length === 1 ? `Move “${items[0].title}”` : `Move ${plural(items.length)}`} subtitle="Choose where to file it. Content, approval and installed copies do not change." onClose={() => { if (!busy) onClose(); }}>
     <InlineError error={error} />
     <div className="collection-rows" role="list">

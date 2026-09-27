@@ -5,7 +5,14 @@ import type { Item, ItemDetail } from '../../../packages/protocol/schema';
 import { api, variablesIn } from './api';
 import { Badge, KindIcon } from './components';
 import { VariablesDialog } from './dialogs';
+import { BetterPalette } from './BetterPalette';
+/** Quick search. The betterSearch experiment swaps in BetterPalette; the flag is checked whenever the window is shown. */
 export default function Palette() {
+  const [better, setBetter] = useState(false);
+  useEffect(() => { const check = () => void api<boolean>('desktop.experimentOn', { id: 'betterSearch' }).then(setBetter).catch(() => {}); check(); window.addEventListener('focus', check); return () => window.removeEventListener('focus', check); }, []);
+  return better ? <BetterPalette /> : <LegacyPalette />;
+}
+function LegacyPalette() {
   const [query, setQuery] = useState(''), [items, setItems] = useState<Item[]>([]), [selected, setSelected] = useState(0), [error, setError] = useState('');
   const [variableItem, setVariableItem] = useState<ItemDetail | null>(null);
   const [preview, setPreview] = useState<ItemDetail | null>(null);

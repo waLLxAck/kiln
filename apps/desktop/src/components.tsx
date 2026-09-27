@@ -1,6 +1,7 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
 import { Bot, X, FileText, Link, Image, File, Terminal, BookOpen, BookMarked, FolderSymlink, FileInput, Check, Lightbulb, ListOrdered, Loader2, ArrowUpRight, Wrench } from 'lucide-react';
 import type { Item, ProviderId } from '../../../packages/protocol/schema';
+import { useKeyboardUndo } from './keyboard-undo';
 
 /** The Kiln mark (cream kiln arch with an orange fire opening). Its dark rounded square is the `.brand-symbol` background. */
 export function KilnMark() {
@@ -63,14 +64,23 @@ export function shortcutEntry(entries: MenuEntry[], event: KeyboardEvent | { key
 export function ContextMenu({ x, y, entries, onClose }: { x: number; y: number; entries: MenuEntry[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
+  // Experimental keyboardUndo: focus starts on the first enabled entry, arrows move it, and closing hands focus back to the opener.
+  const keys = useKeyboardUndo();
   useLayoutEffect(() => { const box = ref.current?.getBoundingClientRect(); if (!box) return; setPosition({ left: Math.min(x, window.innerWidth - box.width - 8), top: Math.min(y, window.innerHeight - box.height - 8) }); }, [x, y]);
+  useLayoutEffect(() => { const menu = ref.current; if (!keys || !menu) return; const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null; menu.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true }); return () => { if (menu.contains(document.activeElement)) opener?.focus({ preventScroll: true }); }; }, [keys]);
+  const move = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const entries = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)')], at = entries.indexOf(document.activeElement as HTMLElement), last = entries.length - 1;
+    const next = event.key === 'ArrowDown' ? (at < 0 || at === last ? 0 : at + 1) : event.key === 'ArrowUp' ? (at <= 0 ? last : at - 1) : event.key === 'Home' ? 0 : event.key === 'End' ? last : null;
+    if (next === null || last < 0) return;
+    event.preventDefault(); event.stopPropagation(); entries[next].focus();
+  };
   useEffect(() => {
     const away = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) onClose(); };
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { onClose(); return; } const hit = shortcutEntry(entries, event); if (hit) { event.preventDefault(); event.stopPropagation(); hit.onSelect?.(); onClose(); } };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (keys) { event.preventDefault(); event.stopPropagation(); } onClose(); return; } const hit = shortcutEntry(entries, event); if (hit) { event.preventDefault(); event.stopPropagation(); hit.onSelect?.(); onClose(); } };
     window.addEventListener('mousedown', away); window.addEventListener('keydown', key, true); window.addEventListener('blur', onClose); window.addEventListener('resize', onClose);
     return () => { window.removeEventListener('mousedown', away); window.removeEventListener('keydown', key, true); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
-  }, [onClose, entries]);
-  return <div ref={ref} className="context-menu" role="menu" style={position} onContextMenu={event => event.preventDefault()}>
+  }, [onClose, entries, keys]);
+  return <div ref={ref} className="context-menu" role="menu" style={position} onContextMenu={event => event.preventDefault()} onKeyDown={keys ? move : undefined}>
     {entries.map((entry, i) => entry === 'separator' ? <hr key={i} /> : 'heading' in entry ? <div key={i} className="context-heading">{entry.heading}</div> : <button key={i} role="menuitem" className={entry.danger ? 'danger' : ''} disabled={entry.disabled} title={entry.hint} onClick={() => { entry.onSelect?.(); onClose(); }}><span className="context-check">{entry.checked && <Check size={13} />}</span>{entry.icon}<span className="context-label">{entry.label}</span>{entry.shortcut && <kbd className="context-key" aria-label={`Shortcut ${entry.shortcut}`}>{entry.shortcut}</kbd>}{entry.note && <span className="context-note">{entry.note}</span>}</button>)}
   </div>;
 }

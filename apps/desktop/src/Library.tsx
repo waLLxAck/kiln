@@ -1,12 +1,13 @@
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowDownUp, ArrowUp, ChevronDown, ChevronUp, FlaskConical, Github, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, ChevronDown, ChevronUp, FlaskConical, Github, Loader2, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
 import type { Installation, Item, Provider, ProviderId, Target } from '../../../packages/protocol/schema';
 import { Badge, ContextMenu, KindIcon, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
 import { skillState } from './Skills';
 import { defaultSort, site, sortChoices, sortLabel, type Sort, type SortKey } from './library-sort';
 import { emptyLibraryFilters, filterDimensions, type FilterDimension, type LibraryFilterKey, type LibraryFilters } from './library-filters';
+import { DraftMark } from './item-editing';
 
 /** One tab per kind of item, plus two cross-cutting views. Skills is a tab like any other; its rows carry install marks. */
 export type LibraryTab = 'recent' | 'favourites' | Item['kind'];
@@ -62,22 +63,24 @@ function AddFilter({ dimensions, onAdd }: { dimensions: FilterDimension[]; onAdd
   </span>;
 }
 
-type ToolsProps = { query: string; onQuery: (q: string) => void; onSearchDown: (e: React.KeyboardEvent<HTMLInputElement>) => void; status: string; statuses: FilterOption[]; onStatus: (s: string) => void; install: InstallFilter; installOptions: FilterOption[] | null; onInstall: (f: InstallFilter) => void; advanced: LibraryFilters; onAdvanced: (next: LibraryFilters) => void; advancedOptions: (key: LibraryFilterKey) => FilterOption[]; onClear: () => void; shown: number; chosen: number; onClearChosen: () => void; sort: NonNullable<Sort>; onSort: (sort: Sort) => void; canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean] };
+type ToolsProps = { query: string; onQuery: (q: string) => void; onSearchDown: (e: React.KeyboardEvent<HTMLInputElement>) => void; status: string; statuses: FilterOption[]; onStatus: (s: string) => void; install: InstallFilter; installOptions: FilterOption[] | null; onInstall: (f: InstallFilter) => void; advanced: LibraryFilters; onAdvanced: (next: LibraryFilters) => void; advancedOptions: (key: LibraryFilterKey) => FilterOption[]; onClear: () => void; shown: number; chosen: number; onClearChosen: () => void; sort: NonNullable<Sort>; onSort: (sort: Sort) => void; canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean]; /** betterSearch: offered while a search is active. */ relevance?: Relevance; searching?: boolean; closeMatches?: boolean };
+type Relevance = { active: boolean; onPick: () => void };
 /**
  * Search with the count, the sort pill and (in custom order) the move arrows, then one row of filter pills. Status and installed are always there; the other
  * dimensions join the row through "+ Filter" and leave it through their ×. Collections are chosen in the sidebar, not here.
  */
-export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, onStatus, install, installOptions, onInstall, advanced, onAdvanced, advancedOptions, onClear, shown, chosen, onClearChosen, sort, onSort, canReorder, reorder, reorderDisabled }: ToolsProps) {
+export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, onStatus, install, installOptions, onInstall, advanced, onAdvanced, advancedOptions, onClear, shown, chosen, onClearChosen, sort, onSort, canReorder, reorder, reorderDisabled, relevance, searching, closeMatches }: ToolsProps) {
   const [added, setAdded] = useState<LibraryFilterKey[]>([]), [fresh, setFresh] = useState<LibraryFilterKey | null>(null);
   const inRow = filterDimensions.filter(d => added.includes(d.key) || advanced[d.key] !== emptyLibraryFilters[d.key]);
   const filtering = status !== 'all' || install !== 'any' || inRow.length > 0;
   return <>
     <div className="lib-tools">
-      <label className="search-field"><Search size={16} /><input aria-label="Search library" value={query} onChange={e => onQuery(e.target.value)} onKeyDown={onSearchDown} placeholder="Search titles, content, tags…" title="Ctrl+F" />{query && <button aria-label="Clear search" onClick={() => onQuery('')}><X size={13} /></button>}</label>
+      <label className="search-field">{searching ? <Loader2 size={16} className="spin search-busy" aria-label="Searching" /> : <Search size={16} />}<input aria-label="Search library" value={query} onChange={e => onQuery(e.target.value)} onKeyDown={onSearchDown} placeholder="Search titles, content, tags…" title="Ctrl+F" />{query && <button aria-label="Clear search" onClick={() => onQuery('')}><X size={13} /></button>}</label>
       {chosen > 1 ? <span className="lib-count selection" aria-live="polite"><b>{chosen} selected</b><button type="button" className="icon-button" aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClearChosen}><X size={13} /></button></span> : <span className="muted small lib-count" aria-live="polite">{shown} shown</span>}
-      <SortMenu sort={sort} onSort={onSort} />
+      <SortMenu sort={sort} onSort={onSort} relevance={relevance} />
       {canReorder && <span className="inline"><button className="icon-button" aria-label="Move selected item up" disabled={reorderDisabled[0]} onClick={() => reorder(-1)}><ArrowUp size={13} /></button><button className="icon-button" aria-label="Move selected item down" disabled={reorderDisabled[1]} onClick={() => reorder(1)}><ArrowDown size={13} /></button></span>}
     </div>
+    {closeMatches && <p className="search-close-note" role="status">No exact matches — showing close matches</p>}
     <div className="filter-bar" role="group" aria-label="Filters">
       <SlidersHorizontal aria-hidden="true" />
       <FilterPill name="Status" value={status} all="all" options={statuses} onChange={onStatus} hint={status !== 'all' ? statusHelp[status] : 'Only items in one lifecycle status'} />
@@ -98,12 +101,12 @@ export const columns = (tab: LibraryTab): Column[] => tab === 'source' ? [{ labe
   : tab === 'recent' || tab === 'favourites' ? [{ label: 'Title', key: 'title' }, { label: 'Type', key: 'kind', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
   : [{ label: 'Title', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }];
 /** The sort pill in the tools row: the current order by name, and a menu of the others. */
-function SortMenu({ sort, onSort }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void }) {
+function SortMenu({ sort, onSort, relevance }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void; relevance?: Relevance }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
-  const entries: MenuEntry[] = sortChoices.flatMap(c => [...(c.sort.key === 'order' ? ['separator' as const] : []), { label: c.label, hint: c.hint, checked: c.sort.key === sort.key && c.sort.dir === sort.dir, onSelect: () => onSort(c.sort) }]);
+  const entries: MenuEntry[] = [...(relevance ? [{ label: 'Relevance', hint: 'Best matches for the search first', checked: relevance.active, onSelect: relevance.onPick }] : []), ...sortChoices.flatMap(c => [...(c.sort.key === 'order' ? ['separator' as const] : []), { label: c.label, hint: c.hint, checked: !relevance?.active && c.sort.key === sort.key && c.sort.dir === sort.dir, onSelect: () => onSort(c.sort) }])];
   return <span className="filter-pill sort-pill">
-    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title="Order of the list" onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.left, y: box.bottom + 4 }); }}><ArrowDownUp />Sort: <b>{sortLabel(sort)}</b><ChevronDown /></button>
+    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title="Order of the list" onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.left, y: box.bottom + 4 }); }}><ArrowDownUp />Sort: <b>{relevance?.active ? 'Relevance' : sortLabel(sort)}</b><ChevronDown /></button>
     {open && <ContextMenu x={open.x} y={open.y} entries={entries} onClose={() => setOpen(null)} />}
   </span>;
 }
@@ -122,7 +125,7 @@ export function StateCell({ item, locations, installations, published, made = 0 
     : item.status === 'testing' ? <span className="lib-mark testing" title={statusHelp.testing} role="img" aria-label="Testing"><FlaskConical size={14} /></span>
     : ['archived', 'rejected'].includes(item.status) ? <Badge status={item.status} />
     : <span className="lib-mark draft" title={statusHelp.captured} role="img" aria-label="Draft" />;
-  return <span className="lib-cell status">{mark}{['skill', 'agent'].includes(item.kind) && locations.length > 0 && <span className="install-marks">{locations.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot').map(({ provider, target }) => { const { state } = skillState(item, target, installations); return <span key={provider.id} className={`install-mark ${state}`} title={`${item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id)}: ${state === 'off' ? 'not installed' : state === 'on' ? 'installed' : state}`}>{provider.id === 'codex' ? (item.kind === 'agent' ? 'Cx' : 'A') : provider.id === 'copilot' ? 'Cp' : 'Cl'}</span>; })}</span>}</span>;
+  return <span className="lib-cell status">{mark}{['skill', 'agent'].includes(item.kind) && locations.length > 0 && <span className="install-marks">{locations.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot').map(({ provider, target }) => { const { state } = skillState(item, target, installations); return <span key={provider.id} className={`install-mark ${state}`} title={`${item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id)}: ${state === 'off' ? 'not installed' : state === 'on' ? 'installed' : state === 'outdated' ? 'update available' : state}`}>{provider.id === 'codex' ? (item.kind === 'agent' ? 'Cx' : 'A') : provider.id === 'copilot' ? 'Cp' : 'Cl'}</span>; })}</span>}</span>;
 }
 /** The inside of one list row. `opt` cells give way when the list is narrow; the title and the State cell always stay. */
 /** `from` names the item's source when another item has the same title, so the two can be told apart. */
@@ -131,5 +134,5 @@ export function ItemRow({ item, tab, collectionShown, locations, installations, 
   const cell = (key: SortKey) => key === 'status' ? <StateCell key="state" item={item} locations={locations} installations={installations} published={published} made={made} />
     : <span key={key} className="lib-cell opt muted">{key === 'kind' ? <span className="item-kind-label">{item.kind}</span> : key === 'collection' ? item.collection : key === 'site' ? site(item) : key === 'createdAt' ? date(item.createdAt) : date(item.updatedAt)}</span>;
   const subtitle = [from ? `from ${from.label}` : '', item.description || (tab === 'recent' || tab === 'favourites' || collectionShown ? '' : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
-  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}</span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown || !item.collection ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
+  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}<DraftMark id={item.id} /></span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown || !item.collection ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
 }
