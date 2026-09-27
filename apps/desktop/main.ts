@@ -125,7 +125,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     type: 'warning', title: 'Using your agent CLI', message: 'Allow Kiln to run your installed agent CLI?',
     detail: agentConsentDetail(),
     buttons: ['Cancel', 'Agree and continue'], defaultId: 0, cancelId: 0, checkboxLabel: "Don’t show again", checkboxChecked: false,
-  }));
+  }), { chatSession: method === 'agent.chat' && await experiment('chatHistory') });
   switch (method) {
     case 'desktop.resetAgentConsent': agentConsent.reset(); return true;
     case 'desktop.exportSession': {

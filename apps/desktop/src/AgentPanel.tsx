@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep, ChatResult } from '../../../packages/agent/service';
 import type { Analysis, ItemDetail, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
@@ -6,6 +6,7 @@ import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { RevisionSelect } from './TrialLoop';
 import { Field, Modal, providerName } from './components';
+import { Markdown } from './Markdown';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
 export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomEvent('kiln:agent-started', { detail: { kind } })); }
@@ -86,7 +87,7 @@ export function CreateSkillDialog({ itemId, title, providers, defaultProvider, o
   </Modal>;
 }
 /** The turns of one conversation, oldest first, and the box to add the next one. Each turn is its own job so its steps and usage stay visible. */
-export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem, draft }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void; /** Text to put in the composer, unsent; a new nonce puts it there again. */ draft?: { text: string; nonce: number } }) {
+export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem, draft, markdown, extra }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void; /** Text to put in the composer, unsent; a new nonce puts it there again. */ draft?: { text: string; nonce: number }; /** chatHistory: render replies as Markdown. */ markdown?: boolean; /** chatHistory: shown under a turn's reply, such as the changes it made. */ extra?: (turn: AgentJob) => ReactNode }) {
   const [text, setText] = useState('');
   const composer = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (!draft) return; setText(draft.text); requestAnimationFrame(() => { composer.current?.focus(); composer.current?.setSelectionRange(0, 0); }); }, [draft?.nonce]);
@@ -99,7 +100,8 @@ export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOp
         {turn.status === 'running' && <p className="muted"><Loader2 size={13} className="spin" /> {turn.phase}</p>}
         {turn.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: turn.id })}>Cancel</button>}
         {turn.error && <p className="error-box">{turn.error}</p>}
-        {turn.result && 'reply' in turn.result && <pre className="chat-text">{(turn.result as ChatResult).reply}</pre>}
+        {turn.result && 'reply' in turn.result && (markdown ? <div className="chat-markdown"><Markdown>{(turn.result as ChatResult).reply}</Markdown></div> : <pre className="chat-text">{(turn.result as ChatResult).reply}</pre>)}
+        {extra?.(turn)}
         <Steps job={turn} />
         <RunMeta job={turn} />
         <button className="text-button" onClick={() => void api('desktop.openAgentJob', { id: turn.id }).catch(e => setFileError(String(e)))}>Run files</button>
