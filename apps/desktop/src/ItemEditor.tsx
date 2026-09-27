@@ -39,9 +39,11 @@ export default function ItemEditor({ item, revision, collections, draft, onDraft
   const showFiles = item.kind !== 'agent' && (item.kind === 'skill' || names.length > 0);
 
   useEffect(() => {
+    // Opening the editor without changing anything leaves no draft behind, so "unsaved" marks only real edits.
+    if (draft === revision.content && !Object.keys(meta).length && !Object.keys(edits).length) { localStorage.removeItem(draftKey(item.id)); noteDraft(item.id, false); setStorageFull(false); return; }
     try { localStorage.setItem(draftKey(item.id), serialiseDraft({ content: draft, base, meta, files: edits })); setStorageFull(false); noteDraft(item.id, true); }
     catch { setStorageFull(true); }
-  }, [draft, base, meta, edits, item.id]);
+  }, [draft, base, meta, edits, item.id, revision.content]);
   const agentFilename = meta.agentFilename ?? item.agent?.filename ?? '';
   const nameList = names.join('\n');
   useEffect(() => {

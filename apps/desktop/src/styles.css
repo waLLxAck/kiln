@@ -1025,6 +1025,7 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 
 /* Settings → Experimental features */
 .experiments-card { grid-column: 1 / -1; }
+.experiments-card .experiments-count { text-transform: none; }
 .experiment-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 20px; margin-top: 8px; }
 .experiment-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
 .experiment-row > span { display: grid; gap: 3px; min-width: 0; }

@@ -32,6 +32,8 @@ test('code editor: CodeMirror for items and config files, live checks, Ctrl+S, b
     await expect(page.locator('.item-code-form textarea')).toHaveCount(0);
     await expect(page.locator('.item-code .cm-lineNumbers')).toBeVisible();
     await expect(page.getByText('SKILL.md checks pass')).toBeVisible();
+    // Opening the editor without changing anything is not an unsaved draft.
+    await expect(page.getByText('unsaved changes')).toHaveCount(0);
 
     // A bad name shows a live frontmatter warning with its line before saving; fixing it clears the warning.
     await editor.click(); await page.keyboard.press('Control+Home'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('End');
