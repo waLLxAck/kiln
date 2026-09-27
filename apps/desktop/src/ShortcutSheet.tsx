@@ -50,7 +50,9 @@ const groups = (quickSearch: string): { title: string; rows: Row[] }[] => [
   ] },
   { title: 'Dialogs and editors', rows: [
     [[['Mod', 'Enter']], 'Save a capture, copy with variables filled in, or send a chat message'],
-    [[['Mod', 'S']], 'Save a config file (Config files)'],
+    [[['Mod', 'S']], 'Save a config file, or save an item edit as a new revision'],
+    [[['Mod', 'F'], ['Mod', 'H']], 'Find or replace inside the code editor (Code editor experiment)'],
+    [[['Mod', 'Z']], 'Inside a text field or the editor, undo typing there instead'],
     [[['Esc']], 'Close the dialog'],
     [[['←'], ['→'], ['Home'], ['End']], 'Resize a focused divider'],
   ] },

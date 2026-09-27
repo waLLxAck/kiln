@@ -16,6 +16,11 @@ import { personalTarget, SkillToggles } from './Skills';
 import { machinesEnabled } from './features';
 import { experimentOn } from './Experiments';
 import { experimentsOf, reviewOf, TrialsByRevision } from './TrialLoop';
+import { ProjectCopies } from './ProjectInstalls';
+import { OPEN_RESULT_TAB_EVENT } from './Runs';
+import { DiscardDraftDialog, ItemCodeEditor } from './item-editing';
+import { withDraftContent } from './item-draft';
+import { noteDraft } from './code-editor-state';
 
 const publishPhase: Record<string, string> = { queued: 'Waiting to commit', composing: 'Writing the commit message', committing: 'Committing', pushing: 'Pushing to GitHub' };
 /** Where this approval is on its way to GitHub: in progress, failed with a retry, or landed with its commit. */
@@ -43,8 +48,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [output, setOutput] = useState<{ output: string; reference: string; prompt: string } | null>(null);
   const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
+  // Experimental code editor: CodeMirror, live checks, editable bundled files and fields kept in the draft.
+  const codeEditor = experimentOn(snapshot.settings, 'codeEditor'), [discarding, setDiscarding] = useState(false);
   useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setCompare(null); setOutput(null); setFilePreview(null); }, [item.id]);
-  useEffect(() => { if (editing) localStorage.setItem(`kiln-draft:${item.id}`, JSON.stringify({ content: draft, base })); }, [draft, base, editing, item.id]);
+  useEffect(() => { if (editing && !codeEditor) localStorage.setItem(`kiln-draft:${item.id}`, withDraftContent(localStorage.getItem(`kiln-draft:${item.id}`), draft, base)); }, [draft, base, editing, item.id, codeEditor]);
   useEffect(() => { if (!editing) { setDraft(revision.content); setBase(revision.hash); } }, [revision.hash, editing]);
   const changeTab = (value: string) => { setTab(value); localStorage.setItem('kiln-detail-tab', value); };
   // Only skills and instruction files can be installed into agent folders, so other kinds do not get an Installs tab.
@@ -64,7 +71,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const scroll = useScrollMemory(`detail:${item.id}:${tab}`, true);
   // Agent results live in the tab they belong to (experiments under Trials, notes and skill drafts under Overview), so jump there when a run starts.
   const tabFor = (kind: AgentKind) => changeTab(kind === 'trial' ? 'trials' : 'overview');
-  useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) tabFor(kind); }; window.addEventListener('kiln:agent-started', jump); return () => window.removeEventListener('kiln:agent-started', jump); }, []);
+  // runNotifications: "Open result" on a finished run shows the same tab.
+  useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) tabFor(kind); }; window.addEventListener('kiln:agent-started', jump); window.addEventListener(OPEN_RESULT_TAB_EVENT, jump); return () => { window.removeEventListener('kiln:agent-started', jump); window.removeEventListener(OPEN_RESULT_TAB_EVENT, jump); }; }, []);
   const approvals = detail.approvals.filter(a => a.revision === item.revision && a.trust === 'local');
   // trialLoop: Improve and re-test from experiments. A human judgement of an experiment is not an experiment of its own, so it is not counted.
   const trialLoop = experimentOn(snapshot.settings, 'trialLoop');
@@ -80,6 +88,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const copies = installations.filter(copy => copy.itemId === item.id);
   const installedNames = [...new Set(copies.filter(copy => copy.state === 'installed').map(copy => { const target = snapshot.targets.find(target => target.id === copy.targetId); return copy.scope === 'project' ? target?.name ?? 'project folder' : copy.location === 'agents' ? 'Agents' : copy.provider === 'claude' ? 'Claude' : copy.provider === 'copilot' ? 'Copilot' : 'Codex'; }))];
   const changedCopies = copies.some(copy => copy.state !== 'installed');
+  // projectInstalls: install into any project folder; project copies get their own Projects group on the Installs tab.
+  const projectInstalls = experimentOn(snapshot.settings, 'projectInstalls') && ['skill', 'agent'].includes(item.kind);
   const images = Object.entries(revision.files).filter(([name]) => imageFile(name));
   const openFile = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
   return <article className="detail-pane" aria-label="Selected item">
@@ -110,7 +120,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
           {more && <ContextMenu x={more.x} y={more.y} onClose={() => setMore(null)} entries={[
             { label: 'Copy', icon: <Copy />, onSelect: () => onAction('copy') },
             { label: currentApproved ? 'Unapprove' : 'Approve', icon: <ShieldCheck />, hint: currentApproved ? 'Withdraw approval; installed copies stay in place.' : 'Approve this revision and publish it to GitHub.', onSelect: () => onAction(currentApproved ? 'unapprove' : 'approve') },
-            ...(installable ? [{ label: 'Install into a project folder…', icon: <Download />, disabled: !detail.approvals.length, onSelect: () => onAction('deploy') }] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
+            ...(projectInstalls ? [{ label: 'Install into project…', icon: <Download />, hint: 'Install into any project folder on this machine.', onSelect: () => onAction('install-project') }] : installable ? [{ label: 'Install into a project folder…', icon: <Download />, disabled: !detail.approvals.length, onSelect: () => onAction('deploy') }] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
             { label: 'Open stored file or link', icon: <ExternalLink />, onSelect: () => void perform(() => api('desktop.openItem', { id: item.id })) },
             ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: 'Ask your agent to distill it into prompts, techniques, tools and insights. It becomes a source that links to them.', onSelect: analyse }] : []),
             ...(['archived', 'rejected'].includes(item.status) ? [{ label: 'Back to library', icon: <RotateCcw />, onSelect: () => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, status: 'captured' }); await refresh(); }, 'Back in the library') }] : []),
@@ -145,8 +155,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         {made.length ? <MadeList items={made} onSelect={onSelect} grouped /> : <p className="empty-inline">Nothing made from it yet.</p>}
       </>}
       {tab === 'content' && <>
-        <div className="section-heading"><h3>{item.kind === 'agent' ? item.agent?.filename : item.kind === 'skill' ? 'SKILL.md' : 'Content & metadata'}</h3><button className="text-button" aria-label={editing ? 'Discard local draft' : 'Edit text'} onClick={() => { if (editing) localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(!editing); }}><Pencil size={14} />{editing ? 'Discard local draft' : 'Edit'}</button></div>
-        {editing ? <form onSubmit={event => { event.preventDefault(); const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, ...fields, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}), tags: fields.tags.split(',').map(t => t.trim()).filter(Boolean) } }); localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); await refresh(); }, 'New draft revision saved'); }}>
+        <div className="section-heading"><h3>{item.kind === 'agent' ? item.agent?.filename : item.kind === 'skill' ? 'SKILL.md' : 'Content & metadata'}</h3><button className="text-button" aria-label={editing ? 'Discard local draft' : 'Edit text'} onClick={() => { if (editing && codeEditor) return setDiscarding(true); if (editing) localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(!editing); }}><Pencil size={14} />{editing ? 'Discard local draft' : 'Edit'}</button></div>
+        {editing ? codeEditor ? <ItemCodeEditor item={item} revision={revision} collections={snapshot.collections} draft={draft} onDraft={setDraft} base={base} perform={perform} refresh={refresh} onSaved={() => setEditing(false)} /> : <form onSubmit={event => { event.preventDefault(); const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, ...fields, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}), tags: fields.tags.split(',').map(t => t.trim()).filter(Boolean) } }); localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); await refresh(); }, 'New draft revision saved'); }}>
           {base !== item.revision && <div className="notice warning">This item changed elsewhere. Your unsaved text is preserved. Copy it before cancelling, then compare in History.</div>}<Field label="Title"><input name="title" defaultValue={item.title} required /></Field>{item.kind === 'agent' && <Field label="Agent filename"><input name="agentFilename" defaultValue={item.agent?.filename} required /></Field>}<Field label="Content"><textarea className="code-input editor" value={draft} onChange={e => setDraft(e.target.value)} rows={16} /></Field><div className="form-grid"><Field label="Collection"><input name="collection" defaultValue={item.collection} list="collection-names" placeholder="None (unfiled)" title="Use / for a subfolder. Changing only the collection keeps the revision and its approval." /><datalist id="collection-names">{snapshot.collections.map(name => <option key={name} value={name} />)}</datalist></Field><Field label="Tags"><input name="tags" defaultValue={item.tags.join(', ')} /></Field></div><Field label="Source"><input name="source" defaultValue={item.source} /></Field><Field label="Licence"><input name="licence" defaultValue={item.licence} /></Field><Field label="What changed? (optional)" hint="Leave it empty to use a plain revision note."><input name="summary" placeholder="Brief revision note" /></Field><div className="modal-actions"><span className="muted small">Text autosaves privately. Save creates an unapproved revision.</span><button className="button primary" type="submit">Save revision</button></div>
         </form> : <pre className="content-preview full">{revision.content}</pre>}
         <section className="content-section"><h3>Bundled files</h3>{Object.keys(revision.files).length ? <div className="file-preview-list">{Object.entries(revision.files).map(([name, content]) => <div key={name} className="bundled-file">
@@ -175,13 +185,15 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
       </>}
       {tab === 'installs' && <>
         {['skill', 'agent'].includes(item.kind) && <section className="install-controls"><h3>Install locations</h3><p className="small muted">Choose a location to install, update or remove this item.</p><SkillToggles item={item} providers={providers} snapshot={snapshot} installations={installations} onToggle={onToggleInstall} onSetup={onSetup} /></section>}
+        {projectInstalls && <ProjectCopies item={item} snapshot={snapshot} installations={installations} onInstall={() => onAction('install-project')} onManage={onToggleInstall} onCompare={i => onAction(`compare:${i.itemId}:${i.targetId}`)} />}
         <div className="notice"><b>What installing does</b><p>Kiln copies the approved SKILL.md and bundled files into the agent’s skills folder, for example <code>~/.agents/skills/&lt;name&gt;</code> for Codex or <code>~/.claude/skills/&lt;name&gt;</code> for Claude Code. The agent loads it in new sessions. Removing deletes only that folder. Every install and removal leaves a receipt below.</p></div>
-        <Installations snapshot={snapshot} installations={installations} itemId={item.id} onUninstall={id => onAction(`uninstall:${id}`)} onCompare={i => onAction(`compare:${i.itemId}:${i.targetId}`)} />
+        <Installations snapshot={snapshot} installations={projectInstalls ? installations.filter(i => i.scope !== 'project') : installations} itemId={item.id} onUninstall={id => onAction(`uninstall:${id}`)} onCompare={i => onAction(`compare:${i.itemId}:${i.targetId}`)} />
         <div className="section-heading"><h3>Install receipts</h3><button className="button" onClick={() => onAction('deploy')} disabled={!detail.approvals.length || !['skill', 'agent', 'instruction'].includes(item.kind)} title={machinesEnabled ? 'Install an approved revision into a project folder or an earlier revision anywhere.' : 'Install an approved revision, including an earlier one, into a folder Kiln manages.'}><Rocket size={15} />{machinesEnabled ? 'Install into a project folder…' : 'Install a specific revision…'}</button></div><p className="muted">{machinesEnabled ? 'Receipts record what was written where. Check live drift in Machines before treating an old receipt as current.' : 'Receipts record what was written where. The install locations above show what is in each folder now.'}</p>{!deployed.length && <p className="empty-inline">No install receipts for this item.</p>}
         {[...deployed].reverse().map(r => <div className="trial-card" key={r.id}><div className="section-heading"><b>{snapshot.targets.find(t => t.id === r.targetId)?.name ?? 'Unknown environment'}</b><Badge status={r.status} /></div><code className="path-text">{r.destination}</code><p className="muted">{shortHash(r.revision)} · {date(r.createdAt)} · new session required</p>{r.status === 'applied' && <button className="button" onClick={() => onAction(`rollback:${r.id}`)}><RotateCcw size={14} />Review rollback</button>}{r.error && <p className="error-box">{r.error}</p>}</div>)}
       </>}
     </div>
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
+    {discarding && <DiscardDraftDialog title={item.title} onCancel={() => setDiscarding(false)} onDiscard={() => { localStorage.removeItem(`kiln-draft:${item.id}`); noteDraft(item.id, false); setDiscarding(false); setEditing(false); }} />}
   </article>;
 }
 const kindPlural: Record<string, string> = { prompt: 'Prompts', skill: 'Skills', agent: 'Agents', instruction: 'Instructions', link: 'Links', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', image: 'Images', file: 'Files', reference: 'References', source: 'Sources' };

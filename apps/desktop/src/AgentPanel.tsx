@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AlertTriangle, ArrowRight, Brain, Clock, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep, ChatResult } from '../../../packages/agent/service';
+import { activeRun } from '../../../packages/agent/run-notice';
 import type { Analysis, ItemDetail, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
 import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { RevisionSelect } from './TrialLoop';
 import { Field, Modal, providerName } from './components';
+import { Markdown } from './Markdown';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
 export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomEvent('kiln:agent-started', { detail: { kind } })); }
@@ -16,7 +18,7 @@ const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLoca
 const kilobytes = (n: number) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
 function useElapsed(job: AgentJob) {
   const [, tick] = useState(0);
-  useEffect(() => { if (job.status !== 'running') return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
+  useEffect(() => { if (!activeRun(job)) return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
   const seconds = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000));
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
 }
@@ -24,7 +26,7 @@ function useElapsed(job: AgentJob) {
 function RunMeta({ job }: { job: AgentJob }) {
   const elapsed = useElapsed(job);
   return <div className="run-meta">
-    <span title="Model the CLI was asked to use">{job.model || (job.status === 'running' ? 'Resolving model…' : 'CLI default model')}</span>
+    <span title="Model the CLI was asked to use">{job.model || (activeRun(job) ? 'Resolving model…' : 'CLI default model')}</span>
     {job.kind === 'trial' && <span title={job.workspace || 'Private run folder'}>Project: {job.workspace || 'Isolated example'}</span>}
     {job.effort && <span title="Reasoning effort">{job.effort} reasoning</span>}
     <span title="Wall-clock time">{elapsed}</span>
@@ -35,8 +37,9 @@ function RunMeta({ job }: { job: AgentJob }) {
 }
 /** Compact one-line strip shown on every tab while a run is active, so the tab content underneath stays visible. */
 export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: AgentJob[]; onOpen: (kind: AgentKind) => void }) {
-  const running = jobs.filter(job => job.itemId === itemId && job.status === 'running');
-  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}><Loader2 size={14} className="spin"/><b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
+  // A queued run (runNotifications) shows here too, as Queued, so it can be cancelled before it starts.
+  const running = jobs.filter(job => job.itemId === itemId && activeRun(job));
+  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}>{job.status === 'queued' ? <Clock size={14} /> : <Loader2 size={14} className="spin"/>}<b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.status === 'queued' && 'Queued · '}{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
 }
 function Steps({ job }: { job: AgentJob }) {
   useElapsed(job);
@@ -59,7 +62,7 @@ function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
   const start = (provider: RunProviderId, context: string, workspace?: string, revision?: string) => { setBusy(true); setError(''); void api('agent.start', { id: itemId, kind, context, provider, workspace, ...(revision ? { revision } : {}) }).then(() => { agentStarted(kind); onClose(); }).catch(e => { setError(String(e)); setBusy(false); }); };
   return { busy, error, start };
 }
-export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail }) {
+export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions, knownProjects = false }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail; /** projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -67,7 +70,7 @@ export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace 
   return <Modal title="Run an experiment" subtitle="Test this revision against a project or an isolated example. The output and agent assessment are saved together." onClose={onClose}>
     <ProviderSelect providers={providers} value={provider} onChange={setProvider} />
     {revisions && <RevisionSelect detail={revisions} value={revision} onChange={setRevision} disabled={busy} />}
-    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} />
+    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} known={knownProjects} />
     <p className="muted small">Experiments inspect files read-only. Tasks that require edits or unavailable tools are reported as uncertain.</p>
     <Field label="What should it try? (optional)"><textarea rows={4} value={context} onChange={e => setContext(e.target.value)} placeholder="Add an example input or the situation to test." /></Field>
     {error && <p role="alert" className="error-box">{error}</p>}
@@ -86,7 +89,7 @@ export function CreateSkillDialog({ itemId, title, providers, defaultProvider, o
   </Modal>;
 }
 /** The turns of one conversation, oldest first, and the box to add the next one. Each turn is its own job so its steps and usage stay visible. */
-export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem, draft }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void; /** Text to put in the composer, unsent; a new nonce puts it there again. */ draft?: { text: string; nonce: number } }) {
+export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem, draft, markdown, extra }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void; /** Text to put in the composer, unsent; a new nonce puts it there again. */ draft?: { text: string; nonce: number }; /** chatHistory: render replies as Markdown. */ markdown?: boolean; /** chatHistory: shown under a turn's reply, such as the changes it made. */ extra?: (turn: AgentJob) => ReactNode }) {
   const [text, setText] = useState('');
   const composer = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (!draft) return; setText(draft.text); requestAnimationFrame(() => { composer.current?.focus(); composer.current?.setSelectionRange(0, 0); }); }, [draft?.nonce]);
@@ -96,10 +99,11 @@ export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOp
     {turns.length > 0 && <ol className="chat-turns">{turns.map(turn => <li key={turn.id}>
       <div className="chat-question"><span>You{turn.focus?.title ? <> · about {onOpenItem && turn.focus.itemId ? <button type="button" className="text-button" onClick={() => onOpenItem(turn.focus!.itemId!)}>{turn.focus.title}</button> : turn.focus.title}</> : turn.focus?.collection ? ` · in ${turn.focus.collection}` : ''}</span><p>{turn.question}</p></div>
       <div className="chat-reply"><span>{providerName[turn.provider]}</span>
-        {turn.status === 'running' && <p className="muted"><Loader2 size={13} className="spin" /> {turn.phase}</p>}
-        {turn.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: turn.id })}>Cancel</button>}
+        {activeRun(turn) && <p className="muted">{turn.status === 'queued' ? <><Clock size={13} /> Queued · </> : <Loader2 size={13} className="spin" />} {turn.phase}</p>}
+        {activeRun(turn) && <button className="text-button" onClick={() => void api('agent.cancel', { id: turn.id })}>Cancel</button>}
         {turn.error && <p className="error-box">{turn.error}</p>}
-        {turn.result && 'reply' in turn.result && <pre className="chat-text">{(turn.result as ChatResult).reply}</pre>}
+        {turn.result && 'reply' in turn.result && (markdown ? <div className="chat-markdown"><Markdown>{(turn.result as ChatResult).reply}</Markdown></div> : <pre className="chat-text">{(turn.result as ChatResult).reply}</pre>)}
+        {extra?.(turn)}
         <Steps job={turn} />
         <RunMeta job={turn} />
         <button className="text-button" onClick={() => void api('desktop.openAgentJob', { id: turn.id }).catch(e => setFileError(String(e)))}>Run files</button>
@@ -130,9 +134,9 @@ export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, coll
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
   const retry = (job: AgentJob) => { void api('agent.start', { id: itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind)).catch(e => setError(String(e))); };
   return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
-    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status}</span></div>
+    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
     <RunMeta job={job} />
-    {job.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
+    {activeRun(job) && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
     <Steps job={job} />
     {job.error && <p className="error-box">{job.error}</p>}
     {job.result && ('entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>

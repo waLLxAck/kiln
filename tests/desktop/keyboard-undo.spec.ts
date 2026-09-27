@@ -60,7 +60,8 @@ test('keyboardUndo: list keys, Enter, the shortcut sheet, menus, undo of trash, 
     await page.keyboard.press('Home');
     await expect(card(page, 'Alpha')).toBeFocused(); await expect(card(page, 'Alpha')).toHaveClass(/selected/);
     await page.keyboard.press('PageDown');
-    expect(await focusedTitle(page)).not.toBe('Alpha');
+    await expect.poll(() => focusedTitle(page)).not.toBe('Alpha');
+    await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('selected'))).toBe(true);
     await page.keyboard.press('Home');
     // Shift+↓ twice picks three rows from the open one.
     await page.keyboard.press('Shift+ArrowDown'); await page.keyboard.press('Shift+ArrowDown');

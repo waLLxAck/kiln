@@ -1,5 +1,5 @@
 import { skillLocation, skillLocationLabel, targetSkillsFolder, sharedSkillReaders, compatibilityChecked } from '../../../packages/providers/skill-locations';
-import { agentFolder } from '../../../packages/domain/agent-format';
+import { agentFolder } from '../../../packages/domain/agent-folder';
 import { useEffect, useState } from 'react';
 import { Check, CircleArrowUp, Download, FileDiff, FolderOpen, Link2, Settings, TriangleAlert } from 'lucide-react';
 import type { Installation, Item, Provider, ProviderId, Snapshot, Target } from '../../../packages/protocol/schema';
@@ -58,7 +58,8 @@ export function SkillLocationSettings({ providers, targets, onSet, onScan }: { p
 /** Explains exactly what will happen in the agent folder before installing or removing. */
 export function SkillInstallDialog({ item, provider, target, installations, approved, settings, onClose, onDone }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; /** Experimental flags: installUpdates adds Update, keepOutsideEdits adds Keep these changes. */ settings?: Snapshot['settings']; onClose: () => void; onDone: (message: string) => void }) {
   const { state, installation } = skillState(item, target, installations);
-  const label = item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)];
+  // Project copies (experimental projectInstalls) name their project, since every project has its own Claude or Agents folder.
+  const label = `${target.scope === 'project' ? `${target.name} · ` : ''}${item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)]}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   // A "differs" or "drifted" verdict opens with the file comparison visible, so the decision is made on evidence rather than a label.
   const [comparing, setComparing] = useState(state === 'differs' || state === 'drifted');

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Item } from '../../../packages/protocol/schema';
 import { pageStep, rangeIds, targetRow, TYPE_AHEAD_MS, typeAheadKey, typeAheadMatch } from './keyboard-undo';
 
@@ -22,14 +22,16 @@ type ListContext = { matching: Item[]; selected: string; picked: number; menuOpe
  *   typing continues (under a second between keys) every letter, digit and space extends the match, so shortcuts wait.
  */
 export function useListKeys() {
-  const typed = useRef({ text: '', at: 0 });
+  const typed = useRef({ text: '', at: 0 }), pending = useRef<number | null>(null);
+  // Picking several rows re-renders them without the swipe wrapper, which drops focus. Focusing again right after the commit,
+  // before the next key arrives, keeps fast key presses (Shift+↓ ↓) on the list.
+  useLayoutEffect(() => { if (pending.current === null) return; document.querySelectorAll<HTMLElement>('.item-list .item-card')[pending.current]?.focus(); });
   return (event: ReactKeyboardEvent<HTMLElement>, ctx: ListContext) => {
     const row = event.target;
     if (ctx.menuOpen || !(row instanceof HTMLElement) || !row.classList.contains('item-card')) return false;
     const list = event.currentTarget, rows = [...list.querySelectorAll<HTMLElement>('.item-card')], ids = ctx.matching.map(i => i.id);
     const at = Math.max(0, rows.indexOf(row));
-    const focusRow = (index: number) => requestAnimationFrame(() => list.querySelectorAll<HTMLElement>('.item-card')[index]?.focus());
-    // Picking several rows re-renders them without the swipe wrapper, which drops focus; keep it on the row so shortcuts still reach the list.
+    const focusRow = (index: number) => { pending.current = index; rows[index]?.focus(); requestAnimationFrame(() => { if (pending.current === index) pending.current = null; }); };
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'a') { focusRow(at); return false; }
     if (event.ctrlKey || event.metaKey || event.altKey) return false;
     const to = targetRow(event.key, at, ids.length, pageStep(list.clientHeight, row.offsetHeight + 2));

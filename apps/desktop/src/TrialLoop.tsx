@@ -69,7 +69,7 @@ export function TrialsByRevision({ detail, jobs, approved, approve, onAction, pe
   const revisionOf = new Map(detail.revisions.map(r => [r.hash, r]));
   const newest = (hash: string) => revisionOf.get(hash)?.createdAt ?? experiments.filter(t => t.revision === hash).map(t => t.createdAt).sort().at(-1) ?? '';
   const groups = [...new Set(experiments.map(t => t.revision))].sort((a, b) => a === item.revision ? -1 : b === item.revision ? 1 : newest(b).localeCompare(newest(a)));
-  const running = jobs.some(j => j.itemId === item.id && j.kind === 'trial' && j.status === 'running');
+  const running = jobs.some(j => j.itemId === item.id && j.kind === 'trial' && (j.status === 'running' || j.status === 'queued'));
   const retest = (t: Trial, job: AgentJob | undefined) => {
     // Without this machine's run record the project and context are unknown, so the Test dialog asks again.
     if (!job) { onAction('trial'); return; }
