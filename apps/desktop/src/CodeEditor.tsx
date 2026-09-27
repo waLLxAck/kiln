@@ -8,15 +8,16 @@ export type CodeEditorProps = {
   /** Ctrl/Cmd+S inside the editor. Without it the key goes on to the surrounding view. */ onSave?: () => void;
   diagnostics?: EditorDiagnostic[]; /** Heading for the diagnostics list. */ diagnosticsTitle?: string; className?: string;
 };
-// CodeMirror is loaded only when an editor is first shown, so the app starts without it while the experiment is off.
+// CodeMirror is loaded only when an editor is first shown, so the app starts without it. The placeholder has no label, so
+// anything looking for the editor by its label waits for the real one.
 const View = lazy(() => import('./CodeMirrorView'));
 
 /**
- * The experimental code editor (`codeEditor` flag): CodeMirror with line numbers, find and replace (Ctrl/Cmd+F, Ctrl/Cmd+H),
+ * The code editor: CodeMirror with line numbers, find and replace (Ctrl/Cmd+F, Ctrl/Cmd+H),
  * undo history, bracket matching and highlighting for Markdown with frontmatter, JSON, YAML, TOML and shell files.
  */
 export function CodeEditor(props: CodeEditorProps) {
   return <div className={`code-editor ${props.className ?? ''}`}>
-    <Suspense fallback={<pre className="code-editor-loading" aria-busy="true" aria-label={props.ariaLabel}>{props.value}</pre>}><View {...props} /></Suspense>
+    <Suspense fallback={<pre className="code-editor-loading" aria-busy="true">{props.value}</pre>}><View {...props} /></Suspense>
   </div>;
 }
