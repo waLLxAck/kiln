@@ -8,7 +8,7 @@ export const experiments = [
   { id: 'keepOutsideEdits', title: 'Keep changes made outside Kiln', description: 'When a Kiln-installed skill was edited in its folder, "Keep these changes" saves that copy as a new draft of the same item.' },
   { id: 'codeEditor', title: 'Code editor', description: 'A real editor for items and config files: highlighting, line numbers, find, Ctrl+S, live SKILL.md checks and editable bundled text files.' },
   { id: 'autoSync', title: 'Background sync with GitHub', description: 'Checks GitHub every few minutes, shows what is new in the top bar with one-click Pull, and lets Merge run while you have drafts.' },
-  { id: 'trialLoop', title: 'Improve and re-test from experiments', description: 'Experiment results offer "Improve with agent" and "Re-test current revision", group by revision, and get longer time limits.' },
+  { id: 'trialLoop', title: 'Improve and re-test from experiments', description: 'Experiment results offer "Improve with agent", "Re-test current revision" and "Mark as passed", group by revision, and runs get 15 minutes.' },
   { id: 'runNotifications', title: 'Run notifications and runs list', description: 'A desktop notification and a toast when an agent run finishes, and a list of every active run in the top bar.' },
   { id: 'betterSearch', title: 'Steadier, ranked search', description: 'Search keeps results on screen while typing, ranks by relevance, and quick search confirms the copy and hides when you click away.' },
   { id: 'chatHistory', title: 'Docked chat with history', description: 'Ask the agent opens beside the item, keeps each item\'s conversation, renders Markdown and shows changes the agent made.' },
