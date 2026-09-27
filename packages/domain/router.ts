@@ -17,13 +17,17 @@ import { applyInfrastructure, defaultParent, infrastructurePlan, initialiseRepos
 import { importLocalSkills, scanLocalSkills } from './skills-import';
 import { applyMigration, migrationPlan } from '../git/migration';
 import { HomeFiles } from '../home/service';
+import { FleetService, type FleetOptions } from '../fleet/service';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
-export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles };
+export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles; /** Machine reports: app version, publish timing. Reporting after changes starts only with `fleet.start`. */ fleet?: Omit<FleetOptions, 'log'> };
+/** Calls that change what this machine's report says; each schedules a publish once reporting has started. */
+const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore']);
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
   readonly home: HomeFiles;
+  readonly fleet: FleetService;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
@@ -31,6 +35,7 @@ export class Router {
     this.publisher = new Publisher(wb, options.log, options.composer);
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
+    this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
   }
   /** Saves the revision at once, then fills in a generated note in the background when the user left "What changed?" empty. */
@@ -50,6 +55,12 @@ export class Router {
     return updated;
   }
   call(method: string, args: unknown = {}) {
+    const result = this.dispatch(method, args);
+    if (reportTriggers.has(method)) this.fleet.changed();
+    if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge') this.fleet.afterPull();
+    return result;
+  }
+  private dispatch(method: string, args: unknown) {
     switch (method) {
       case 'snapshot': return { ...this.wb.snapshot(), publish: this.publisher.list() };
       case 'publish.jobs': return this.publisher.list();
@@ -100,7 +111,14 @@ export class Router {
       case 'skills.scan': return this.deployments.scan(z.object({ targetId: idSchema }).parse(args).targetId);
       case 'skills.cleanEntry': return this.deployments.cleanScanEntry(args);
       case 'skills.import': return this.deployments.importExternal(args);
-      case 'skills.sync': return this.deployments.syncInstalls();
+      case 'skills.sync': return this.fleet.sync();
+      case 'fleet.view': return this.fleet.view(args);
+      case 'fleet.live': return this.fleet.live();
+      case 'fleet.report': return this.fleet.report();
+      case 'fleet.start': return this.fleet.start();
+      case 'fleet.rename': return this.fleet.rename(args);
+      case 'fleet.mark': return this.fleet.mark(args);
+      case 'fleet.update': return this.fleet.update(args);
       case 'targets.list': return this.wb.targets();
       case 'targets.remove': return this.wb.removeTarget(args);
       case 'items.reorder': return this.wb.reorderItems(args);
