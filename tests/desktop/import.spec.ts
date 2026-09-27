@@ -19,7 +19,7 @@ test('one import area accumulates selection, drop and paste into one item', asyn
       { name: 'clip.mp4', mimeType: 'video/mp4', buffer: Buffer.from('video') },
     ]);
     await picker.setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('second') });
-    await page.locator('.quick-capture').evaluate(element => {
+    await page.locator('.capture-composer').evaluate(element => {
       const drop = new DataTransfer(); drop.items.add(new File(['image'], 'photo.png', { type: 'image/png' }));
       element.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: drop }));
       const paste = new DataTransfer(); paste.setData('text/plain', 'https://example.com/reference');
@@ -33,10 +33,10 @@ test('one import area accumulates selection, drop and paste into one item', asyn
     const lightbox = page.getByRole('dialog', { name: 'Preview of photo.png' });
     await expect(lightbox).toBeVisible(); await expect(lightbox.locator('img')).toHaveAttribute('alt', 'photo.png');
     await page.keyboard.press('Escape');
-    await expect(lightbox).toHaveCount(0); await expect(page.getByRole('dialog', { name: 'Add to library' })).toBeVisible();
-    await expect(page.getByLabel('Idea', { exact: true })).toHaveValue('https://example.com/reference');
-    await page.getByRole('button', { name: 'Save only', exact: true }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(lightbox).toHaveCount(0); await expect(page.locator('.capture-file')).toHaveCount(6);
+    await expect(page.getByLabel('Capture', { exact: true })).toHaveValue('https://example.com/reference');
+    await page.getByRole('button', { name: /^Save 6 files/ }).click();
+    await expect(page.locator('.capture-file')).toHaveCount(0);
     const snapshot = await page.evaluate(() => (window as any).kiln.call('snapshot'));
     expect(snapshot.items).toHaveLength(1);
     const detail = await page.evaluate(id => (window as any).kiln.call('items.read', { id }), snapshot.items[0].id);

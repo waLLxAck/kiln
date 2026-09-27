@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { showKind } from './fixture';
 
 test('authorized live install/uninstall affects only the disposable fixture in Codex and Claude', async () => {
   test.skip(process.env.KILN_LIVE_TEST !== '1', 'Requires explicit live-test opt-in and user-authorized library.');
@@ -22,7 +23,7 @@ test('authorized live install/uninstall affects only the disposable fixture in C
   fs.writeFileSync(path.join(evidence, 'fixture-validation', 'SKILL.md'), content);
   let fixtureId = '';
   try {
-    await page.getByRole('tab', { name: /^Skills/ }).click();
+    await showKind(page, 'skill');
     const originalItems = await page.evaluate(async () => (await window.kiln.call<{ items: { id: string; source: string }[] }>('snapshot')).items.filter(i => i.source.startsWith('repository:')));
     expect(originalItems).toHaveLength(217);
     await page.screenshot({ path: path.join(evidence, 'all-skills.png') });
@@ -70,8 +71,8 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     expect(errors).toEqual([]);
     const result = { fixtureId, fixtureName, destinations, installedAndVerified: true, uninstalledAndVerified: true, existingEntriesVerifiedUnchanged: Object.keys(before.installed).length, githubConnectionVerified: repository, catalogSkillsVerified: 217, completedAt: new Date().toISOString() };
     fs.writeFileSync(path.join(evidence, 'live-install-result.json'), JSON.stringify(result, null, 2));
-    await page.getByRole('tab', { name: /^Skills/ }).click();
-    await page.getByRole('button', { name: /build-knowledge-system/ }).first().click();
+    await showKind(page, 'skill');
+    await page.locator('.item-card', { hasText: /build-knowledge-system/ }).first().click();
     await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'overview', exact: true }).click();
     await page.screenshot({ path: path.join(evidence, 'migrated-library.png') });
   } finally {

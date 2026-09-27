@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { desktopEnv } from './fixture';
+import { desktopEnv, showKind } from './fixture';
 
 test('agents live in Library, import intact, edit as drafts and install for their client', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-agents-ui-'));
@@ -13,7 +13,7 @@ test('agents live in Library, import intact, edit as drafts and install for thei
   const app = await electron.launch({ ...(process.env.KILN_AGENTS_EXE ? { executablePath: process.env.KILN_AGENTS_EXE } : { args: ['.'] }), env: { ...desktopEnv(root), KILN_HOME: home } });
   try {
     const page = await app.firstWindow();
-    await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add agents', exact: true })).toHaveCount(0);
     const target = await page.evaluate(async home => window.kiln.call<any>('targets.enroll', { name: 'Copilot agents', provider: 'copilot', root: home, scope: 'personal' }), home);
     await page.reload();
@@ -28,7 +28,7 @@ test('agents live in Library, import intact, edit as drafts and install for thei
     const imported = await page.evaluate(async () => (await window.kiln.call<any>('snapshot')).items.find((i: any) => i.kind === 'agent'));
     expect(imported.agent).toEqual({ provider: 'copilot', filename: 'reviewer.md' });
     await page.reload();
-    await page.getByRole('tab', { name: /^Agents/ }).click();
+    await showKind(page, 'agent');
     await page.locator('.item-card').filter({ hasText: 'careful-reviewer' }).click();
     await page.getByRole('button', { name: 'Manage installations', exact: true }).click();
     await page.getByRole('group', { name: 'Installed for' }).getByRole('button', { name: /Copilot.*found/ }).click();

@@ -25,8 +25,8 @@ test('prepare keeps the app open and usable; restart waits for a second click ev
     expect(app.process().pid).toBe(pid); expect(app.process().exitCode).toBeNull();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button', { name: 'Capture Ctrl N', exact: true }).click();
-    await page.getByLabel('Idea', { exact: true }).fill('I can still work while the update waits.');
-    await expect(page.getByLabel('Idea', { exact: true })).toHaveValue('I can still work while the update waits.');
+    await page.getByLabel('Capture', { exact: true }).fill('I can still work while the update waits.');
+    await expect(page.getByLabel('Capture', { exact: true })).toHaveValue('I can still work while the update waits.');
     await page.keyboard.press('Escape');
     await page.screenshot({ path: 'artifacts/update-ready.png' });
     fs.unlinkSync(installer);

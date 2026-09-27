@@ -25,7 +25,7 @@ test('comparing a CRLF folder copy shows only the real change, with the differin
     fs.writeFileSync(path.join(destination, 'SKILL.md'), folder);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await page.getByRole('button', { name: 'Refresh library' }).click();
-    await page.getByRole('button', { name: /Desktop review skill/ }).click();
+    await page.locator('.item-card', { hasText: /Desktop review skill/ }).click();
     await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'installs', exact: true }).click();
     await page.getByRole('button', { name: 'Compare', exact: true }).click();
     const dialog = page.getByRole('dialog');

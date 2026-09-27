@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { desktopEnv } from './fixture';
+import { desktopEnv, showKind } from './fixture';
 
 async function launch() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-ux-'));
@@ -36,50 +36,58 @@ test('formatted reading, primary actions, simple status and save without analysi
     await page.getByRole('button', { name: 'More', exact: true }).click();
     await expect(page.getByRole('menuitem', { name: /^Approve/ })).toBeVisible();
     await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await page.keyboard.press('Escape');
     await page.locator('.item-card').filter({ hasText: 'Resource example' }).click();
     await expect(page.locator('.detail-actions > .primary')).toHaveText('Open link');
+    // Capture goes back to the list and focuses the composer; Save as draft keeps the text without an agent.
     await page.getByRole('button', { name: /^Capture/ }).click();
-    await page.getByRole('textbox', { name: 'Idea' }).fill('A snippet saved without AI');
-    await page.getByRole('button', { name: 'Save only', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'A snippet saved without AI', exact: true })).toBeVisible();
+    await page.getByRole('textbox', { name: 'Capture' }).fill('A snippet saved without AI');
+    await page.getByRole('button', { name: /^Save as draft/ }).click();
+    await expect(page.locator('.item-card.selected')).toContainText('A snippet saved without AI');
     expect(await page.evaluate(() => (window as any).kiln.call('agent.jobs'))).toEqual([]);
     await page.screenshot({ path: 'artifacts/ux-0.15.0-reading.png' });
   } finally { await app.close(); }
 });
 
-test('library views retain search, selection and scroll across sections and reload', async () => {
+test('library views retain tokens, search, the open item and scroll across sections and reload', async () => {
   const { app, page } = await launch();
   try {
     for (let i = 0; i < 35; i++) await create(page, `Remember ${String(i).padStart(2, '0')}`, 'prompt', Array.from({ length: 45 }, (_, n) => `Paragraph ${n}. Keep this useful context.`).join('\n\n'));
     await create(page, 'Other link', 'link', 'https://example.com');
     await page.getByRole('button', { name: 'Refresh library' }).click();
     await page.locator('.sidebar .nav-item').filter({ hasText: 'UX examples' }).click();
-    await page.getByRole('tab', { name: /^Prompts/ }).click();
-    await page.getByRole('textbox', { name: 'Search library' }).fill('Remember');
+    await showKind(page, 'prompt');
+    await page.getByRole('combobox', { name: 'Search library' }).fill('Remember');
     await expect(page.locator('.item-card')).toHaveCount(35);
+    await page.locator('.item-list').evaluate(node => { node.scrollTop = 400; });
+    await expect.poll(() => page.locator('.item-list').evaluate(node => node.scrollTop)).toBeGreaterThan(300);
+    // Opening an item replaces the list; Esc brings the list back where it was.
     await page.locator('.item-card').filter({ hasText: 'Remember 20' }).click();
+    await expect(page.getByRole('heading', { name: 'Remember 20', exact: true })).toBeVisible();
+    await expect(page.getByRole('toolbar', { name: 'Item navigation' })).toContainText(/\d+ of 35/);
     await page.getByRole('button', { name: /^Status/ }).click();
     await page.getByRole('menuitem', { name: /^Captured/ }).click();
     await page.locator('.detail-scroll').evaluate(node => { node.scrollTop = 300; });
-    await page.locator('.item-list').evaluate(node => { node.scrollTop = 400; });
-    await expect.poll(() => page.locator('.item-list').evaluate(node => node.scrollTop)).toBeGreaterThan(300);
     await page.getByRole('button', { name: 'Settings & repository' }).click();
-    await page.getByRole('button', { name: /^Library/ }).click();
-    await expect(page.getByRole('textbox', { name: 'Search library' })).toHaveValue('Remember');
-    await expect(page.getByRole('tab', { name: /^Prompts/ })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
+    // Coming back from another section restores the view as it was, open item included.
     await expect(page.getByRole('heading', { name: 'Remember 20', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Status/ })).toContainText('Captured');
     await expect.poll(() => page.locator('.detail-scroll').evaluate(node => node.scrollTop)).toBeGreaterThan(200);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toHaveValue('Remember');
+    await expect(page.getByRole('button', { name: 'Remove kind: prompt' })).toBeVisible();
+    await expect(page.locator('.item-card.selected')).toContainText('Remember 20');
     await expect.poll(() => page.locator('.item-list').evaluate(node => node.scrollTop)).toBeGreaterThan(300);
-    await page.getByRole('tab', { name: /^Links/ }).click();
-    await expect(page.getByRole('textbox', { name: 'Search library' })).toHaveValue('');
-    await page.getByRole('tab', { name: /^Prompts/ }).click();
-    await expect(page.getByRole('textbox', { name: 'Search library' })).toHaveValue('Remember');
+    // Another stage is another view with its own query; coming back restores this one.
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Drafts' }).click();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toHaveValue('');
+    await page.locator('.sidebar .nav-item').filter({ hasText: 'UX examples' }).click();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toHaveValue('Remember');
     await page.reload();
-    await expect(page.getByRole('textbox', { name: 'Search library' })).toHaveValue('Remember');
-    await expect(page.getByRole('heading', { name: 'Remember 20', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Status/ })).toContainText('Captured');
-    await expect.poll(() => page.locator('.detail-scroll').evaluate(node => node.scrollTop)).toBeGreaterThan(200);
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toHaveValue('Remember');
+    await expect(page.locator('.item-card.selected')).toContainText('Remember 20');
     await expect.poll(() => page.locator('.item-list').evaluate(node => node.scrollTop)).toBeGreaterThan(300);
   } finally { await app.close(); }
 });
@@ -90,9 +98,9 @@ test('quick search previews content and opens the exact item through a filtered 
     const item = await create(page, 'Search target');
     await create(page, 'Another resource', 'link', 'https://example.com');
     await page.getByRole('button', { name: 'Refresh library' }).click();
-    await page.getByRole('tab', { name: /^Links/ }).click();
+    await showKind(page, 'link');
     const windowPromise = app.waitForEvent('window');
-    await page.getByRole('button', { name: /Quick search/ }).click();
+    await page.getByRole('button', { name: /Search or run a command/ }).click();
     const palette = await windowPromise;
     await palette.getByRole('combobox', { name: 'Quick search' }).fill('Search target');
     await expect(palette.locator('.palette-preview h2')).toHaveText('Search target');
@@ -100,6 +108,7 @@ test('quick search previews content and opens the exact item through a filtered 
     await palette.screenshot({ path: 'artifacts/ux-0.15.0-search.png' });
     await palette.getByRole('button', { name: 'Open item', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Search target', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.locator('.item-card.selected')).toContainText('Search target');
     expect(await page.evaluate(() => localStorage.getItem('kiln-selected'))).toBe(item.id);
   } finally { await app.close(); }

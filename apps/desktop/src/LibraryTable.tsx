@@ -15,7 +15,7 @@ type Props = {
   selected: string; picked: string[]; sort: NonNullable<Sort>; onSort: (key: SortKey) => void;
   onClick: (event: MouseEvent, item: Item) => void; onMenu: (event: MouseEvent, item: Item) => void;
   /** Keyboard: move focus, open, pick everything, and the menu's single-key shortcuts. */
-  onFocusRow: (id: string) => void; onOpen: (id: string) => void; onSelectAll: () => void; onShortcut: (event: KeyboardEvent) => boolean;
+  onFocusRow: (id: string) => void; onOpen: (id: string) => void; onSelectAll: () => void; onShortcut: (event: KeyboardEvent, id: string) => boolean;
   canSwipe: (item: Item) => boolean; onArchive: (item: Item) => void;
   onCopy: (item: Item) => void; onTest: (item: Item) => void; installEntries: (item: Item) => MenuEntry[];
   scroll: { ref: Ref<HTMLDivElement>; onScroll: (event: UIEvent<HTMLDivElement>) => void };
@@ -38,9 +38,11 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
   const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); onSelectAll(); return; }
     if (install || !(event.target instanceof HTMLElement) || !event.target.classList.contains('item-card')) return;
-    if (event.key === 'Enter') { event.preventDefault(); if (selected) onOpen(selected); return; }
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') { if (onShortcut(event)) event.preventDefault(); return; }
-    const index = visible.findIndex(i => i.id === selected), next = visible[index < 0 ? 0 : index + (event.key === 'ArrowDown' ? 1 : -1)];
+    // Keys act on the row that has focus, which Tab or a script may have moved away from the highlighted one.
+    const id = event.target.dataset.id ?? selected;
+    if (event.key === 'Enter') { event.preventDefault(); if (id) onOpen(id); return; }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') { if (onShortcut(event, id)) event.preventDefault(); return; }
+    const index = visible.findIndex(i => i.id === id), next = visible[index < 0 ? 0 : index + (event.key === 'ArrowDown' ? 1 : -1)];
     if (!next) return;
     event.preventDefault(); onFocusRow(next.id); focusSelected();
   };
@@ -60,7 +62,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
         {!shut && g.items.map(item => { const { published, trial, from, made } = row(item), isPicked = many && picked.includes(item.id);
           const subtitle = [from ? `from ${from.label}` : '', item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
           return <SwipeToArchive key={item.id} enabled={!many && canSwipe(item)} label="Archive" onArchive={() => onArchive(item)}>
-            <div role="row" tabIndex={item.id === focusable ? 0 : -1} aria-selected={item.id === selected || isPicked} className={`item-card lib-row ${collectionShown ? 'no-collection' : ''} ${selected === item.id ? 'selected' : ''} ${isPicked ? 'picked' : ''} ${install?.item.id === item.id ? 'menu-open' : ''}`}
+            <div role="row" data-id={item.id} tabIndex={item.id === focusable ? 0 : -1} aria-selected={item.id === selected || isPicked} className={`item-card lib-row ${collectionShown ? 'no-collection' : ''} ${selected === item.id ? 'selected' : ''} ${isPicked ? 'picked' : ''} ${install?.item.id === item.id ? 'menu-open' : ''}`}
               onClick={event => onClick(event, item)} onContextMenu={event => onMenu(event, item)}>
               <span className={`item-kind ${item.kind}`} role="cell" title={item.kind}><KindIcon kind={item.kind} size={14} /></span>
               <span className="lib-title" role="cell"><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<span className="lib-sub" title={from ? `From ${from.full}` : subtitle || undefined}>{subtitle}</span></span>

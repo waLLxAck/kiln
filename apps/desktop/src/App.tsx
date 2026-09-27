@@ -289,8 +289,6 @@ export default function App() {
   /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
   const shown = groups.flatMap(g => g.items);
   const bulkItems = shown.filter(item => bulkIds.includes(item.id));
-  /** What right-click and the single-key shortcuts act on: the picked rows when there are several, otherwise the focused row. */
-  const chosen = bulkItems.length > 1 ? bulkItems : shown.filter(i => i.id === selected);
   /** Plain click opens the item. Ctrl-click toggles a row in the selection; Shift-click extends it from the focused row, like a file manager. */
   const clickRow = (event: MouseEvent, item: Item) => {
     const ids = shown.map(i => i.id);
@@ -399,7 +397,7 @@ export default function App() {
       : <><p>{section === 'trash' ? 'The trash is empty.' : section === 'archive' ? 'Nothing archived or rejected.' : stage ? `Nothing in ${stageName} right now.` : collection ? 'Nothing in this collection yet.' : 'Nothing here yet.'}</p>{section === 'library' && <button className="text-button" onClick={() => startCapture()}>Capture your first item <Plus size={13} /></button>}</>}
     {!live.length && section === 'library' && <div className="welcome-import"><h2>Already have skills?</h2><p>Bring them in as drafts, then approve the ones you want in your Kiln repository. Nothing is moved where it lives now.</p><div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'import-local' })}><Download size={15} />Import my installed skills</button><button className="button" onClick={() => setDialog({ name: 'import-repo' })}><Upload size={15} />Import from a skills repository…</button></div></div>}
   </div>;
-  const listKeys = (event: KeyboardEvent) => { const hit = chosen.length > 0 && !menu && shortcutEntry(menuEntries(chosen), event.nativeEvent); if (hit) hit.onSelect?.(); return Boolean(hit); };
+  const listKeys = (event: KeyboardEvent, id: string) => { const target = bulkItems.length > 1 ? bulkItems : shown.filter(i => i.id === id); const hit = target.length > 0 && !menu && shortcutEntry(menuEntries(target), event.nativeEvent); if (hit) { if (id !== selected && bulkItems.length < 2) select(id); hit.onSelect?.(); } return Boolean(hit); };
   const libraryPage = <section className="library-page">
     <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
     {section === 'library' && <CaptureComposer request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />}
