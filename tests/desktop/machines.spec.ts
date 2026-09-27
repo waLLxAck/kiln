@@ -6,8 +6,6 @@ import { build } from 'vite';
 import { desktopDefines } from '../../apps/desktop/build-flags';
 import { execFileSync } from 'node:child_process';
 import { desktopEnv, readyLibrary } from './fixture';
-import { Workbench } from '../../packages/domain/workbench';
-import { Router } from '../../packages/domain/router';
 
 type Page = Awaited<ReturnType<Awaited<ReturnType<typeof electron.launch>>['firstWindow']>>;
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main navigation' });
@@ -70,7 +68,9 @@ test('the matrix shows this machine live and another machine from its report, an
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-machines-fleet-'));
   const library = readyLibrary(root), origin = path.join(root, 'origin.git'), home = path.join(root, 'home'); fs.mkdirSync(home);
   const app = await electron.launch({ args: ['.'], env: desktopEnv(root, library) });
-  let other: { wb: Workbench; router: Router } | undefined;
+  /** Runs a step on the other machine (tests/desktop/second-machine.ts) and returns its JSON output. */
+  const studio = (step: 'setup' | 'sync') => JSON.parse(execFileSync(process.execPath, [path.resolve('node_modules/tsx/dist/cli.mjs'), path.resolve('tests/desktop/second-machine.ts'), clone, path.join(root, 'studio', 'private'), studioHome, step], { encoding: 'utf8' }).trim().split('\n').at(-1)!);
+  const clone = path.join(root, 'studio', 'library'), studioHome = path.join(root, 'studio', 'home');
   try {
     const page = await app.firstWindow();
     const content = '---\nname: careful-review\ndescription: Review a change for correctness and clear evidence.\n---\nRead the diff.';
@@ -91,14 +91,8 @@ test('the matrix shows this machine live and another machine from its report, an
     await expect(page.getByText(/Shared (just now|\d+ min ago)/)).toBeVisible({ timeout: 20_000 });
 
     // Another machine: a clone of the same "GitHub" with its own private data, reporting an Agents folder.
-    const clone = path.join(root, 'studio', 'library'); execFileSync('git', ['clone', '-q', origin, clone]);
-    const wb = new Workbench(clone, path.join(root, 'studio', 'private')), router = new Router(wb, { composer: null });
-    other = { wb, router };
-    const studioHome = path.join(root, 'studio', 'home'); fs.mkdirSync(studioHome, { recursive: true });
-    router.call('fleet.rename', { name: 'studio-pc' });
-    wb.enroll({ name: 'Agents', root: studioHome, provider: 'codex', scope: 'personal', profile: 'Personal' });
-    await router.fleet.idle();
-    const studioId = router.fleet.identity().id;
+    execFileSync('git', ['clone', '-q', origin, clone]); fs.mkdirSync(studioHome, { recursive: true });
+    const studioId = (studio('setup') as { id: string }).id;
 
     // Reopening Machines fetches (at most once a minute), so reopen after a fresh start of the view.
     await app.close();
@@ -117,8 +111,8 @@ test('the matrix shows this machine live and another machine from its report, an
     } finally { await again.close(); }
 
     // On the other machine, syncing installs what was marked there, without creating an approval.
-    const synced = router.call('skills.sync') as { location?: string; result: string }[];
+    const synced = studio('sync') as { location?: string; result: string }[];
     expect(synced.find(r => r.location === 'agents')?.result).toBe('installed approved revision');
     expect(fs.existsSync(path.join(studioHome, '.agents', 'skills', 'careful-review', 'SKILL.md'))).toBe(true);
-  } finally { other?.router.fleet.stop(); other?.wb.close(); await app.close().catch(() => {}); fs.rmSync(root, { recursive: true, force: true }); }
+  } finally { await app.close().catch(() => {}); fs.rmSync(root, { recursive: true, force: true }); }
 });
