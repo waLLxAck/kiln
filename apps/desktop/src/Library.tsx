@@ -1,135 +1,109 @@
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
-import { useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowDownUp, ArrowUp, ChevronDown, ChevronUp, FlaskConical, Github, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
-import type { Installation, Item, Provider, ProviderId, Target } from '../../../packages/protocol/schema';
-import { Badge, ContextMenu, KindIcon, statusHelp, type MenuEntry } from './components';
+import { useRef, useState, type ReactNode } from 'react';
+import { ArrowDownUp, ArrowLeft, Check, ChevronDown, ChevronUp, Github, Rows3 } from 'lucide-react';
+import type { Approval, Installation, Item, Provider, Target, Trial } from '../../../packages/protocol/schema';
+import { Badge, ContextMenu, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
 import { skillState } from './Skills';
-import { defaultSort, site, sortChoices, sortLabel, type Sort, type SortKey } from './library-sort';
-import { emptyLibraryFilters, filterDimensions, type FilterDimension, type LibraryFilterKey, type LibraryFilters } from './library-filters';
+import { installable } from './library-filters';
+import { sortChoices, sortLabel, type GroupKey, type Sort, type SortKey } from './library-sort';
+import './library.css';
 
-/** One tab per kind of item, plus two cross-cutting views. Skills is a tab like any other; its rows carry install marks. */
-export type LibraryTab = 'recent' | 'favourites' | Item['kind'];
-export const KINDS: Item['kind'][] = ['source', 'prompt', 'skill', 'agent', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
-export const tabLabel: Record<LibraryTab, string> = { recent: 'All', favourites: 'Favourites', source: 'Sources', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References' };
-export const inTab = (item: Item, tab: LibraryTab) => tab === 'recent' || (tab === 'favourites' ? item.favourite : item.kind === tab);
+export { arrangeItems, defaultSort, groupItems, KINDS, kindPlural, moveInOrder, nextSort, sortItems, type GroupKey, type Sort, type SortKey } from './library-sort';
 
-export function LibraryTabs({ tab, counts, onChange }: { tab: LibraryTab; counts: Record<string, number>; onChange: (tab: LibraryTab) => void }) {
-  const tabs: LibraryTab[] = ['recent', ...(counts.favourites || tab === 'favourites' ? ['favourites' as const] : []), ...KINDS.filter(k => counts[k])];
-  return <div className="lib-tabs" role="tablist" aria-label="Library views">{tabs.map(t => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => onChange(t)}>{t === 'favourites' ? <Star size={13} /> : t !== 'recent' ? <KindIcon kind={t} size={13} /> : null}{tabLabel[t]}<small>{counts[t] ?? 0}</small></button>)}</div>;
+/** A configured personal skill folder: which agent reads it and the target Kiln installs into. */
+export type Location = { provider: Provider; target: Target };
+/** The locations an item can be installed into: its own agent's folder for a native agent, every skill folder but Copilot's otherwise. */
+export const locationsFor = (item: Item, locations: Location[]) => locations.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot');
+export const locationName = (item: Item, provider: Provider) => item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id);
+
+/** The table's columns. Collection gives way when a collection is chosen; the rest always show, narrowing with the window. */
+export type Column = { key: SortKey | 'installed' | 'test'; label: string; sortable: boolean };
+export const columns = (collectionShown: boolean): Column[] => [
+  { key: 'title', label: 'Title', sortable: true }, ...(collectionShown ? [] : [{ key: 'collection' as const, label: 'Collection', sortable: true }]),
+  { key: 'status', label: 'Status', sortable: true }, { key: 'installed', label: 'Installed', sortable: false }, { key: 'test', label: 'Last test', sortable: false }, { key: 'updatedAt', label: 'Updated', sortable: true },
+];
+export function TableHead({ collectionShown, sort, onSort }: { collectionShown: boolean; sort: NonNullable<Sort>; onSort: (key: SortKey) => void }) {
+  const cols = columns(collectionShown);
+  return <div className={`lib-row head ${collectionShown ? 'no-collection' : ''}`} role="row"><span role="columnheader" aria-label="Kind" />{cols.map(c => c.sortable
+    ? <button key={c.key} role="columnheader" type="button" className={`lib-cell col-${c.key} ${sort.key === c.key ? 'sorted' : ''}`} onClick={() => onSort(c.key as SortKey)} title={`Sort by ${c.label.toLowerCase()}`} aria-sort={sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>{c.label}{sort.key === c.key && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}</button>
+    : <span key={c.key} role="columnheader" className={`lib-cell col-${c.key}`}>{c.label}</span>)}</div>;
 }
 
-/** Where a skill is installed, as a filter: anywhere, nowhere, or a specific agent. */
-export type InstallFilter = 'any' | 'installed' | 'none' | ProviderId;
-type Location = { provider: Provider; target: Target };
-/** Providers whose skill folder holds this item, in any form Kiln recognises (managed, adopted-in-waiting, edited or linked). */
-export const installedFor = (item: Item, locations: Location[], installations: Installation[]) => ['skill', 'agent'].includes(item.kind) ? locations.filter(({ target }) => skillState(item, target, installations).state !== 'off').map(l => l.provider.id) : [];
-export const passesInstallFilter = (filter: InstallFilter, item: Item, locations: Location[], installations: Installation[]) => {
-  if (filter === 'any') return true;
-  const where = installedFor(item, locations, installations);
-  const anyCopy = installations.some(i => i.itemId === item.id);
-  return filter === 'installed' ? anyCopy : filter === 'none' ? !anyCopy : where.includes(filter);
-};
-
-/** One choice in a filter menu. `count` is how many items choosing it would show, given the other filters. */
-export type FilterOption = { value: string; label: string; count: number; hint?: string };
 /**
- * One filter, shown as a pill. Click it to pick a value from a menu; the × on an active pill clears just that filter.
- * Optional pills pass `onRemove`, so × also takes the pill out of the row. `autoOpen` opens the menu as soon as the pill appears.
+ * Draft, Testing or Approved in plain words. An approved revision shows whether it reached GitHub; a draft on top of an earlier
+ * approval says so, because what is installed is still the approved one. A source is material, so it shows what was made from it.
  */
-export function FilterPill({ name, value, all, options, onChange, onRemove, hint, autoOpen }: { name: string; value: string; all: string; options: FilterOption[]; onChange: (value: string) => void; onRemove?: () => void; hint?: string; autoOpen?: boolean }) {
+export function StatusCell({ item, approvals, published, made = 0 }: { item: Item; approvals: Approval[]; published: boolean; made?: number }) {
+  if (item.kind === 'source') return <span className="lib-made" title="Items made from this source">{made} made</span>;
+  if (['archived', 'rejected'].includes(item.status)) return <Badge status={item.status} />;
+  const earlier = item.status !== 'approved' && approvals.some(a => a.itemId === item.id && a.revision !== item.revision && a.trust === 'local' && !a.revokedAt);
+  if (item.status === 'approved' || earlier) return <span className="lib-status" title={earlier ? 'The current revision is a draft on top of the approved one. Installs use the approved revision.' : published ? 'Approved and on GitHub' : 'Approved; the push to GitHub has not finished'}>
+    <span className="lib-pill ok"><Check size={11} />Approved</span>{earlier ? <span className="lib-newer">+ newer draft</span> : <Github size={13} className={`lib-pushed ${published ? 'on' : 'pending'}`} aria-label={published ? 'On GitHub' : 'Push pending'} />}
+  </span>;
+  return item.status === 'testing' ? <span className="lib-pill warn" title={statusHelp.testing}>Testing</span> : <span className="lib-pill" title={statusHelp.captured}>Draft</span>;
+}
+
+/** Copy states that no longer match the library revision. */
+const changedStates = ['drifted', 'differs'];
+/**
+ * "2 of 3" personal folders with one dot per folder, and a warning when a copy changed outside Kiln. Copies in enrolled project
+ * folders are counted after. Kinds that cannot be installed show a dash.
+ */
+export function InstalledCell({ item, locations, installations }: { item: Item; locations: Location[]; installations: Installation[] }) {
+  if (!installable(item)) return <span className="faint" title="Only skills and agent definitions install into agent folders">—</span>;
+  const places = locationsFor(item, locations).map(l => ({ ...l, state: skillState(item, l.target, installations).state }));
+  const present = places.filter(p => p.state !== 'off'), changed = places.filter(p => changedStates.includes(p.state)).length;
+  const personal = new Set(places.map(p => p.target.id));
+  const project = installations.filter(i => i.itemId === item.id && !personal.has(i.targetId) && i.scope === 'project').length;
+  const title = [...places.map(p => `${locationName(item, p.provider)}: ${p.state === 'off' ? 'not installed' : p.state === 'on' ? 'installed' : p.state}`), ...(project ? [`${project} project cop${project === 1 ? 'y' : 'ies'}`] : [])].join('\n');
+  if (!places.length && !project) return <span className="faint" title="No skill folder is set up. Choose one in Settings.">Not set up</span>;
+  return <span className="lib-installed" title={title}>
+    {places.length > 0 && <span className="lib-dots" aria-hidden="true">{places.map(p => <i key={p.target.id} className={p.state === 'off' ? '' : changedStates.includes(p.state) ? 'changed' : 'on'} />)}</span>}
+    <span className={present.length || project ? '' : 'faint'}>{places.length ? present.length ? `${present.length} of ${places.length}` : 'Not installed' : ''}{project ? `${places.length ? ' · ' : ''}${project} project` : ''}</span>
+    {changed > 0 && <span className="lib-changed">{changed} changed</span>}
+  </span>;
+}
+
+const verdict: Record<string, { label: string; tone: string }> = { pass: { label: 'Pass', tone: 'ok' }, fail: { label: 'Fail', tone: 'bad' }, uncertain: { label: 'Unsure', tone: 'warn' } };
+/** Where a trial ran: the project folder's name, or the isolated example. */
+const projectName = (trial: Trial) => trial.workspace ? trial.workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? trial.workspace : 'isolated example';
+/** The newest experiment on an item: its verdict and the project it ran in. `trial` is picked by the caller from the snapshot. */
+export function TestCell({ item, trial }: { item: Item; trial?: Trial }) {
+  if (item.kind === 'source') return <span className="faint">—</span>;
+  if (!trial) return <span className="faint">Not tested</span>;
+  const older = trial.revision !== item.revision ? ' (an earlier revision)' : '';
+  if (trial.status !== 'completed' || !trial.judgement) return <span className="lib-test" title={`${trial.status === 'prepared' ? 'Waiting for a result' : 'Cancelled'}${older}`}><span className="lib-pill">{trial.status === 'prepared' ? 'Waiting' : 'Cancelled'}</span><span className="muted ellipsis">{projectName(trial)}</span></span>;
+  const v = verdict[trial.judgement];
+  return <span className="lib-test" title={`${v.label} on ${projectName(trial)} · ${trial.case} case · ${date(trial.createdAt)}${older}`}><span className={`lib-pill ${v.tone}`}>{v.label}</span><span className="muted ellipsis">{projectName(trial)}</span></span>;
+}
+
+/** A pill that opens a menu of choices, used for Sort and Group by. */
+export function MenuPill({ icon, name, value, entries, title }: { icon: ReactNode; name: string; value: string; entries: MenuEntry[]; title: string }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
-  const show = () => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.left, y: box.bottom + 4 }); };
-  useLayoutEffect(() => { if (autoOpen) show(); }, [autoOpen]);
-  const active = value !== all, current = options.find(o => o.value === value);
-  const entries: MenuEntry[] = [{ label: `Any ${name.toLowerCase()}`, checked: !active, onSelect: () => onChange(all) }, ...(options.length ? ['separator' as const, ...options.map(o => ({ label: o.label, checked: o.value === value, hint: o.hint, note: String(o.count), onSelect: () => onChange(o.value) }))] : [])];
-  const clear = () => { onChange(all); onRemove?.(); };
-  return <span className={`filter-pill ${active ? 'active' : ''}`}>
-    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title={hint} onClick={show}>{name}{active && <>: <b>{current?.label ?? value}</b></>}<ChevronDown /></button>
-    {(active || onRemove) && <button type="button" className="filter-clear" aria-label={onRemove ? `Remove ${name.toLowerCase()} filter` : `Clear ${name.toLowerCase()} filter`} title={onRemove ? 'Remove this filter' : `Show any ${name.toLowerCase()}`} onClick={clear}><X /></button>}
+  return <span className="menu-pill">
+    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title={title} onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.right - 220, y: box.bottom + 4 }); }}>{icon}<span className="faint">{name}:</span> <b>{value}</b><ChevronDown size={12} /></button>
     {open && <ContextMenu x={open.x} y={open.y} entries={entries} onClose={() => setOpen(null)} />}
   </span>;
 }
-/** The "+ Filter" pill: a menu of the filter dimensions not yet in the row. */
-function AddFilter({ dimensions, onAdd }: { dimensions: FilterDimension[]; onAdd: (key: LibraryFilterKey) => void }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
-  if (!dimensions.length) return null;
-  return <span className="filter-pill add">
-    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title="Add a filter" onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.left, y: box.bottom + 4 }); }}><Plus />Filter</button>
-    {open && <ContextMenu x={open.x} y={open.y} entries={dimensions.map(d => ({ label: d.name, hint: d.hint, onSelect: () => onAdd(d.key) }))} onClose={() => setOpen(null)} />}
-  </span>;
-}
-
-type ToolsProps = { query: string; onQuery: (q: string) => void; onSearchDown: (e: React.KeyboardEvent<HTMLInputElement>) => void; status: string; statuses: FilterOption[]; onStatus: (s: string) => void; install: InstallFilter; installOptions: FilterOption[] | null; onInstall: (f: InstallFilter) => void; advanced: LibraryFilters; onAdvanced: (next: LibraryFilters) => void; advancedOptions: (key: LibraryFilterKey) => FilterOption[]; onClear: () => void; shown: number; chosen: number; onClearChosen: () => void; sort: NonNullable<Sort>; onSort: (sort: Sort) => void; canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean] };
-/**
- * Search with the count, the sort pill and (in custom order) the move arrows, then one row of filter pills. Status and installed are always there; the other
- * dimensions join the row through "+ Filter" and leave it through their ×. Collections are chosen in the sidebar, not here.
- */
-export function LibraryTools({ query, onQuery, onSearchDown, status, statuses, onStatus, install, installOptions, onInstall, advanced, onAdvanced, advancedOptions, onClear, shown, chosen, onClearChosen, sort, onSort, canReorder, reorder, reorderDisabled }: ToolsProps) {
-  const [added, setAdded] = useState<LibraryFilterKey[]>([]), [fresh, setFresh] = useState<LibraryFilterKey | null>(null);
-  const inRow = filterDimensions.filter(d => added.includes(d.key) || advanced[d.key] !== emptyLibraryFilters[d.key]);
-  const filtering = status !== 'all' || install !== 'any' || inRow.length > 0;
-  return <>
-    <div className="lib-tools">
-      <label className="search-field"><Search size={16} /><input aria-label="Search library" value={query} onChange={e => onQuery(e.target.value)} onKeyDown={onSearchDown} placeholder="Search titles, content, tags…" title="Ctrl+F" />{query && <button aria-label="Clear search" onClick={() => onQuery('')}><X size={13} /></button>}</label>
-      {chosen > 1 ? <span className="lib-count selection" aria-live="polite"><b>{chosen} selected</b><button type="button" className="icon-button" aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClearChosen}><X size={13} /></button></span> : <span className="muted small lib-count" aria-live="polite">{shown} shown</span>}
-      <SortMenu sort={sort} onSort={onSort} />
-      {canReorder && <span className="inline"><button className="icon-button" aria-label="Move selected item up" disabled={reorderDisabled[0]} onClick={() => reorder(-1)}><ArrowUp size={13} /></button><button className="icon-button" aria-label="Move selected item down" disabled={reorderDisabled[1]} onClick={() => reorder(1)}><ArrowDown size={13} /></button></span>}
-    </div>
-    <div className="filter-bar" role="group" aria-label="Filters">
-      <SlidersHorizontal aria-hidden="true" />
-      <FilterPill name="Status" value={status} all="all" options={statuses} onChange={onStatus} hint={status !== 'all' ? statusHelp[status] : 'Only items in one lifecycle status'} />
-      {installOptions && <FilterPill name="Installed" value={install} all="any" options={installOptions} onChange={v => onInstall(v as InstallFilter)} hint="Where the skill is installed on this machine" />}
-      {inRow.map(d => <FilterPill key={d.key} name={d.name} value={advanced[d.key]} all={emptyLibraryFilters[d.key]} options={advancedOptions(d.key)} hint={d.hint} autoOpen={fresh === d.key} onChange={v => { setFresh(null); onAdvanced({ ...advanced, [d.key]: v }); }} onRemove={() => { setFresh(null); setAdded(keys => keys.filter(k => k !== d.key)); }} />)}
-      <AddFilter dimensions={filterDimensions.filter(d => !inRow.includes(d))} onAdd={key => { setAdded(keys => [...keys, key]); setFresh(key); }} />
-      {filtering && <button type="button" className="text-button" onClick={() => { setAdded([]); setFresh(null); onClear(); }}>Clear filters</button>}
-    </div>
-  </>;
-}
-
-export { arrangeItems, defaultSort, moveInOrder, nextSort, sortItems, type Sort, type SortKey } from './library-sort';
-/** `opt` columns give way when the list is narrow; the title and the State column always stay. */
-type Column = { label: string; key: SortKey; opt?: boolean };
-export const columns = (tab: LibraryTab): Column[] => tab === 'source' ? [{ label: 'Source', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'Made', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
-  : tab === 'skill' ? [{ label: 'Skill', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
-  : tab === 'link' ? [{ label: 'Title', key: 'title' }, { label: 'Site', key: 'site', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Saved', key: 'createdAt', opt: true }]
-  : tab === 'recent' || tab === 'favourites' ? [{ label: 'Title', key: 'title' }, { label: 'Type', key: 'kind', opt: true }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }]
-  : [{ label: 'Title', key: 'title' }, { label: 'Collection', key: 'collection', opt: true }, { label: 'State', key: 'status' }, { label: 'Updated', key: 'updatedAt', opt: true }];
-/** The sort pill in the tools row: the current order by name, and a menu of the others. */
-function SortMenu({ sort, onSort }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
+export function SortMenu({ sort, onSort }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void }) {
   const entries: MenuEntry[] = sortChoices.flatMap(c => [...(c.sort.key === 'order' ? ['separator' as const] : []), { label: c.label, hint: c.hint, checked: c.sort.key === sort.key && c.sort.dir === sort.dir, onSelect: () => onSort(c.sort) }]);
-  return <span className="filter-pill sort-pill">
-    <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title="Order of the list" onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.left, y: box.bottom + 4 }); }}><ArrowDownUp />Sort: <b>{sortLabel(sort)}</b><ChevronDown /></button>
-    {open && <ContextMenu x={open.x} y={open.y} entries={entries} onClose={() => setOpen(null)} />}
-  </span>;
+  return <MenuPill icon={<ArrowDownUp size={13} />} name="Sort" value={sortLabel(sort)} entries={entries} title="Order of the list" />;
 }
-export function RowHead({ tab, sort, onSort }: { tab: LibraryTab; sort: Sort; onSort: (key: SortKey) => void }) {
-  const cols = columns(tab);
-  return <div className={`lib-row head cols-${cols.length}`}><span />{cols.map(c => <button key={c.key} type="button" className={`lib-cell ${c.opt ? 'opt' : ''} ${c.key === 'status' ? 'status' : ''} ${sort?.key === c.key ? 'sorted' : ''}`} onClick={() => onSort(c.key)} title={`Sort by ${c.label.toLowerCase()}`} aria-sort={sort?.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>{c.label}{sort?.key === c.key && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}</button>)}</div>;
+const groupLabel: Record<GroupKey, string> = { none: 'None', collection: 'Collection', kind: 'Kind', status: 'Status' };
+export function GroupMenu({ group, onGroup }: { group: GroupKey; onGroup: (group: GroupKey) => void }) {
+  return <MenuPill icon={<Rows3 size={13} />} name="Group" value={groupLabel[group]} title="Group the list under headings" entries={(Object.keys(groupLabel) as GroupKey[]).map(g => ({ label: groupLabel[g], checked: g === group, onSelect: () => onGroup(g) }))} />;
 }
-/**
- * The same cell on every tab, so state is never hidden: for an approved item the GitHub mark alone tells the story
- * (green once pushed, muted while the push is pending); drafts keep their status badge. Skills add install marks per agent.
- */
-export function StateCell({ item, locations, installations, published, made = 0 }: { item: Item; locations: Location[]; installations: Installation[]; published: boolean; /** Items made from this source. */ made?: number }) {
-  // A source is material, not something to approve or install: its state is what came out of it.
-  if (item.kind === 'source') return <span className="lib-cell status"><span className="lib-made" title="Items made from this source">{made} made</span></span>;
-  const mark = item.status === 'approved' ? <span className={`lib-mark ${published ? 'on' : 'pending'}`} title={published ? 'Approved and on GitHub' : 'Approved; the push to GitHub has not finished'} role="img" aria-label={published ? 'On GitHub' : 'Approved, push pending'}><Github size={14} /></span>
-    : item.status === 'testing' ? <span className="lib-mark testing" title={statusHelp.testing} role="img" aria-label="Testing"><FlaskConical size={14} /></span>
-    : ['archived', 'rejected'].includes(item.status) ? <Badge status={item.status} />
-    : <span className="lib-mark draft" title={statusHelp.captured} role="img" aria-label="Draft" />;
-  return <span className="lib-cell status">{mark}{['skill', 'agent'].includes(item.kind) && locations.length > 0 && <span className="install-marks">{locations.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot').map(({ provider, target }) => { const { state } = skillState(item, target, installations); return <span key={provider.id} className={`install-mark ${state}`} title={`${item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id)}: ${state === 'off' ? 'not installed' : state === 'on' ? 'installed' : state}`}>{provider.id === 'codex' ? (item.kind === 'agent' ? 'Cx' : 'A') : provider.id === 'copilot' ? 'Cp' : 'Cl'}</span>; })}</span>}</span>;
-}
-/** The inside of one list row. `opt` cells give way when the list is narrow; the title and the State cell always stay. */
-/** `from` names the item's source when another item has the same title, so the two can be told apart. */
-export function ItemRow({ item, tab, collectionShown, locations, installations, published, from, made }: { item: Item; tab: LibraryTab; collectionShown: boolean; locations: Location[]; installations: Installation[]; published: boolean; from?: { label: string; full: string }; made?: number }) {
-  const cols = columns(tab);
-  const cell = (key: SortKey) => key === 'status' ? <StateCell key="state" item={item} locations={locations} installations={installations} published={published} made={made} />
-    : <span key={key} className="lib-cell opt muted">{key === 'kind' ? <span className="item-kind-label">{item.kind}</span> : key === 'collection' ? item.collection : key === 'site' ? site(item) : key === 'createdAt' ? date(item.createdAt) : date(item.updatedAt)}</span>;
-  const subtitle = [from ? `from ${from.label}` : '', item.description || (tab === 'recent' || tab === 'favourites' || collectionShown ? '' : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
-  return <><span className={`item-kind ${item.kind}`}><KindIcon kind={item.kind} size={14} /></span><span className="lib-title"><span className="item-title">{item.title}{item.favourite && <Star size={12} fill="currentColor" />}</span><small className="lib-sub" title={from ? `From ${from.full}` : undefined}><span className="lib-narrow-only"><span className="item-kind-label">{item.kind}</span>{collectionShown || !item.collection ? '' : ` · ${item.collection}`}{subtitle ? ' · ' : ''}</span>{subtitle}</small></span>{cols.slice(1).map(c => cell(c.key))}</>;
+
+/** The thin bar above an open item: back to the list, and where the item sits in it with steps to its neighbours. */
+export function ItemBar({ label, position, total, onBack, onStep }: { label: string; position: number; total: number; onBack: () => void; onStep: (direction: number) => void }) {
+  return <div className="item-bar" role="toolbar" aria-label="Item navigation">
+    <button type="button" className="item-bar-back" onClick={onBack} title="Back to the list (Esc)"><ArrowLeft size={14} />{label}</button>
+    <span className="item-bar-sep" />
+    {position > 0 ? <span className="muted small item-bar-pos">{position} of {total}</span> : <span className="muted small item-bar-pos">Not in this view</span>}
+    <button type="button" className="icon-button" aria-label="Previous item" title="Previous item (Alt+↑)" disabled={position <= 1} onClick={() => onStep(-1)}><ChevronUp size={15} /></button>
+    <button type="button" className="icon-button" aria-label="Next item" title="Next item (Alt+↓)" disabled={position < 1 || position >= total} onClick={() => onStep(1)}><ChevronDown size={15} /></button>
+    <kbd className="item-bar-esc">Esc</kbd>
+  </div>;
 }
