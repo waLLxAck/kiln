@@ -18,17 +18,29 @@ import { importLocalSkills, scanLocalSkills } from './skills-import';
 import { applyMigration, migrationPlan } from '../git/migration';
 import { HomeFiles } from '../home/service';
 
+import { BackgroundFetch, pullFetched, requireAutoSync } from '../git/sync';
+import { experimentOn } from '../protocol/experiments';
+
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
+/** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
+const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback']);
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles };
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
+  /** Background fetch for the autoSync experiment; idle unless the desktop app asks for it. */
+  readonly fetcher: BackgroundFetch;
+  private organiseTimer?: ReturnType<typeof setTimeout>;
+  /** Items whose desired installs changed since the last organisation job was queued. */
+  private installsChanged = new Set<string>();
   readonly home: HomeFiles;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
     this.deployments = new DeploymentService(wb);
     this.publisher = new Publisher(wb, options.log, options.composer);
+    this.fetcher = new BackgroundFetch(wb, () => this.publisher.busy);
+    this.publisher.beforePush = () => this.fetcher.idle();
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
@@ -50,6 +62,36 @@ export class Router {
     return updated;
   }
   call(method: string, args: unknown = {}) {
+    const watch = organisingMethods.has(method) && this.autoSyncReady();
+    const before = watch ? this.wb.installs() : null;
+    const result = this.route(method, args);
+    if (before) {
+      const after = this.wb.installs();
+      for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
+      this.organiseSoon();
+    }
+    return result;
+  }
+  private autoSyncReady() { return experimentOn(this.wb.settings(), 'autoSync') && this.wb.repositoryState().ready; }
+  /** autoSync: organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
+  private organiseSoon() {
+    clearTimeout(this.organiseTimer);
+    this.organiseTimer = setTimeout(() => this.flushOrganisation(), Number(process.env.KILN_ORGANISE_DELAY_MS) || 1500);
+    this.organiseTimer.unref?.();
+  }
+  /** Queues the organisation job now instead of after the pause. Returns it, or null when nothing needs publishing. */
+  flushOrganisation() {
+    clearTimeout(this.organiseTimer); this.organiseTimer = undefined;
+    const installIds = [...this.installsChanged]; this.installsChanged.clear();
+    try { return this.autoSyncReady() ? this.publisher.organise(installIds) : null; }
+    catch (error) { this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) }); return null; }
+  }
+  private pull() {
+    const result = pullFetched(this.wb);
+    if (result.status === 'pulled') this.log('sync.pulled', { count: result.count });
+    return result;
+  }
+  private route(method: string, args: unknown) {
     switch (method) {
       case 'snapshot': return { ...this.wb.snapshot(), publish: this.publisher.list() };
       case 'publish.jobs': return this.publisher.list();
@@ -82,6 +124,7 @@ export class Router {
       case 'repository.migrationPlan': return migrationPlan(this.wb.root, sourceSchema.parse(args).source);
       case 'repository.migrate': { const a = z.object({ expect: z.string(), confirm: z.literal(true), source: z.string().min(1).optional() }).parse(args); return applyMigration(this.wb, a.expect, a.source); }
       case 'items.list': { const a = z.object({ query: z.string().default(''), archived: z.boolean().default(false) }).parse(args); return this.wb.search(a.query, a.archived); }
+      case 'items.search': { const a = z.object({ query: z.string().default(''), archived: z.boolean().default(false), limit: z.number().int().positive().max(1000).optional() }).parse(args); return this.wb.rankedSearch(a.query, a); }
       case 'items.read': return this.wb.detail(z.object({ id: idSchema }).parse(args).id);
       case 'items.origins': return this.wb.origins(args);
       case 'items.revision': { const a = z.object({ id: idSchema, revision: hashSchema }).parse(args); return this.wb.getRevision(a.id, a.revision); }
@@ -137,6 +180,9 @@ export class Router {
       case 'git.resolve': return resolveItemConflict(this.wb, args);
       case 'git.finishMerge': return finishMerge(this.wb);
       case 'git.checkpoint': return checkpoint(this.wb.root, this.wb.canonical, z.object({ message: z.string().trim().min(1).max(300) }).parse(args).message);
+      case 'sync.status': requireAutoSync(this.wb); return this.fetcher.status();
+      case 'sync.fetch': return this.fetcher.fetch(z.object({ maxAgeMs: z.number().int().min(0).default(0) }).parse(args).maxAgeMs);
+      case 'sync.pull': return this.pull();
       case 'git.sync': return sync(this.wb.root, this.wb.canonical, z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args).action);
       default: throw new WorkbenchError('CAPABILITY_UNSUPPORTED', `Unsupported operation: ${method}`);
     }

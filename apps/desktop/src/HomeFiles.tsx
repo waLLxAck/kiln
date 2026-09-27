@@ -5,6 +5,9 @@ import type { HomeBackup, HomeFile, HomeFileContent, HomeFileKind, HomeList } fr
 import { api, date, fileManager } from './api';
 import { Badge, Modal } from './components';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
+import { CodeEditor } from './CodeEditor';
+import { languageFor } from './code-language';
+import { useCodeEditorOn } from './code-editor-state';
 
 type Props = { perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; /** Re-reads the library after a copy is saved into it. */ refresh: () => Promise<void>; onOpenLibrary: (id: string) => void };
 const kindIcon: Record<HomeFileKind, typeof Terminal> = { claude: BookOpen, agents: BookOpen, codex: BookOpen, copilot: BookOpen, vscode: FileCog, powershell: Terminal, custom: FileCog };
@@ -46,6 +49,7 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
   const [compare, setCompare] = useState<{ name: string; content: string } | null>(null);
   const [removing, setRemoving] = useState<HomeFile | null>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
+  const codeEditor = useCodeEditorOn();
   const reloadList = useCallback(async () => { setFiles(await api<HomeList>('home.list')); }, []);
   const load = useCallback(async (key: string) => {
     const sequence = ++loadSequence.current;
@@ -107,7 +111,7 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
         {linked.length > 0 && <div className="home-imports"><span className="muted small">Imports:</span>{linked.map(({ spec, file }) => file ? <button key={spec} className="chip" onClick={() => setSelected(file.key)} title={file.path}>@{spec}{!file.exists && ' · missing'} <ArrowRight size={12} /></button> : <span key={spec} className="chip" title="Not in this list; add it with the button below the list to edit it here.">@{spec}</span>)}</div>}
       </header>
       <div className="home-editor-wrap">
-        {loaded.exists || dirty || editingEmpty ? <textarea ref={editor} className="code-input editor home-editor" aria-label={`${current.label} content`} spellCheck={false} value={draft} onChange={e => setDraft(e.target.value)} /> : <div className="home-missing"><p>{current.kind === 'powershell' ? 'Create it to add aliases, functions and a prompt that load whenever this shell starts.' : 'Create this file to customize the scope shown above. Saving does not run hooks or change an active session.'}</p><button className="button" onClick={() => void save((current.template ?? templates[current.kind]))}><Plus size={15} />Create with a starter template</button><button className="text-button" onClick={() => { setEditingEmpty(true); setDraft(''); setBase(null); }}>Start empty</button></div>}
+        {loaded.exists || dirty || editingEmpty ? codeEditor ? <CodeEditor key={current.key} className="home-code" value={draft} onChange={setDraft} language={languageFor(current.path, { comments: current.kind === 'vscode' })} ariaLabel={`${current.label} content`} /> : <textarea ref={editor} className="code-input editor home-editor" aria-label={`${current.label} content`} spellCheck={false} value={draft} onChange={e => setDraft(e.target.value)} /> : <div className="home-missing"><p>{current.kind === 'powershell' ? 'Create it to add aliases, functions and a prompt that load whenever this shell starts.' : 'Create this file to customize the scope shown above. Saving does not run hooks or change an active session.'}</p><button className="button" onClick={() => void save((current.template ?? templates[current.kind]))}><Plus size={15} />Create with a starter template</button><button className="text-button" onClick={() => { setEditingEmpty(true); setDraft(''); setBase(null); }}>Start empty</button></div>}
         {backups && <section className="content-section home-history"><div className="section-heading"><h3><History size={15} />Previous versions kept by Kiln</h3><button className="text-button" onClick={() => { setBackups(null); setCompare(null); }}>Close</button></div>
           {!backups.length ? <p className="muted small">Nothing yet. A version is kept every time you save over an existing file.</p> : <div className="revision-list">{backups.map(b => <button key={b.name} className={`revision-row ${compare?.name === b.name ? 'selected' : ''}`} onClick={() => pick(b.name)}><div><b>{date(b.at)}</b><span>{bytes(b.size)}</span></div><code>{b.name}</code></button>)}</div>}
           {compare && <><div className="section-heading"><h3>{date(backups.find(b => b.name === compare.name)?.at ?? '')} → now</h3><button className="button" onClick={() => restore(compare.name)}><RotateCcw size={14} />Restore this version</button></div><div className="diff">{diffLines(compare.content, draft).map((part, i) => <pre key={i} className={part.added ? 'added' : part.removed ? 'removed' : ''}>{part.value}</pre>)}</div></>}

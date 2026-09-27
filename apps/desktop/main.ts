@@ -18,7 +18,7 @@ import { defaultLibrary, privateRoot, selectLibrary } from '../../packages/stora
 import { InstallerUpdates, installerPattern as INSTALLER, newerVersion } from '../../packages/updates/service';
 import { createGitHubUpdates, RELEASES } from './github-updates';
 import { desktopPath } from '../../packages/providers/path';
-import { experimentOn, type ExperimentId } from '../../packages/protocol/experiments';
+import { experimentIds, experimentOn, type ExperimentId } from '../../packages/protocol/experiments';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'kiln', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (process.env.KILN_LOCAL || process.env.KILN_DESKTOP_DATA) {
@@ -59,8 +59,14 @@ function createWindow(compact: boolean) {
   if (!compact) window.once('ready-to-show', () => window.show());
   return window;
 }
+/** betterSearch: quick search goes away when you click elsewhere, like a menu, but not while one of its dialogs (Fill in variables) is open. */
+async function hideOnBlur(window: BrowserWindow) {
+  if (!(await experiment('betterSearch')) || window.isDestroyed() || !window.isVisible() || window.isFocused()) return;
+  const dialogOpen = await window.webContents.executeJavaScript(`Boolean(document.querySelector('dialog[open]'))`).catch(() => true);
+  if (!dialogOpen && !window.isDestroyed() && !window.isFocused()) window.hide();
+}
 function openPalette() {
-  if (!palette || palette.isDestroyed()) palette = createWindow(true);
+  if (!palette || palette.isDestroyed()) { const window = palette = createWindow(true); window.on('blur', () => void hideOnBlur(window)); }
   const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   palette.setPosition(Math.round(area.x + (area.width - 740) / 2), Math.round(area.y + area.height * .2));
   palette.show(); palette.focus();
@@ -188,7 +194,12 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     case 'desktop.palette': openPalette(); return true;
     case 'desktop.hide': sender.hide(); return true;
     case 'desktop.workbench': {
-      const { id } = z.object({ id: idSchema.optional() }).parse(args);
+      // `command` is a quick search command (betterSearch; the ids in src/palette-commands.ts) for the main window to run.
+      const { id, command } = z.object({ id: idSchema.optional(), command: z.enum(['capture', 'library', 'experiments', 'home', 'activity', 'settings', 'updates']).optional() }).parse(args);
+      if (command) {
+        invariant(await experiment('betterSearch'), 'CAPABILITY_UNSUPPORTED', 'Quick search commands are an experimental feature; turn on "Steadier, ranked search" in Settings.');
+        await main.webContents.executeJavaScript(`location.hash = ${JSON.stringify('command=' + command + '&open=' + Date.now())}`);
+      }
       if (id) {
         await backend.call('rpc', 'items.read', { id });
         await main.webContents.executeJavaScript(`location.hash = ${JSON.stringify('item=' + encodeURIComponent(id) + '&open=' + Date.now())}`);
@@ -300,6 +311,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
       return true;
     }
     case 'desktop.experiment': return backend.call('setExperiment', args);
+    case 'desktop.experimentOn': return experiment(z.object({ id: z.enum(experimentIds as [ExperimentId, ...ExperimentId[]]) }).parse(args).id);
     case 'desktop.settings': {
       const value = z.object({ shortcut: z.string().min(1), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex') }).parse(args);
       await registerShortcut(value.shortcut); app.setLoginItemSettings({ openAtLogin: value.launchAtLogin }); return backend.call('saveSettings', { ...(await backend.call('settings')), ...value });
