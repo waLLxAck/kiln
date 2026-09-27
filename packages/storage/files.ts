@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { invariant, WorkbenchError } from '../domain/errors';
+import { safeRelativePath } from '../domain/relative-path';
 
 export const now = () => new Date().toISOString();
 export const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -14,8 +15,7 @@ export function stable(value: unknown): string {
 }
 export const digest = (value: unknown) => hash(stable(value));
 export function safeRelative(value: string) {
-  invariant(value.length > 0 && value.length < 240 && !/[\\:*?"<>|\x00-\x1f]/.test(value) && !path.posix.isAbsolute(value), 'INVALID_PATH', `Unsafe relative path: ${value}`);
-  invariant(value.split('/').every(p => p && p !== '.' && p !== '..' && !/[. ]$/.test(p) && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(p)), 'INVALID_PATH', `Unsafe relative path: ${value}`);
+  invariant(safeRelativePath(value), 'INVALID_PATH', `Unsafe relative path: ${value}`);
   return value;
 }
 export function contained(root: string, relative: string) {

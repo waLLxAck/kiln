@@ -17,6 +17,9 @@ import { machinesEnabled } from './features';
 import { experimentOn } from './Experiments';
 import { experimentsOf, reviewOf, TrialsByRevision } from './TrialLoop';
 import { ProjectCopies } from './ProjectInstalls';
+import { DiscardDraftDialog, ItemCodeEditor } from './item-editing';
+import { withDraftContent } from './item-draft';
+import { noteDraft } from './code-editor-state';
 
 const publishPhase: Record<string, string> = { queued: 'Waiting to commit', composing: 'Writing the commit message', committing: 'Committing', pushing: 'Pushing to GitHub' };
 /** Where this approval is on its way to GitHub: in progress, failed with a retry, or landed with its commit. */
@@ -44,8 +47,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [output, setOutput] = useState<{ output: string; reference: string; prompt: string } | null>(null);
   const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
+  // Experimental code editor: CodeMirror, live checks, editable bundled files and fields kept in the draft.
+  const codeEditor = experimentOn(snapshot.settings, 'codeEditor'), [discarding, setDiscarding] = useState(false);
   useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setCompare(null); setOutput(null); setFilePreview(null); }, [item.id]);
-  useEffect(() => { if (editing) localStorage.setItem(`kiln-draft:${item.id}`, JSON.stringify({ content: draft, base })); }, [draft, base, editing, item.id]);
+  useEffect(() => { if (editing && !codeEditor) localStorage.setItem(`kiln-draft:${item.id}`, withDraftContent(localStorage.getItem(`kiln-draft:${item.id}`), draft, base)); }, [draft, base, editing, item.id, codeEditor]);
   useEffect(() => { if (!editing) { setDraft(revision.content); setBase(revision.hash); } }, [revision.hash, editing]);
   const changeTab = (value: string) => { setTab(value); localStorage.setItem('kiln-detail-tab', value); };
   // Only skills and instruction files can be installed into agent folders, so other kinds do not get an Installs tab.
@@ -148,8 +153,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         {made.length ? <MadeList items={made} onSelect={onSelect} grouped /> : <p className="empty-inline">Nothing made from it yet.</p>}
       </>}
       {tab === 'content' && <>
-        <div className="section-heading"><h3>{item.kind === 'agent' ? item.agent?.filename : item.kind === 'skill' ? 'SKILL.md' : 'Content & metadata'}</h3><button className="text-button" aria-label={editing ? 'Discard local draft' : 'Edit text'} onClick={() => { if (editing) localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(!editing); }}><Pencil size={14} />{editing ? 'Discard local draft' : 'Edit'}</button></div>
-        {editing ? <form onSubmit={event => { event.preventDefault(); const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, ...fields, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}), tags: fields.tags.split(',').map(t => t.trim()).filter(Boolean) } }); localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); await refresh(); }, 'New draft revision saved'); }}>
+        <div className="section-heading"><h3>{item.kind === 'agent' ? item.agent?.filename : item.kind === 'skill' ? 'SKILL.md' : 'Content & metadata'}</h3><button className="text-button" aria-label={editing ? 'Discard local draft' : 'Edit text'} onClick={() => { if (editing && codeEditor) return setDiscarding(true); if (editing) localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(!editing); }}><Pencil size={14} />{editing ? 'Discard local draft' : 'Edit'}</button></div>
+        {editing ? codeEditor ? <ItemCodeEditor item={item} revision={revision} collections={snapshot.collections} draft={draft} onDraft={setDraft} base={base} perform={perform} refresh={refresh} onSaved={() => setEditing(false)} /> : <form onSubmit={event => { event.preventDefault(); const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, ...fields, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}), tags: fields.tags.split(',').map(t => t.trim()).filter(Boolean) } }); localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); await refresh(); }, 'New draft revision saved'); }}>
           {base !== item.revision && <div className="notice warning">This item changed elsewhere. Your unsaved text is preserved. Copy it before cancelling, then compare in History.</div>}<Field label="Title"><input name="title" defaultValue={item.title} required /></Field>{item.kind === 'agent' && <Field label="Agent filename"><input name="agentFilename" defaultValue={item.agent?.filename} required /></Field>}<Field label="Content"><textarea className="code-input editor" value={draft} onChange={e => setDraft(e.target.value)} rows={16} /></Field><div className="form-grid"><Field label="Collection"><input name="collection" defaultValue={item.collection} list="collection-names" placeholder="None (unfiled)" title="Use / for a subfolder. Changing only the collection keeps the revision and its approval." /><datalist id="collection-names">{snapshot.collections.map(name => <option key={name} value={name} />)}</datalist></Field><Field label="Tags"><input name="tags" defaultValue={item.tags.join(', ')} /></Field></div><Field label="Source"><input name="source" defaultValue={item.source} /></Field><Field label="Licence"><input name="licence" defaultValue={item.licence} /></Field><Field label="What changed? (optional)" hint="Leave it empty to use a plain revision note."><input name="summary" placeholder="Brief revision note" /></Field><div className="modal-actions"><span className="muted small">Text autosaves privately. Save creates an unapproved revision.</span><button className="button primary" type="submit">Save revision</button></div>
         </form> : <pre className="content-preview full">{revision.content}</pre>}
         <section className="content-section"><h3>Bundled files</h3>{Object.keys(revision.files).length ? <div className="file-preview-list">{Object.entries(revision.files).map(([name, content]) => <div key={name} className="bundled-file">
@@ -186,6 +191,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
       </>}
     </div>
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
+    {discarding && <DiscardDraftDialog title={item.title} onCancel={() => setDiscarding(false)} onDiscard={() => { localStorage.removeItem(`kiln-draft:${item.id}`); noteDraft(item.id, false); setDiscarding(false); setEditing(false); }} />}
   </article>;
 }
 const kindPlural: Record<string, string> = { prompt: 'Prompts', skill: 'Skills', agent: 'Agents', instruction: 'Instructions', link: 'Links', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', image: 'Images', file: 'Files', reference: 'References', source: 'Sources' };
