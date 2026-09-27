@@ -1,19 +1,23 @@
 /* ---------- Ask the agent: the chat docked on the right ---------- */
 /* Replaces the old floating popover; the layout places it last in a horizontal flex row so it pushes the content aside.
-   Selectors carry .chat-popover.chat-dock so they win over the popover rules in styles.css, which loads after this file. */
-.chat-popover.chat-dock { position: relative; top: auto; right: auto; z-index: auto; width: 420px; max-width: 45vw; height: 100%; max-height: none; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none; animation: none; overflow: hidden; font-size: 13px; line-height: 1.55; }
+   Selectors carry .chat-popover.chat-dock so they win over the popover rules in styles.css, which loads after this file.
+   The width comes from the resize handle before it, which also draws the left edge. */
+.chat-popover.chat-dock { position: relative; top: auto; right: auto; z-index: auto; width: 440px; max-width: 60vw; height: 100%; max-height: none; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 0; border-radius: 0; box-shadow: none; animation: none; overflow: hidden; font-size: 13px; line-height: 1.55; container-type: inline-size; }
 .chat-popover.chat-dock .chat-grow { flex: 1; }
 
-.chat-popover.chat-dock .chat-head { display: flex; align-items: center; gap: 4px; height: 50px; padding: 0 8px 0 10px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.chat-popover.chat-dock .chat-head { display: flex; align-items: center; gap: 2px; height: 50px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .chat-popover.chat-dock .chat-menu-anchor { position: relative; }
-.chat-popover.chat-dock .chat-provider { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 8px; border-radius: var(--r-sm); font-weight: 600; font-size: 14px; color: var(--text); }
+.chat-popover.chat-dock .chat-provider { white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 8px; border-radius: var(--r-sm); font-weight: 600; font-size: 14px; color: var(--text); }
 .chat-popover.chat-dock .chat-provider > svg:first-child { color: var(--brand-fire); }
 .chat-popover.chat-dock .chat-provider:hover:not(:disabled), .chat-popover.chat-dock .chat-provider[aria-expanded="true"] { background: var(--subtle-2); }
 .chat-popover.chat-dock .chat-provider:disabled { cursor: default; }
 .chat-popover.chat-dock .chat-provider:disabled > svg:last-child { opacity: .4; }
-.chat-popover.chat-dock .chat-headbutton { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border-radius: var(--r-sm); color: var(--text-2); font-size: 12.5px; font-weight: 500; }
+.chat-popover.chat-dock .chat-headbutton { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border-radius: var(--r-sm); color: var(--text-2); font-size: 12.5px; font-weight: 500; }
 .chat-popover.chat-dock .chat-headbutton:hover:not(:disabled) { background: var(--subtle-2); color: var(--text); }
 .chat-popover.chat-dock .chat-headbutton:disabled { opacity: .5; }
+
+/* A narrow panel keeps New session as its icon, so the header never overflows. */
+@container (max-width: 430px) { .chat-popover.chat-dock .chat-headlabel { display: none; } }
 
 /* Menus: provider, ⋯, Add context and the @ list. */
 .chat-popover.chat-dock .chat-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 220px; padding: 4px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-md); animation: pop .1s ease-out; }
@@ -127,3 +131,11 @@
 .chat-popover.chat-dock .chat-compose-bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px 6px; }
 .chat-popover.chat-dock .chat-compose-bar .button { height: 30px; padding: 0 12px; flex-shrink: 0; }
 .chat-popover.chat-dock .chat-hint { flex: 1; min-width: 0; font-size: 11px; line-height: 1.35; color: var(--faint); }
+
+.chat-popover.chat-dock .chat-count { margin-left: -2px; min-width: 16px; padding: 0 5px; border-radius: 999px; background: var(--subtle-2); font-size: 11px; line-height: 16px; text-align: center; color: var(--muted); }
+/* Sessions: first message, then when and which CLI. */
+.chat-popover.chat-dock .chat-sessions { width: 300px; max-height: 60vh; overflow-y: auto; }
+.chat-popover.chat-dock .chat-sessions .chat-session { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-popover.chat-dock .chat-sessions .chat-session .muted { margin: 0; }
+.chat-popover.chat-dock .chat-change-notes { font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.chat-popover.chat-dock .chat-change-actions .chat-view { margin-left: auto; }
