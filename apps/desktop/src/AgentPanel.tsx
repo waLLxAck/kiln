@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
-import type { AgentJob, AgentKind, AgentStep, ChatResult } from '../../../packages/agent/service';
+import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
+import type { AgentJob, AgentKind, AgentStep } from '../../../packages/agent/service';
 import type { Analysis, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
 import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
@@ -42,9 +42,10 @@ export function Steps({ job }: { job: AgentJob }) {
   const quietSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.lastActivityAt ?? job.startedAt)) / 1000));
   return <>
     {job.status === 'running' && <p className="muted small" role="status">{job.phase}{job.process?.running ? ' · process running' : ''}{quietSeconds >= 15 ? ` · no new activity for ${quietSeconds}s` : ''}{quietSeconds >= 60 ? '. You can cancel or open Run files for details.' : ''}</p>}
-    {job.steps.length > 0 && <details className="agent-steps" open={job.status === 'running'}><summary>Activity · {job.steps.length} step{job.steps.length === 1 ? '' : 's'}</summary><ol>{job.steps.map(step => { const Icon = stepIcon[step.kind]; return <li key={step.id} className={step.kind}><Icon size={13} /><div><span className="step-kind">{step.kind === 'reasoning' ? 'reasoning summary' : step.kind}{step.status ? ` · ${step.status}` : ''} · {new Date(step.at).toLocaleTimeString()}</span><pre>{step.text}</pre></div></li>; })}</ol></details>}
+    {job.steps.length > 0 && <details className="agent-steps" open={job.status === 'running'}><summary>Activity · {job.steps.length} step{job.steps.length === 1 ? '' : 's'}</summary><StepList job={job} /></details>}
   </>;
 }
+const StepList = ({ job }: { job: AgentJob }) => <ol>{job.steps.map(step => { const Icon = stepIcon[step.kind]; return <li key={step.id} className={step.kind}><Icon size={13} /><div><span className="step-kind">{step.kind === 'reasoning' ? 'reasoning summary' : step.kind}{step.status ? ` · ${step.status}` : ''} · {new Date(step.at).toLocaleTimeString()}</span><pre>{step.text}</pre></div></li>; })}</ol>;
 
 /** Lets the user pick which signed-in CLI runs a job. Unavailable clients stay listed so the reason is visible. */
 export function ProviderSelect({ providers, value, onChange, label = 'Run with', compact = false }: { providers: Provider[]; value: RunProviderId; onChange: (value: RunProviderId) => void; label?: string; /** Inline bars: only say something when the client is missing. */ compact?: boolean }) {
@@ -85,30 +86,26 @@ export function CreateSkillDialog({ itemId, title, providers, defaultProvider, o
     <div className="modal-actions"><span className="muted">Nothing is installed. Review the draft first.</span><button className="button primary" disabled={busy} onClick={() => start(provider, context)}>{busy ? 'Starting…' : 'Draft the skill'}</button></div>
   </Modal>;
 }
-/** The turns of one conversation, oldest first, and the box to add the next one. Each turn is its own job so its steps and usage stay visible. */
-export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void }) {
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false), [fileError, setFileError] = useState('');
-  const send = async () => { const question = text.trim(); if (!question || busy || sending) return; setSending(true); try { await onSend(question); setText(''); } catch { /* Keep the draft; the caller shows the error. */ } finally { setSending(false); } };
+/** A chat reply's steps behind one collapsed line, so the answer stays on top; the phase line shows what a running turn is doing. */
+export function ChatActivity({ job }: { job: AgentJob }) {
+  useElapsed(job);
+  const quietSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.lastActivityAt ?? job.startedAt)) / 1000));
   return <>
-    {turns.length > 0 && <ol className="chat-turns">{turns.map(turn => <li key={turn.id}>
-      <div className="chat-question"><span>You{turn.focus?.title ? <> · about {onOpenItem && turn.focus.itemId ? <button type="button" className="text-button" onClick={() => onOpenItem(turn.focus!.itemId!)}>{turn.focus.title}</button> : turn.focus.title}</> : turn.focus?.collection ? ` · in ${turn.focus.collection}` : ''}</span><p>{turn.question}</p></div>
-      <div className="chat-reply"><span>{providerName[turn.provider]}</span>
-        {turn.status === 'running' && <p className="muted"><Loader2 size={13} className="spin" /> {turn.phase}</p>}
-        {turn.status === 'running' && <button className="text-button" onClick={() => void api('agent.cancel', { id: turn.id })}>Cancel</button>}
-        {turn.error && <p className="error-box">{turn.error}</p>}
-        {turn.result && 'reply' in turn.result && <pre className="chat-text">{(turn.result as ChatResult).reply}</pre>}
-        <Steps job={turn} />
-        <RunMeta job={turn} />
-        <button className="text-button" onClick={() => void api('desktop.openAgentJob', { id: turn.id }).catch(e => setFileError(String(e)))}>Run files</button>
-      </div>
-    </li>)}</ol>}
-    <form className="chat-compose" onSubmit={event => { event.preventDefault(); send(); }}>
-      <textarea rows={3} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} placeholder={placeholder} aria-label="Your message" disabled={busy} />
-      {(error || fileError) && <p role="alert" className="error-box">{error || fileError}</p>}
-      <div className="modal-actions"><span className="muted small">{hint}</span><button className="button primary" type="submit" disabled={busy || sending || !text.trim()}>{busy ? <><Loader2 size={14} className="spin" />Replying…</> : <><Send size={14} />Send</>}</button></div>
-    </form>
+    {job.status === 'running' && <p className="chat-phase" role="status"><Loader2 size={13} className="spin" />{job.phase}{quietSeconds >= 15 ? ` · no new activity for ${quietSeconds}s` : ''}</p>}
+    {job.steps.length > 0 && <details className="agent-steps chat-activity"><summary>Activity · {job.steps.length} step{job.steps.length === 1 ? '' : 's'}</summary><StepList job={job} /></details>}
   </>;
+}
+/** The muted line under a chat reply: model · time · tokens, then the CLI session and the run folder. */
+export function ChatRunMeta({ job, onError }: { job: AgentJob; onError: (message: string) => void }) {
+  const elapsed = useElapsed(job);
+  const usage = job.usage;
+  return <div className="chat-meta">
+    <span title="Model the CLI was asked to use">{job.model || (job.status === 'running' ? 'Resolving model…' : 'CLI default model')}{job.effort ? ` · ${job.effort}` : ''}</span>
+    <span title="Wall-clock time">{elapsed}</span>
+    {usage && <span title={`Input ${usage.input.toLocaleString()} (cached ${usage.cached.toLocaleString()}) · output ${usage.output.toLocaleString()}${usage.reasoning ? ` (reasoning ${usage.reasoning.toLocaleString()})` : ''}`}>{tokens(usage.input)} in · {tokens(usage.output)} out</span>}
+    {job.threadId && <code title={`CLI session id${job.session ? ` · transcript saved (${kilobytes(job.session.bytes)})` : ''}`}>{job.threadId.slice(0, 8)}</code>}
+    <button type="button" className="chat-link" onClick={() => void api('desktop.openAgentJob', { id: job.id }).catch(e => onError(String(e)))}>Run files</button>
+  </div>;
 }
 /** Result cards for this item's runs. `kinds` limits the card set to what belongs on the current tab. Conversations live in the library chat, not here. */
 /** What an analysis produced, from the record kept in the library: shown when the run itself is not on this machine. */

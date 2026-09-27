@@ -43,6 +43,19 @@ test('new session and item switches clear the previous chat composer without inv
     await page.getByRole('button', { name: /Chat entry A/ }).click();
     await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
     const message = page.getByRole('textbox', { name: 'Your message' });
+    const chat = page.getByRole('complementary', { name: 'Ask the agent' });
+    await expect(chat.getByRole('button', { name: /^Ask (Claude Code|Codex)/ })).toBeVisible();
+    await chat.getByRole('button', { name: 'More chat actions' }).click();
+    await expect(chat.getByRole('menuitem', { name: 'Export conversation…' })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(chat).toBeVisible();
+    // Add context mentions another item; the chip can be removed again.
+    await chat.getByRole('button', { name: 'Add context' }).click();
+    await chat.getByRole('textbox', { name: 'Search items to add' }).fill('entry B');
+    await chat.getByRole('option', { name: /Chat entry B/ }).click();
+    await expect(page.locator('.chat-context')).toContainText('Chat entry B');
+    await chat.getByRole('button', { name: 'Remove Chat entry B' }).click();
+    await expect(page.locator('.chat-context')).not.toContainText('Chat entry B');
     await message.fill('Unsent first session');
     await page.getByRole('button', { name: 'New session', exact: true }).click();
     await expect(message).toHaveValue('');

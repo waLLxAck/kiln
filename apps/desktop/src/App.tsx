@@ -435,7 +435,7 @@ export default function App() {
       </div>}
     </main>
     {undo ? <UndoToast key={undo.item.id} title={undo.item.title} onUndo={undoArchive} onExpire={() => setUndo(null)} /> : message && <div className="toast" role="status"><Check size={17} />{message}</div>}
-    {chatOpen && openItem && <ChatPopover jobs={jobs} item={openItem} source={sourceBehind} provider={snapshot.settings.agentProvider} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} />}
+    {chatOpen && openItem && <ChatPopover jobs={jobs} item={openItem} source={sourceBehind} provider={snapshot.settings.agentProvider} items={snapshot.items} onRefresh={refresh} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} />}
     {menu && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries(menu.items)} onClose={() => setMenu(null)} />}
     {collectionMenu && <ContextMenu x={collectionMenu.x} y={collectionMenu.y} entries={collectionEntries(collectionMenu.name)} onClose={() => setCollectionMenu(null)} />}
     {dialog?.name === 'capture' && <QuickCapture seed={captureSeed} provider={snapshot.settings.agentProvider} onClose={() => { setDialog(null); setCaptureSeed(undefined); }} onDone={id => { setCaptureSeed(undefined); void completed(id); }} />}

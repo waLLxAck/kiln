@@ -194,3 +194,68 @@ test('an entry made from a pasted source brings the source material and its sibl
     assert.match(calls[0].prompt, new RegExp(`--from ${source.id}`)); assert.doesNotMatch(calls[0].prompt, /the video item is/);
   } finally { close(); }
 });
+
+test('items mentioned in the chat are validated and written into context.md with their current content', async () => {
+  const { wb, close } = fixture();
+  try {
+    const calls: RunInput[] = [];
+    const service = new AgentService(wb, () => {}, async input => { calls.push(input); return 'done'; }, async () => []);
+    const open = wb.create({ title: 'Open prompt', kind: 'prompt', content: 'Review this diff.' });
+    const other = wb.create({ title: 'Style guide', kind: 'instruction', content: 'Prefer short sentences.' });
+    const trashed = wb.create({ title: 'Old draft', kind: 'prompt', content: 'Gone' }); wb.setMeta({ id: trashed.id, expect: trashed.revision, deleted: true });
+    assert.throws(() => service.chat({ itemId: open.id, message: 'Hi', contextItemIds: ['not-an-id'] }));
+    assert.throws(() => service.chat({ itemId: open.id, message: 'Hi', contextItemIds: ['01a07777-0000-7000-8000-00000000abcd'] }), /no longer exists/);
+    assert.throws(() => service.chat({ itemId: open.id, message: 'Hi', contextItemIds: [trashed.id] }), /in the trash/);
+    assert.throws(() => service.chat({ itemId: open.id, message: 'Hi', contextItemIds: Array.from({ length: 11 }, () => other.id) }));
+    assert.equal(service.list().length, 0, 'a rejected message starts no run');
+    const job = service.chat({ itemId: open.id, message: 'Apply the style guide', contextItemIds: [other.id, other.id, open.id] }); await wait(service);
+    assert.deepEqual(job.contextItems, [{ itemId: other.id, title: 'Style guide', revision: other.revision }], 'deduplicated, and the open item is not repeated');
+    const context = fs.readFileSync(path.join(calls[0].workdir!, 'context.md'), 'utf8');
+    assert.match(context, /## Open item: Open prompt/); assert.match(context, /## Also included by the user \(1\)/); assert.match(context, /### Style guide/); assert.match(context, /Prefer short sentences\./);
+    service.chat({ itemId: open.id, message: 'Again, without it', conversationId: job.conversationId }); await wait(service);
+    assert.doesNotMatch(fs.readFileSync(path.join(calls[1].workdir!, 'context.md'), 'utf8'), /Also included/, 'mentions apply to one message');
+  } finally { close(); }
+});
+
+test('a chat runs on the provider chosen for it, and a session cannot switch provider', async () => {
+  const { wb, rollout, close } = fixture();
+  try {
+    const service = new AgentService(wb, () => {}, async input => {
+      input.onEvent({ type: 'thread.started', thread_id: thread }); fs.mkdirSync(path.dirname(rollout), { recursive: true }); fs.writeFileSync(rollout, codexRollout(thread)); return 'Reply';
+    }, async () => []);
+    wb.saveSettings({ ...wb.settings(), agentProvider: 'claude' });
+    const item = wb.create({ title: 'Provider', kind: 'prompt', content: 'Hello' });
+    const first = service.chat({ itemId: item.id, message: 'Hi', provider: 'codex' }); await wait(service);
+    assert.equal(first.provider, 'codex');
+    assert.throws(() => service.chat({ itemId: item.id, message: 'Switch', conversationId: first.conversationId, provider: 'claude' }), /Start a new session to switch to Claude Code/);
+    assert.equal(service.chat({ itemId: item.id, message: 'Same', conversationId: first.conversationId, provider: 'codex' }).provider, 'codex'); await wait(service);
+    assert.equal(service.chat({ itemId: item.id, message: 'Default', newSession: true }).provider, 'claude', 'settings decide when nothing is chosen'); await wait(service);
+  } finally { close(); }
+});
+
+test('a chat turn records the items it changed and created, even when it fails', async () => {
+  const { wb, close } = fixture();
+  try {
+    const item = wb.create({ title: 'Edited', kind: 'prompt', content: 'Line one' });
+    const untouched = wb.create({ title: 'Untouched', kind: 'prompt', content: 'Stays' });
+    let fail = false, created = '';
+    const service = new AgentService(wb, () => {}, async () => {
+      // Stands in for the agent calling Kiln's CLI during the turn.
+      wb.update({ id: item.id, expect: wb.getItem(item.id).revision, summary: 'Agent edit', value: { ...wb.authoring(item.id), content: `${wb.getRevision(item.id).content}\nLine two` } });
+      if (!created) created = wb.create({ title: 'New entry', kind: 'technique', content: 'Steps' }).id;
+      if (fail) throw new Error('CLI crashed');
+      return 'Changed it';
+    }, async () => []);
+    const job = service.chat({ itemId: item.id, message: 'Add a line' }); await wait(service);
+    const done = service.list().find(j => j.id === job.id)!;
+    assert.equal(done.status, 'completed');
+    const edited = done.changes!.find(c => c.itemId === item.id)!;
+    assert.equal(edited.from, item.revision); assert.equal(edited.to, wb.getItem(item.id).revision); assert.equal(edited.title, 'Edited');
+    assert.deepEqual(done.changes!.find(c => c.itemId === created), { itemId: created, title: 'New entry', kind: 'technique', from: null, to: wb.getItem(created).revision });
+    assert.ok(!done.changes!.some(c => c.itemId === untouched.id));
+    fail = true;
+    const failed = service.chat({ itemId: item.id, message: 'Again', conversationId: job.conversationId }); await wait(service);
+    const record = service.list().find(j => j.id === failed.id)!;
+    assert.equal(record.status, 'failed'); assert.deepEqual(record.changes!.map(c => c.itemId), [item.id], 'only what changed during this turn');
+  } finally { close(); }
+});

@@ -211,11 +211,17 @@ Capture, distillation and trials request read-only access. Chat retains broad re
 
 ## Asking the agent
 
-**Ask the agent** (the speech-bubble button beside Capture) starts a chat with the item you have open and its attachments. For a video, or an entry distilled from one, the agent also gets the video's captions and every entry from that video. The button is disabled when nothing is open, and the agent is instructed to make edits through Kiln's CLI as revisions.
+**Ask the agent** (the speech-bubble button beside Capture) opens a chat panel docked on the right, beside the item you have open, so you can read both. The button is disabled when nothing is open. **Esc** or the × closes the panel.
 
-Follow-up messages continue that chat. Switching items starts a separate session, including switching back to an earlier item; **New session** starts over on the same item. Session folders are isolated so simultaneous chats cannot replace one another's context.
+- **Ask Claude Code ▾** at the top picks which CLI answers in this chat: Claude Code or Codex. It starts on the default from Settings. A session stays on the CLI it started with, so switching after the first message starts a new session.
+- The chips under the header show what goes with each message: the open item and its short revision, the **Video transcript** or **Source material** when the item is a source or was made from one (click it to open the source), and **N entries from this source**. These always go along and cannot be removed.
+- **+ Add context**, the @ button, or typing **@** in the message searches your library for other items. Each one becomes a chip (× removes it), and its current content goes with your next message only.
+- Replies are formatted text. Library items the agent names become links that open the item, and file paths are highlighted. **Activity · N steps** expands to show every step the CLI took. The line under each reply gives the model, time, tokens and session, with **Run files** to open the run folder.
+- The agent edits items with Kiln's CLI, so every edit is a new revision. After each reply, a **Changed by the agent** card lists every item whose revision changed while it ran. The card shows the old → new revision and a line diff. **Keep** closes the card. **Undo** restores the previous revision as a new draft, the same way History does, and refreshes the item. Undo is disabled if the item changed again after the reply; use History instead. Items the agent created are listed under **Added by the agent** with **Open**. Kiln finds these by comparing revisions from before and after the reply, so an edit you make yourself while the agent is running shows up here too.
 
-**Export conversation…** separately saves a private transcript after an explicit warning about messages, local paths and tool output. Review that file before sharing it. Normal exports remove reserved session attachments and machine-specific source paths, redact private trial inputs and activity details, and exclude approvals whose revision bytes had to be transformed. Kiln does not redact secrets deliberately included in authored prose or arbitrary attachments.
+Write in the box at the bottom and press **Ctrl+Enter** or **Send**. While a reply runs, **Cancel** stops it. Follow-up messages continue that chat. Switching items starts a separate session, including switching back to an earlier item; **New session** starts over on the same item. Conversations stay private on this machine. Session folders are isolated so simultaneous chats cannot replace one another's context.
+
+**⋯ → Export conversation…** saves a private transcript to a separate file after an explicit warning about messages, local paths and tool output. Review that file before sharing it. Normal exports remove reserved session attachments and machine-specific source paths, redact private trial inputs and activity details, and exclude approvals whose revision bytes had to be transformed. Kiln does not redact secrets deliberately included in authored prose or arbitrary attachments.
 
 ## Library tabs and collections
 
