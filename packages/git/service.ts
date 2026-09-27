@@ -40,16 +40,16 @@ function git(root: string, args: string[]) {
   // stderr is captured, not inherited: expected failures such as "no upstream configured" must not reach the console.
   return execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 5_000_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
-export type GitState = { attached: boolean; branch: string; commit: string; changes: string[]; /** URL of the origin remote; empty when the repository has none. */ remote: string; /** Commits on this branch that origin does not have yet; every commit counts when the branch was never pushed. */ ahead: number };
+export type GitState = { attached: boolean; branch: string; commit: string; changes: string[]; /** URL of the origin remote; empty when the repository has none. */ remote: string; /** Commits on this branch that origin does not have yet; every commit counts when the branch was never pushed. */ ahead: number; /** Commits on the upstream branch, as of the last fetch, that this branch does not have; 0 without an upstream. */ behind: number };
 export function gitStatus(root: string): GitState {
   try {
     const branch = git(root, ['branch', '--show-current']);
     let commit = ''; try { commit = git(root, ['rev-parse', 'HEAD']); } catch { /* A new repository has no HEAD yet. */ }
     let remote = ''; try { remote = git(root, ['remote', 'get-url', 'origin']); } catch { /* No origin yet. */ }
-    let ahead = 0;
-    if (remote && commit) { try { ahead = Number(git(root, ['rev-list', '--count', '@{u}..HEAD'])) || 0; } catch { ahead = Number(git(root, ['rev-list', '--count', 'HEAD'])) || 0; } }
-    return { attached: true, branch, commit, changes: git(root, ['status', '--porcelain']).split('\n').filter(Boolean), remote, ahead };
-  } catch { return { attached: false, branch: '', commit: '', changes: [], remote: '', ahead: 0 }; }
+    let ahead = 0, behind = 0;
+    if (remote && commit) { try { ahead = Number(git(root, ['rev-list', '--count', '@{u}..HEAD'])) || 0; behind = Number(git(root, ['rev-list', '--count', 'HEAD..@{u}'])) || 0; } catch { ahead = Number(git(root, ['rev-list', '--count', 'HEAD'])) || 0; } }
+    return { attached: true, branch, commit, changes: git(root, ['status', '--porcelain']).split('\n').filter(Boolean), remote, ahead, behind };
+  } catch { return { attached: false, branch: '', commit: '', changes: [], remote: '', ahead: 0, behind: 0 }; }
 }
 /** Top-level files a Kiln-created repository may track besides the Kiln layout itself. */
 const dedicatedExtras = new Set(['kiln.json', 'KILN.md', 'README.md', 'LICENSE', 'LICENSE.md', 'LICENSE.txt', '.gitignore', '.gitattributes']);

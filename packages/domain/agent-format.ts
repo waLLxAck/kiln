@@ -1,8 +1,8 @@
 import { parse as yaml } from 'yaml';
 import { parse as toml } from 'smol-toml';
-import type { Authoring, ProviderId, Target } from '../protocol/schema';
+import type { Authoring, ProviderId } from '../protocol/schema';
 
-export const agentFolder = (provider: ProviderId, scope: Target['scope'] = 'personal') => provider === 'copilot' ? (scope === 'personal' ? '.copilot/agents' : '.github/agents') : `.${provider}/agents`;
+export { agentFolder } from './agent-folder';
 export function agentMetadata(content: string, provider: ProviderId): Record<string, unknown> {
   const value = provider === 'codex' ? toml(content) : yaml(content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] ?? '');
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Add an agent definition with name and description.');
