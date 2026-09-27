@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Activity, Approval, Installation, Item, ItemDetail, PublishJob, Receipt, Revision, Trial } from '../packages/protocol/schema';
 import { primaryAction, splitFrontMatter } from '../apps/desktop/src/item-page';
-import { buildHistory, dayLabel, historyFilters, revisionAuthor, trialProject } from '../apps/desktop/src/history-model';
+import { buildHistory, dayLabel, historyFilters, revisionAuthor } from '../apps/desktop/src/history-model';
+import { trialPlace, trialPlaces } from '../apps/desktop/src/trial-place';
 
 const hash = (c: string) => c.repeat(64);
 const item = (extra: Partial<Item> = {}) => ({ id: 'item', kind: 'skill', title: 'review', status: 'captured', revision: hash('b'), deletedAt: null, origin: null, tags: [], collection: '', ...extra }) as Item;
@@ -66,6 +67,10 @@ test('revision authors, day separators and trial projects read plainly', () => {
   assert.equal(dayLabel(new Date(2026, 8, 26, 23, 0).toISOString(), now), 'Yesterday');
   assert.match(dayLabel(new Date(2024, 8, 20).toISOString(), now), /2024/);
   assert.equal(dayLabel('', now), 'Now');
-  assert.equal(trialProject(trial({ workspace: 'C:\\Users\\ada\\game\\' })), 'game');
-  assert.equal(trialProject(trial({ workspace: '' })), 'Isolated example');
+  // Canonical trials say only "machine-private"; the folder comes from this machine's job record.
+  const places = trialPlaces([{ kind: 'trial', trialId: 't1', workspace: 'C:\\Users\\ada\\game\\' }, { kind: 'trial', trialId: 't2' }] as never);
+  assert.equal(trialPlace(trial({ id: 't1' }), places), 'game');
+  assert.equal(trialPlace(trial({ id: 't2' }), places), 'Isolated example');
+  assert.equal(trialPlace(trial({ id: 't3', mode: 'manual' }), places), 'Manual handoff');
+  assert.equal(trialPlace(trial({ id: 't4', mode: 'codex' }), places), 'Unknown project');
 });

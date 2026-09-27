@@ -111,7 +111,7 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
 
   const images = Object.entries(revision.files).filter(([name]) => imageFile(name));
   const openFile = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
-  const byline = [video?.channel, video?.duration ? timestamp(video.duration) : '', video?.published ? `Published ${video.published}` : '', `Captured ${date(item.createdAt)}`].filter(Boolean);
+  const byline = [`Source · ${sourceKind}`, video?.channel, video?.duration ? timestamp(video.duration) : '', video?.published ? `Published ${video.published}` : '', `Captured ${date(item.createdAt)}`].filter(Boolean);
   const legendKinds = [...new Set(timed.map(e => e.item.kind))].sort((a, b) => (kindOrder.indexOf(a) + 1 || 99) - (kindOrder.indexOf(b) + 1 || 99));
   const pct = (seconds: number) => `${Math.min(100, (seconds / duration) * 100)}%`;
 
@@ -140,15 +140,11 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
   return <section className="source-page" aria-label="Source">
     <div className={`source-layout ${transcriptOpen && video ? 'with-transcript' : ''}`}>
       <header className="source-head">
-        <div className="source-eyebrow"><KindIcon kind="source" size={14} />Source · {sourceKind}{item.collection && <><span className="dot">·</span><button type="button" onClick={() => onCollection(item.collection)}>{collectionName(item.collection)}</button></>}</div>
-        <div className="source-titlerow">
-          <h1>{item.title}</h1>
-          <button className="button" onClick={() => void perform(() => api('desktop.openItem', { id: item.id }))} title={videoId ? 'Open the video in your browser' : sourceKind === 'page' ? 'Open the page in your browser' : 'Show the stored material in its folder'}>{videoId ? <PlayCircle size={15} /> : <ExternalLink size={15} />}{videoId ? 'Open on YouTube' : sourceKind === 'page' ? 'Open original' : 'Show stored file'}</button>
-        </div>
+        {/* The item page's header above already names the source, its collection and its Open action. */}
         <div className="source-byline">{byline.map((part, i) => <span key={part}>{i > 0 && <span className="dot">·</span>}{part}</span>)}</div>
 
-        {(latest || item.description) && <div className="source-callout">
-          <p>{latest?.summary ?? item.description}</p>
+        {latest && (latest.summary !== item.description || latest.takeaway) && <div className="source-callout">
+          {latest.summary !== item.description && <p>{latest.summary}</p>}
           {latest?.takeaway && <p className="source-takeaway"><Sparkles size={14} /><span><strong>Takeaway</strong> {latest.takeaway}</span></p>}
         </div>}
 

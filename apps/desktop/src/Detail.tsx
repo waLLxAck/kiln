@@ -1,3 +1,4 @@
+import { trialPlaces } from './trial-place';
 import { Markdown } from './Markdown';
 import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
@@ -74,7 +75,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const drifted = copies.filter(copy => copy.state === 'drifted');
   const made = isSource ? snapshot.items.filter(i => i.origin?.itemId === item.id && !i.deletedAt) : [];
   const origin = item.origin ? snapshot.items.find(i => i.id === item.origin!.itemId) : undefined, fromSource = origin?.kind === 'source' ? origin : undefined;
-  const events = useMemo(() => buildHistory(detail, snapshot, installations), [detail, snapshot, installations]);
+  const places = useMemo(() => trialPlaces(jobs), [jobs]);
+  const events = useMemo(() => buildHistory(detail, snapshot, installations, places), [detail, snapshot, installations, places]);
   const primary = primaryAction({ detail, installations, locations: locations.length });
   const shelved = ['archived', 'rejected'].includes(item.status);
 
@@ -170,7 +172,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
             <div className="item-subbar"><button className="text-button" onClick={() => setView('content')}><ArrowLeft size={14} />Content</button><h2>Tests</h2><span className="muted small">{detail.trials.length} experiment{detail.trials.length === 1 ? '' : 's'} · results stay with the exact revision</span></div>
             <ExperimentsGrid detail={detail} snapshot={snapshot} providers={providers} jobs={jobs} perform={perform} refresh={refresh} onAction={onAction} />
           </div>
-          : view === 'history' ? <><AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} /><History detail={detail} snapshot={snapshot} installations={installations} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onInstallRevision={installable ? setDeployRevision : undefined} onBack={() => setView('content')} /></>
+          : view === 'history' ? <><AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} /><History places={places} detail={detail} snapshot={snapshot} installations={installations} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onInstallRevision={installable ? setDeployRevision : undefined} onBack={() => setView('content')} /></>
           : sourcePage && !editing ? <div className="item-content">
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
             <SourcePage detail={detail} snapshot={snapshot} providers={providers} jobs={jobs} perform={perform} refresh={refresh} onSelect={onSelect} onMadeFrom={onMadeFrom} onCollection={onCollection} onAction={sourceAction} />
@@ -203,7 +205,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
             <BundledFiles detail={detail} perform={perform} refresh={refresh} onZoom={setZoom} preview={filePreview} onPreview={setFilePreview} />
           </div>}
         </div>
-        <ItemRail detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onSelect={onSelect} onCollection={onCollection} onMadeFrom={onMadeFrom} onMachines={onMachines} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} />
+        <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onSelect={onSelect} onCollection={onCollection} onMadeFrom={onMadeFrom} onMachines={onMachines} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} />
       </div>
     </div>
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}

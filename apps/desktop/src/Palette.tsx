@@ -121,7 +121,8 @@ export default function Palette() {
     if (!row || (row.type === 'item' && loading)) return;
     if (row.type === 'action') { if (!row.action.disabled) command(row.action.command); return; }
     const target = row.item, verb = how === 'default' ? defaultAction(target) : how;
-    if (verb === 'test') command({ name: 'test-item', id: target.id });
+    // A source is material an analysis read; it has no experiments, so Shift+Enter opens it instead.
+    if (verb === 'test') command({ name: target.kind === 'source' ? 'open-item' : 'test-item', id: target.id });
     else if (verb === 'kiln') command({ name: 'open-item', id: target.id });
     else if (verb === 'link') openStored(target);
     else copy(target);
@@ -130,7 +131,7 @@ export default function Palette() {
     ...(variables.length ? [{ id: 'fill', label: 'Fill in variables', icon: <CornerDownLeft size={15} />, run: () => { setMode('list'); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.pal-var input')?.focus()); } }] : []),
     ...(item.kind === 'source' ? [] : [{ id: 'copy', label: variables.length ? 'Copy with these values' : 'Copy', icon: <Copy size={15} />, run: () => copy(item) }]),
     { id: 'kiln', label: 'Open in Kiln', icon: <ChevronRight size={15} />, run: () => run(current, 'kiln') },
-    { id: 'test', label: 'Test…', icon: <FlaskConical size={15} />, run: () => run(current, 'test') },
+    ...(item.kind === 'source' ? [] : [{ id: 'test', label: 'Test…', icon: <FlaskConical size={15} />, run: () => run(current, 'test') }]),
     { id: 'ask', label: 'Ask the agent', icon: <MessageSquare size={15} />, run: () => command({ name: 'ask-item', id: item.id }) },
     { id: 'open', label: openLabel(item), icon: <ExternalLink size={15} />, run: () => openStored(item) },
   ] : [];
@@ -211,7 +212,7 @@ export default function Palette() {
     </div>
     <div className="pal-footer">
       {inActions ? <><Key keys={['↑', '↓']} label="Move" onClick={() => setActionIndex(i => Math.min(itemActions.length - 1, i + 1))} /><Key keys={['↵']} label="Run" onClick={() => itemActions[actionIndex]?.run()} /><span className="pal-grow" /><Key keys={['Esc']} label="Back" onClick={() => { setMode('list'); input.current?.focus(); }} /></>
-        : item ? <><Key keys={['↵']} label={defaultVerb(item)} onClick={() => run(current)} />{defaultAction(item) !== 'kiln' && <Key keys={['Ctrl', '↵']} label="Open in Kiln" onClick={() => run(current, 'kiln')} />}<Key keys={['Shift', '↵']} label="Test" onClick={() => run(current, 'test')} /><Key keys={['Tab']} label="Actions" onClick={() => { setMode('actions'); setActionIndex(0); input.current?.focus(); }} /><span className="pal-grow" /><Key keys={['Esc']} label="Close" onClick={() => void api('desktop.hide')} /></>
+        : item ? <><Key keys={['↵']} label={defaultVerb(item)} onClick={() => run(current)} />{defaultAction(item) !== 'kiln' && <Key keys={['Ctrl', '↵']} label="Open in Kiln" onClick={() => run(current, 'kiln')} />}{item.kind !== 'source' && <Key keys={['Shift', '↵']} label="Test" onClick={() => run(current, 'test')} />}<Key keys={['Tab']} label="Actions" onClick={() => { setMode('actions'); setActionIndex(0); input.current?.focus(); }} /><span className="pal-grow" /><Key keys={['Esc']} label="Close" onClick={() => void api('desktop.hide')} /></>
         : <>{current?.type === 'action' && <Key keys={['↵']} label="Run" onClick={() => run(current)} />}<span className="pal-grow" /><Key keys={['Esc']} label="Close" onClick={() => void api('desktop.hide')} /></>}
     </div>
   </div>;

@@ -5,7 +5,7 @@ import type { Installation, ItemDetail, ProviderId, PublishJob, Snapshot, Trial 
 import { api, date, shortHash } from './api';
 import { Badge, providerName } from './components';
 import { LineDiff } from './Diff';
-import { buildHistory, dayLabel, historyFilters, timeLabel, trialProject, type HistoryEvent, type HistoryFilter } from './history-model';
+import { buildHistory, dayLabel, historyFilters, timeLabel, type HistoryEvent, type HistoryFilter } from './history-model';
 
 const publishPhase: Record<string, string> = { queued: 'Waiting to commit', composing: 'Writing the commit message', committing: 'Committing', pushing: 'Pushing to GitHub' };
 /** Where this approval is on its way to GitHub: in progress, failed with a retry, or landed with its commit. */
@@ -34,7 +34,7 @@ export function eventTitle(event: HistoryEvent, snapshot: Snapshot): ReactNode {
   const target = (id: string) => snapshot.targets.find(t => t.id === id)?.name ?? 'an environment Kiln no longer manages';
   switch (event.type) {
     case 'revision': return <><b>Revision saved</b><span>{event.revision.summary}</span></>;
-    case 'test': return <><b>Test run</b><Badge status={trialVerdict(event.trial)} /><span>on {trialProject(event.trial)}</span></>;
+    case 'test': return <><b>Test run</b><Badge status={trialVerdict(event.trial)} /><span>on {event.place}</span></>;
     case 'approved': return <><b>Approved</b><span>by {event.approval.reviewer}</span></>;
     case 'unapproved': return <><b>Approval removed</b></>;
     case 'published': return <><b>Published to GitHub</b></>;
@@ -53,12 +53,13 @@ type Props = {
   /** Opens the install dialog on an approved revision; absent for kinds that are not installed. */
   onInstallRevision?: (revision: string) => void;
   onBack: () => void;
+  /** Where each experiment ran, by trial id (trial-place.ts). */ places?: Map<string, string>;
 };
 const PAGE = 40;
 /** Design 15: everything that happened to one item as a single timeline, with pick-two compare, restore and install. */
-export function History({ detail, snapshot, installations, perform, refresh, onAction, onToggleInstall, onInstallRevision, onBack }: Props) {
+export function History({ detail, snapshot, installations, perform, refresh, onAction, onToggleInstall, onInstallRevision, onBack, places }: Props) {
   const { item, revision } = detail;
-  const events = useMemo(() => buildHistory(detail, snapshot, installations), [detail, snapshot, installations]);
+  const events = useMemo(() => buildHistory(detail, snapshot, installations, places), [detail, snapshot, installations, places]);
   const [filter, setFilter] = useState<HistoryFilter>('all');
   const [shown, setShown] = useState(PAGE);
   const [picked, setPicked] = useState<string[]>([]);

@@ -131,7 +131,7 @@ test('a video source is a timeline: entries at their minutes, skipped parts shad
     const sourcePage = page.getByRole('region', { name: 'Source' });
     await expect(sourcePage).toContainText('Source · YouTube');
     await expect(sourcePage.locator('.source-byline')).toHaveText(/^Pixel & Pine\s*·\s*18:24\s*·\s*Published 2026-06-12\s*·\s*Captured /);
-    await expect(sourcePage.getByRole('button', { name: 'Open on YouTube' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open original', exact: true })).toBeVisible();
     await expect(sourcePage.getByRole('button', { name: 'Ask about this video' })).toBeVisible();
 
     const timeline = sourcePage.getByRole('region', { name: 'Timeline' });

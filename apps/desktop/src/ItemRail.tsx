@@ -6,7 +6,8 @@ import { Badge } from './components';
 import { machinesEnabled } from './features';
 import { copyLocation, EventGlyph, eventTitle, PublishState, trialVerdict } from './History';
 import type { HistoryEvent } from './history-model';
-import { dayLabel, trialProject } from './history-model';
+import { dayLabel } from './history-model';
+import { trialPlace } from './trial-place';
 import { installationLabel } from './Installations';
 import { SkillToggles } from './Skills';
 
@@ -42,9 +43,10 @@ export type RailProps = {
   onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void;
   onSetup: () => void; onSelect: (id: string) => void; onCollection: (name: string) => void; onMadeFrom: (sourceId: string) => void; onMachines?: () => void;
   onOpenTests: () => void; onOpenHistory: () => void;
+  /** Where each experiment ran, by trial id (trial-place.ts). */ places?: Map<string, string>;
 };
 /** The item page's right rail: status and approval, installs, tests, history, provenance and organisation. */
-export function ItemRail({ detail, snapshot, providers, installations, events, sameTitle, editing, perform, refresh, onAction, onToggleInstall, onSetup, onSelect, onCollection, onMadeFrom, onMachines, onOpenTests, onOpenHistory }: RailProps) {
+export function ItemRail({ detail, snapshot, providers, installations, events, sameTitle, editing, perform, refresh, onAction, onToggleInstall, onSetup, onSelect, onCollection, onMadeFrom, onMachines, onOpenTests, onOpenHistory, places = new Map() }: RailProps) {
   const { item, revision } = detail;
   const [tag, setTag] = useState('');
   const isSource = item.kind === 'source';
@@ -76,7 +78,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   </div>;
   const trialRow = (t: Trial) => <button type="button" className="rail-item rail-button" key={t.id} onClick={onOpenTests} title={t.note || t.task}>
     <Badge status={trialVerdict(t)} />
-    <div className="rail-text"><span className="rail-name">{trialProject(t)}</span><span className="rail-sub"><code>{shortHash(t.revision)}</code>{t.model ? ` · ${t.model}` : ''}</span></div>
+    <div className="rail-text"><span className="rail-name">{trialPlace(t, places)}</span><span className="rail-sub"><code>{shortHash(t.revision)}</code>{t.model ? ` · ${t.model}` : ''}</span></div>
     <span className="rail-when">{date(t.createdAt)}</span>
   </button>;
   const eventRow = (e: HistoryEvent) => <button type="button" className="rail-item rail-button rail-event" key={e.id} onClick={onOpenHistory}>

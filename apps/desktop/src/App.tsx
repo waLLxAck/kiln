@@ -9,6 +9,7 @@ import { Activity, ArrowRight, Check, ChevronRight, Copy, Download, ExternalLink
 import { Setup, type PreviousLibrary } from './Setup';
 import { ChatPopover } from './Chat';
 import { useKilnCommands } from './commands';
+import { trialPlace, trialPlaces } from './trial-place';
 import { CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog, useCollectionDrag } from './Collections';
 import { isWithin, relocate, untitledName } from '../../../packages/domain/collections';
 import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
@@ -290,6 +291,7 @@ export default function App() {
   // How many live items each item was made from, for sources' Status column and `from:` suggestions.
   const madeCount = new Map<string, number>(); for (const i of live) if (i.origin) madeCount.set(i.origin.itemId, (madeCount.get(i.origin.itemId) ?? 0) + 1);
   // The newest experiment on each item, for the Last test column. Built once per render from the snapshot, never per row.
+  const places = trialPlaces(jobs);
   const lastTrial = new Map<string, Trial>(); for (const t of snapshot.trials) if (!t.deletedAt && (!lastTrial.has(t.itemId) || lastTrial.get(t.itemId)!.createdAt < t.createdAt)) lastTrial.set(t.itemId, t);
   // Each filter is a predicate, so the query bar can count what a token would show under all the others.
   const inSection = (i: Item) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i));
@@ -422,7 +424,7 @@ export default function App() {
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
-    <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), from: sameTitle.get(item.id), made: madeCount.get(item.id) })}
+    <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id) })}
       locations={configured} installations={installations} approvals={snapshot.approvals} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={order} onSort={key => setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onOpen={openItem} onSelectAll={selectAll} onShortcut={listKeys}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}

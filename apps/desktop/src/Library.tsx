@@ -65,17 +65,15 @@ export function InstalledCell({ item, locations, installations }: { item: Item; 
   </span>;
 }
 
-const verdict: Record<string, { label: string; tone: string }> = { pass: { label: 'Pass', tone: 'ok' }, fail: { label: 'Fail', tone: 'bad' }, uncertain: { label: 'Unsure', tone: 'warn' } };
-/** Where a trial ran: the project folder's name, or the isolated example. */
-const projectName = (trial: Trial) => trial.workspace ? trial.workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? trial.workspace : 'isolated example';
+const verdict: Record<string, { label: string; tone: string }> = { pass: { label: 'Pass', tone: 'ok' }, fail: { label: 'Fail', tone: 'bad' }, uncertain: { label: 'Uncertain', tone: 'warn' } };
 /** The newest experiment on an item: its verdict and the project it ran in. `trial` is picked by the caller from the snapshot. */
-export function TestCell({ item, trial }: { item: Item; trial?: Trial }) {
+export function TestCell({ item, trial, place = 'Unknown project' }: { item: Item; trial?: Trial; /** Where it ran (trial-place.ts). */ place?: string }) {
   if (item.kind === 'source') return <span className="faint">—</span>;
   if (!trial) return <span className="faint">Not tested</span>;
   const older = trial.revision !== item.revision ? ' (an earlier revision)' : '';
-  if (trial.status !== 'completed' || !trial.judgement) return <span className="lib-test" title={`${trial.status === 'prepared' ? 'Waiting for a result' : 'Cancelled'}${older}`}><span className="lib-pill">{trial.status === 'prepared' ? 'Waiting' : 'Cancelled'}</span><span className="muted ellipsis">{projectName(trial)}</span></span>;
+  if (trial.status !== 'completed' || !trial.judgement) return <span className="lib-test" title={`${trial.status === 'prepared' ? 'Waiting for a result' : 'Cancelled'}${older}`}><span className="lib-pill">{trial.status === 'prepared' ? 'Waiting' : 'Cancelled'}</span><span className="muted ellipsis">{place}</span></span>;
   const v = verdict[trial.judgement];
-  return <span className="lib-test" title={`${v.label} on ${projectName(trial)} · ${trial.case} case · ${date(trial.createdAt)}${older}`}><span className={`lib-pill ${v.tone}`}>{v.label}</span><span className="muted ellipsis">{projectName(trial)}</span></span>;
+  return <span className="lib-test" title={`${v.label} on ${place} · ${trial.case} case · ${date(trial.createdAt)}${older}`}><span className={`lib-pill ${v.tone}`}>{v.label}</span><span className="muted ellipsis">{place}</span></span>;
 }
 
 /** A pill that opens a menu of choices, used for Sort and Group by. */

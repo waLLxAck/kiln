@@ -19,7 +19,8 @@ export function KindIcon({ kind, size = 19 }: { kind: Item['kind']; size?: numbe
   const Icon = { prompt: FileText, agent: Bot, skill: Terminal, instruction: BookOpen, link: Link, insight: Lightbulb, technique: ListOrdered, tool: Wrench, resource: BookMarked, image: Image, file: File, reference: FolderSymlink, source: FileInput }[kind];
   return <Icon size={size} aria-hidden="true" />;
 }
-export function Badge({ status }: { status: string }) { return <span className={`badge ${status}`} title={statusHelp[status]}>{status === 'approved' && <Check size={11} />}{status.replaceAll('_', ' ')}</span>; }
+/** A status or state chip. The stored `captured` status reads as "draft", the word the rest of the app uses. */
+export function Badge({ status }: { status: string }) { return <span className={`badge ${status}`} title={statusHelp[status]}>{status === 'approved' && <Check size={11} />}{status === 'captured' ? 'draft' : status.replaceAll('_', ' ')}</span>; }
 export function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState('');

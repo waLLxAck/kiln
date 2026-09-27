@@ -8,7 +8,7 @@ import { installable } from './library-filters';
 import { site, type GroupKey, type Sort, type SortKey } from './library-sort';
 import { SwipeToArchive } from './Swipe';
 
-type Row = { item: Item; published: boolean; trial?: Trial; from?: { label: string; full: string }; made?: number };
+type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number };
 type Props = {
   groups: { key: string; label: string; items: Item[] }[]; group: GroupKey; collectionShown: boolean;
   row: (item: Item) => Row; locations: Location[]; installations: Installation[]; approvals: Approval[];
@@ -59,7 +59,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
           {shut ? <ChevronRight size={14} /> : <ChevronDown size={14} />}<span className="ellipsis">{g.label}</span><span className="lib-group-count">{g.items.length}</span>
           {shut && <span className="faint ellipsis lib-group-hint">{g.items.slice(0, 3).map(i => i.title).join(', ')}{g.items.length > 3 ? '…' : ''}</span>}
         </button>}
-        {!shut && g.items.map(item => { const { published, trial, from, made } = row(item), isPicked = many && picked.includes(item.id);
+        {!shut && g.items.map(item => { const { published, trial, place, from, made } = row(item), isPicked = many && picked.includes(item.id);
           const subtitle = [from ? `from ${from.label}` : '', item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
           return <SwipeToArchive key={item.id} enabled={!many && canSwipe(item)} label="Archive" onArchive={() => onArchive(item)}>
             <div role="row" data-id={item.id} tabIndex={item.id === focusable ? 0 : -1} aria-selected={item.id === selected || isPicked} className={`item-card lib-row ${collectionShown ? 'no-collection' : ''} ${selected === item.id ? 'selected' : ''} ${isPicked ? 'picked' : ''} ${install?.item.id === item.id ? 'menu-open' : ''}`}
@@ -69,7 +69,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
               {!collectionShown && <span className="lib-cell col-collection muted" role="cell" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>}
               <span className="lib-cell col-status" role="cell"><StatusCell item={item} approvals={approvals} published={published} made={made} /></span>
               <span className="lib-cell col-installed" role="cell"><InstalledCell item={item} locations={locations} installations={installations} /></span>
-              <span className="lib-cell col-test" role="cell"><TestCell item={item} trial={trial} /></span>
+              <span className="lib-cell col-test" role="cell"><TestCell item={item} trial={trial} place={place} /></span>
               <span className="lib-cell col-updatedAt muted" role="cell" title={`Updated ${date(item.updatedAt)} · added ${date(item.createdAt)}`}>{date(item.updatedAt)}</span>
               {actions(item)}
             </div>

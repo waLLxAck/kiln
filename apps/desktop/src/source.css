@@ -16,12 +16,6 @@
 .source-page .button.on { background: var(--accent-tint); border-color: var(--accent-tint-2); color: var(--accent-text); }
 
 /* Header */
-.source-eyebrow { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.source-eyebrow button { font: inherit; letter-spacing: inherit; text-transform: none; color: var(--muted); border-radius: 4px; }
-.source-eyebrow button:hover { color: var(--accent-text); }
-.source-titlerow { display: flex; align-items: flex-start; gap: 16px; margin-top: 8px; }
-.source-titlerow h1 { flex: 1; min-width: 0; font-size: 24px; line-height: 1.25; overflow-wrap: anywhere; }
-.source-titlerow .button { flex-shrink: 0; }
 .source-byline { margin-top: 4px; color: var(--muted); font-size: 13px; }
 .source-callout { margin-top: 16px; padding: 12px 16px; border-left: 3px solid var(--line-strong); background: var(--subtle); border-radius: 0 var(--r-md) var(--r-md) 0; display: flex; flex-direction: column; gap: 8px; color: var(--text-2); line-height: 1.55; }
 .source-takeaway { display: flex; gap: 8px; color: var(--text); }
