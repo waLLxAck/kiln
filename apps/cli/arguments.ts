@@ -1,7 +1,7 @@
 import { WorkbenchError } from '../../packages/domain/errors';
 import { kindSchema } from '../../packages/protocol/schema';
 
-const switches = new Set(['full', 'json', 'human-reviewed', 'recursive', 'unfiled', 'keep-items', 'trash-items']);
+const switches = new Set(['full', 'json', 'human-reviewed', 'recursive', 'unfiled', 'keep-items', 'trash-items', 'unmark']);
 const commandOptions: Record<string, string[]> = {
   'items list': ['query', 'collection', 'recursive', 'unfiled', 'status', 'kind', 'from', 'limit', 'offset', 'full'],
   'items read': ['revision', 'full'],
@@ -25,6 +25,7 @@ const commandOptions: Record<string, string[]> = {
   'home restore': ['name', 'expect'],
   'home add': ['path'],
   'home remove': [],
+  'machines mark': ['item', 'location', 'unmark'],
 };
 const globalOptions = ['library', 'local', 'json'];
 const knownOptions = new Set([...globalOptions, ...Object.values(commandOptions).flat(), 'input']);
