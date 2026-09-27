@@ -25,12 +25,11 @@ test('217 skills: import preview stays responsive, panels resize, stalls are log
     const handle = page.getByRole('separator', { name: 'Resize sidebar', exact: true });
     await handle.focus(); await page.keyboard.press('ArrowRight');
     await expect(handle).toHaveAttribute('aria-valuenow', '270');
-    const list = page.getByRole('separator', { name: 'Resize skill list' });
-    const box = (await list.boundingBox())!;
-    await page.mouse.move(box.x + 3, box.y + 80); await page.mouse.down(); await page.mouse.move(box.x + 63, box.y + 80); await page.mouse.up();
-    await expect(list).toHaveAttribute('aria-valuenow', '680');
-    await page.reload(); await expect(handle).toHaveAttribute('aria-valuenow', '270');
-    await expect(list).toHaveAttribute('aria-valuenow', '680');
+    // The library is one full-width table (an open item replaces it), so the sidebar is the only panel to resize: by pointer too.
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 80); await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 60, box.y + 80, { steps: 4 }); await page.mouse.up();
+    await expect(handle).toHaveAttribute('aria-valuenow', '330');
+    await page.reload(); await expect(handle).toHaveAttribute('aria-valuenow', '330');
     await page.getByRole('button', { name: 'Settings & repository' }).click();
     await app.evaluate(() => { (globalThis as any).testTicks = 0; (globalThis as any).testTimer = setInterval(() => (globalThis as any).testTicks++, 20); });
     await page.getByRole('button', { name: 'Import from a skills repository…' }).click();

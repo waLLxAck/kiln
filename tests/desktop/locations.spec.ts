@@ -45,13 +45,15 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
     await page.getByRole('button', { name: /^Library/ }).click();
     await showKind(page, 'skill');
     await page.locator('.item-card').filter({ hasText: 'Review' }).click();
-    await page.getByRole('button', { name: 'installs', exact: true }).click();
-    const toggles = page.getByRole('group', { name: 'Installed for' });
+    // The item page has no tabs: installs live in the rail's Installs section, open by default.
+    const installs = page.getByRole('region', { name: 'Installs', exact: true });
+    await expect(installs.getByRole('button', { name: /^Installs/ })).toHaveAttribute('aria-expanded', 'true');
+    const toggles = installs.getByRole('group', { name: 'Installed for' });
     await expect(toggles.getByRole('button', { name: /^Agents/ })).toBeVisible();
     await expect(toggles.getByRole('button', { name: /^Claude/ })).toBeVisible();
     await expect(toggles.getByRole('button')).toHaveCount(2);
-    await page.getByText('Client-specific copies (1)', { exact: true }).click();
-    await expect(page.locator('.other-copies').getByText(native, { exact: true })).toBeVisible();
+    await installs.getByText('Client-specific copies (1)', { exact: true }).click();
+    await expect(installs.locator('.other-copies').getByText(native, { exact: true })).toBeVisible();
     await page.screenshot({ path: 'artifacts/locations-library.png' });
     const copies = await page.evaluate(id => window.kiln.call<any[]>('deploy.installations', { itemId: id }), item.id);
     expect(copies.map(i => i.location).sort()).toEqual(['agents', 'codex']);
