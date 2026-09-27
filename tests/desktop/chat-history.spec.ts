@@ -6,7 +6,7 @@ import { desktopEnv } from './fixture';
 
 /**
  * A stand-in `claude` on PATH. It answers with a Markdown list; a message containing EDIT makes it change the open item through Kiln's
- * CLI (found through the kiln.cmd wrapper the chat writes), and `ALSO <id>` changes that item too, as a real agent would.
+ * CLI (through the `kiln` shell wrapper the chat writes), and `ALSO <id>` changes that item too, as a real agent would.
  */
 function fakeClaude(root: string) {
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
@@ -20,9 +20,8 @@ let input = ''; process.stdin.on('data', d => input += d); process.stdin.on('end
   const message = (input.match(/<user_message>\\n([\\s\\S]*?)\\n<\\/user_message>/) || [])[1] || '';
   let reply = 'Here you go:\\n\\n- first point\\n- second point';
   if (message.includes('EDIT')) {
-    const wrapper = fs.readFileSync('kiln.cmd', 'utf8'), quoted = [...wrapper.matchAll(/"([^"]+)"/g)].map(m => m[1]);
-    const [, script, library, local] = quoted.filter(q => !q.startsWith('ELECTRON'));
-    const kiln = args => JSON.parse(execFileSync(process.execPath, [script, '--library', library, '--local', local, ...args], { encoding: 'utf8' })).data;
+    // Runs the wrapper the chat writes, as a real agent's shell would.
+    const kiln = args => JSON.parse(execFileSync('./kiln', args, { encoding: 'utf8' })).data;
     const edit = (id, content, summary) => {
       const revision = kiln(['items', 'read', id]).revision;
       fs.writeFileSync('draft.md', content);
