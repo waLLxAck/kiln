@@ -308,6 +308,8 @@ if (singleInstance) void app.whenReady().then(async () => {
   // Apps opened from the Dock, Finder or a desktop launcher get a minimal PATH; take the login shell's so codex, claude, git and gh are found.
   // Set before the backend worker starts, which copies the environment.
   if (app.isPackaged && process.platform !== 'win32') { process.env.PATH = await desktopPath(); log('path.resolved', { entries: process.env.PATH.split(':').length }); }
+  // Machine reports name the app version they were written by.
+  process.env.KILN_APP_VERSION = app.getVersion();
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
   ({ local, canonical } = await backend.call('paths'));

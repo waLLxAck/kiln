@@ -22,7 +22,7 @@ parentPort!.on('message', request => {
         if (agent.running) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
         const next = new Workbench(request.args[0], workerData.local);
-        wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
+        router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
         data = { local: wb.local, canonical: wb.canonical };
       } else if (request.method === 'paths') data = { local: wb.local, canonical: wb.canonical };
       else if (request.method === 'rpc' && request.args[0] === 'agent.capture') data = agent.capture(request.args[1]);
@@ -45,6 +45,6 @@ parentPort!.on('message', request => {
       parentPort!.postMessage({ id: request.id, error: { code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) } });
     }
   };
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'fleet.view'].includes(request.args[0])) void run();
   else queue = queue.then(run);
 });

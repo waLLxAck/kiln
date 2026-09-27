@@ -490,23 +490,31 @@ export class DeploymentService {
     for (const [itemId, providers] of Object.entries(installs)) for (const provider of providers) {
       const target = this.personalTarget(provider);
       if (!target) { report.push({ itemId, provider, result: 'skipped: skill location not set up on this machine' }); continue; }
-      try {
-        const item = this.wb.getItem(itemId); if (item.deletedAt) { report.push({ itemId, provider, result: 'skipped: item is in the trash' }); continue; }
-        const approval = this.wb.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-        invariant(approval, 'APPROVAL_REQUIRED', 'No approved revision is available. Review and approve this item before syncing.');
-        const revision = this.wb.getRevision(itemId, approval.revision);
-        const rendered = this.render(itemId, revision.hash, target);
-        const current = readDestination(rendered.destination);
-        if (current && stateHash(current) === rendered.proposedHash) {
-          if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
-          report.push({ itemId, provider, result: 'already installed' }); continue;
-        }
-        const plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
-        this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
-        report.push({ itemId, provider, result: 'installed approved revision' });
-      } catch (error) { report.push({ itemId, provider, result: `failed: ${error instanceof Error ? error.message : String(error)}` }); }
+      report.push({ itemId, provider, result: this.installApproved(itemId, target) });
     }
     return report;
+  }
+  /**
+   * Installs the latest locally trusted approved revision of an item into one target, as sync does: an identical copy is
+   * adopted, a Kiln-owned unchanged copy is updated, anything else is refused by the plan. Never approves; returns the outcome
+   * in words rather than throwing, so one bad entry doesn't stop a batch.
+   */
+  installApproved(itemId: string, target: Target) {
+    try {
+      const item = this.wb.getItem(itemId); if (item.deletedAt) return 'skipped: item is in the trash';
+      const approval = this.wb.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      invariant(approval, 'APPROVAL_REQUIRED', 'No approved revision is available. Review and approve this item before syncing.');
+      const revision = this.wb.getRevision(itemId, approval.revision);
+      const rendered = this.render(itemId, revision.hash, target);
+      const current = readDestination(rendered.destination);
+      if (current && stateHash(current) === rendered.proposedHash) {
+        if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
+        return 'already installed';
+      }
+      const plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
+      this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
+      return 'installed approved revision';
+    } catch (error) { return `failed: ${error instanceof Error ? error.message : String(error)}`; }
   }
   drift() {
     const destinations = [...new Set(this.receipts().map(r => r.destination))];
