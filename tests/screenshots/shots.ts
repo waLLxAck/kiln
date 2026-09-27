@@ -47,7 +47,7 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await page.getByRole('button', { name: /I let a seven-year-old test my app/ }).first().click();
   await row('I let a seven-year-old test my app (with an agent)').click();
   await detailTab('overview');
-  await expect(page.getByText('Takeaway:', { exact: true })).toBeVisible();
+  await expect(page.locator('.source-takeaway')).toBeVisible();
   await shot('video-distilled', 'A YouTube video distilled into a prompt, techniques, an insight and a tool, each linked to its minute in the video.');
 
   // 4. The distilled prompt tested on a real project, fixed, and tested again.
