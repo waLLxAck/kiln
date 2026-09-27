@@ -1036,6 +1036,29 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .experiment-row input[role="switch"]:checked::after { transform: translateX(12px); }
 .experiment-row input[role="switch"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Background sync with GitHub (autoSync experiment): top-bar indicator */
+.sync-indicator { position: relative; display: inline-flex; align-items: center; height: 28px; border-radius: 999px; background: var(--subtle); border: 1px solid var(--line); }
+.sync-pill { display: inline-flex; gap: 8px; align-items: center; height: 100%; padding: 0 10px 0 9px; border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+.sync-pill:hover { color: var(--text); }
+.sync-pill:focus-visible, .sync-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sync-indicator.behind { background: var(--accent-tint); border-color: var(--ring); }
+.sync-indicator.behind .sync-pill { color: var(--accent-text); }
+.sync-indicator.waiting { background: var(--warn-bg); border-color: var(--warn-line); }
+.sync-indicator.waiting .sync-pill { color: var(--warn); }
+.live-dot.info { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.live-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
+.sync-action { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0 11px 0 9px; border-left: 1px solid var(--ring); border-radius: 0 999px 999px 0; color: var(--accent-text); font-size: 12px; font-weight: 600; cursor: pointer; }
+.sync-action:hover { background: var(--accent-tint); }
+.sync-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 150; width: 340px; padding: 14px; display: grid; gap: 10px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-md); animation: pop .1s ease-out; }
+.sync-popover p { margin: 0; }
+.sync-where { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
+.sync-row > span { display: grid; gap: 2px; min-width: 0; }
+.sync-row small { font-size: 12px; overflow-wrap: anywhere; }
+.sync-row.failed small { color: var(--bad); }
+.sync-blockers { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.sync-blockers li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--subtle); font-size: 13px; }
+
 /* Improve and re-test from experiments (trialLoop) */
 .trial-group { margin: 18px 0 8px; }
 .trial-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 0 2px 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
