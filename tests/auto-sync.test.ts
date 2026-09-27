@@ -28,9 +28,9 @@ function world(flag = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln sync '));
   const created = initialiseRepository({ parent: root, name: 'library' }); assert.ok(created.committed, created.message);
   const origin = path.join(root, 'origin.git'); execFileSync('git', ['init', '--bare', '--initial-branch=main', origin], { windowsHide: true });
-  run(created.root, 'remote', 'add', 'origin', origin); run(created.root, 'push', '-u', 'origin', 'HEAD');
+  run(created.root, 'config', 'core.autocrlf', 'false'); run(created.root, 'remote', 'add', 'origin', origin); run(created.root, 'push', '-u', 'origin', 'HEAD');
   const a = open(created.root, path.join(root, 'private-a'), flag);
-  const other = path.join(root, 'other'); execFileSync('git', ['clone', '-q', origin, other], { windowsHide: true });
+  const other = path.join(root, 'other'); execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', origin, other], { windowsHide: true });
   const b = open(other, path.join(root, 'private-b'), flag);
   return { root, origin, a, b, close() { a.wb.close(); b.wb.close(); fs.rmSync(root, { recursive: true, force: true }); } };
 }
