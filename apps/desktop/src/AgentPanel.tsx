@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ArrowRight, Brain, FileText, ListChecks, Loader2, MessageSquare, Search, Send, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep, ChatResult } from '../../../packages/agent/service';
-import type { Analysis, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
+import type { Analysis, ItemDetail, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
 import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
+import { RevisionSelect } from './TrialLoop';
 import { Field, Modal, providerName } from './components';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
@@ -55,20 +56,22 @@ export function ProviderSelect({ providers, value, onChange, label = 'Run with' 
 }
 function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const start = (provider: RunProviderId, context: string, workspace?: string) => { setBusy(true); setError(''); void api('agent.start', { id: itemId, kind, context, provider, workspace }).then(() => { agentStarted(kind); onClose(); }).catch(e => { setError(String(e)); setBusy(false); }); };
+  const start = (provider: RunProviderId, context: string, workspace?: string, revision?: string) => { setBusy(true); setError(''); void api('agent.start', { id: itemId, kind, context, provider, workspace, ...(revision ? { revision } : {}) }).then(() => { agentStarted(kind); onClose(); }).catch(e => { setError(String(e)); setBusy(false); }); };
   return { busy, error, start };
 }
-export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void }) {
+export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [revision, setRevision] = useState(revisions?.item.revision ?? '');
   return <Modal title="Run an experiment" subtitle="Test this revision against a project or an isolated example. The output and agent assessment are saved together." onClose={onClose}>
     <ProviderSelect providers={providers} value={provider} onChange={setProvider} />
+    {revisions && <RevisionSelect detail={revisions} value={revision} onChange={setRevision} disabled={busy} />}
     <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} />
     <p className="muted small">Experiments inspect files read-only. Tasks that require edits or unavailable tools are reported as uncertain.</p>
     <Field label="What should it try? (optional)"><textarea rows={4} value={context} onChange={e => setContext(e.target.value)} placeholder="Add an example input or the situation to test." /></Field>
     {error && <p role="alert" className="error-box">{error}</p>}
-    <div className="modal-actions"><button className="text-button" disabled={busy} onClick={() => onManual(workspace)}>Manual handoff instead</button><button className="button primary" disabled={busy} onClick={() => start(provider, context, workspace)}>{busy ? 'Starting…' : 'Run experiment'}</button></div>
+    <div className="modal-actions"><button className="text-button" disabled={busy} onClick={() => onManual(workspace)}>Manual handoff instead</button><button className="button primary" disabled={busy} onClick={() => start(provider, context, workspace, revisions && revision !== revisions.item.revision ? revision : undefined)}>{busy ? 'Starting…' : 'Run experiment'}</button></div>
   </Modal>;
 }
 export function CreateSkillDialog({ itemId, title, providers, defaultProvider, onClose }: { itemId: string; title: string; providers: Provider[]; defaultProvider: RunProviderId; onClose: () => void }) {
@@ -83,8 +86,10 @@ export function CreateSkillDialog({ itemId, title, providers, defaultProvider, o
   </Modal>;
 }
 /** The turns of one conversation, oldest first, and the box to add the next one. Each turn is its own job so its steps and usage stay visible. */
-export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void }) {
+export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOpenItem, draft }: { turns: AgentJob[]; busy: boolean; error: string; onSend: (message: string) => Promise<void>; placeholder: string; hint: string; onOpenItem?: (id: string) => void; /** Text to put in the composer, unsent; a new nonce puts it there again. */ draft?: { text: string; nonce: number } }) {
   const [text, setText] = useState('');
+  const composer = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (!draft) return; setText(draft.text); requestAnimationFrame(() => { composer.current?.focus(); composer.current?.setSelectionRange(0, 0); }); }, [draft?.nonce]);
   const [sending, setSending] = useState(false), [fileError, setFileError] = useState('');
   const send = async () => { const question = text.trim(); if (!question || busy || sending) return; setSending(true); try { await onSend(question); setText(''); } catch { /* Keep the draft; the caller shows the error. */ } finally { setSending(false); } };
   return <>
@@ -101,7 +106,7 @@ export function ChatThread({ turns, busy, error, onSend, placeholder, hint, onOp
       </div>
     </li>)}</ol>}
     <form className="chat-compose" onSubmit={event => { event.preventDefault(); send(); }}>
-      <textarea rows={3} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} placeholder={placeholder} aria-label="Your message" disabled={busy} />
+      <textarea ref={composer} rows={3} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} placeholder={placeholder} aria-label="Your message" disabled={busy} />
       {(error || fileError) && <p role="alert" className="error-box">{error || fileError}</p>}
       <div className="modal-actions"><span className="muted small">{hint}</span><button className="button primary" type="submit" disabled={busy || sending || !text.trim()}>{busy ? <><Loader2 size={14} className="spin" />Replying…</> : <><Send size={14} />Send</>}</button></div>
     </form>

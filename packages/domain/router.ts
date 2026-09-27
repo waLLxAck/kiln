@@ -115,6 +115,7 @@ export class Router {
       case 'trials.create': return this.wb.prepareTrial(args);
       case 'trials.finish': return this.wb.finishTrial(args);
       case 'trials.delete': return this.wb.deleteTrial(args);
+      case 'trials.judge': return this.wb.judgeTrial(args);
       case 'targets.enroll': return this.wb.enroll(args);
       case 'deploy.plan': return this.deployments.plan(args);
       case 'deploy.apply': return this.deployments.apply(args);

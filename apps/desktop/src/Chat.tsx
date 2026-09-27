@@ -13,7 +13,14 @@ export const itemTurns = (jobs: AgentJob[], itemId: string) => jobs.filter(job =
  * The assistant, opened from the top bar, about the item that is open. For a source, or an entry made from one, the agent also
  * gets the source material (a video's transcript) and the other entries; otherwise it gets the item alone. Stays open while browsing; Esc closes it.
  */
-export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem }: { jobs: AgentJob[]; item: Item; /** The source behind the open item, when there is one. */ source: Item | null; provider: RunProviderId; onClose: () => void; onOpenItem: (id: string) => void }) {
+/**
+ * `initialMessage` prefills the composer without sending it, once per nonce (a new session does not bring it back). It is how the
+ * `kiln:ask-agent` event (see TrialLoop.tsx) reaches the chat: `{ itemId, message }` opens this chat about that item with `message` typed in.
+ * A reworked chat must keep accepting it.
+ */
+export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem, initialMessage }: { jobs: AgentJob[]; item: Item; /** The source behind the open item, when there is one. */ source: Item | null; provider: RunProviderId; onClose: () => void; onOpenItem: (id: string) => void; initialMessage?: { text: string; nonce: number } }) {
+  const prefilled = useRef(0), draft = initialMessage && initialMessage.nonce !== prefilled.current ? initialMessage : undefined;
+  useEffect(() => { if (initialMessage) prefilled.current = initialMessage.nonce; }, [initialMessage?.nonce]);
   const video = source?.tags.includes('youtube') ? source : null;
   const conversation = useRef({ itemId: item.id, id: crypto.randomUUID() });
   const [, redraw] = useState(0);
@@ -41,7 +48,7 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem 
     <div className="chat-body" ref={body}>
       {!turns.length && <div className="chat-empty"><p>{source ? `Ask about the ${video ? 'video' : 'source'} or this entry, or ask for changes. The agent has the ${video ? 'transcript' : 'source material'}, this item and every entry made from the ${video ? 'video' : 'source'}, and is instructed to use Kiln’s CLI for library edits. It runs through your installed CLI with the permissions explained before each interaction.` : 'Ask about this item, or ask for changes. The agent reads it and its attached files, and is instructed to use Kiln’s CLI for library edits. It runs through your installed CLI with the permissions explained before each interaction.'}</p><p className="small">Try: {video ? '“Which prompt did they use for the outline step?” · “Make this technique more detailed” · “Add an entry for the tool mentioned at 12:30”' : source ? '“What did the analysis leave out?” · “Make this technique more detailed” · “Add a prompt for the review step it describes”' : '“Make this prompt more specific” · “Summarise this in three bullets” · “Turn the steps into a checklist”'}</p></div>}
       {sending?.itemId === item.id && <div role="status" className="chat-question"><span>You · sending to {who}…</span><p>{sending.message}</p></div>}
-      <ChatThread key={conversation.current.id} turns={turns} busy={busy} error={error} onSend={send} placeholder={`Ask about “${item.title}”, or ask for a change…`} hint="Ctrl+Enter sends. Switching items starts a new session. Conversations stay private on this machine." />
+      <ChatThread key={conversation.current.id} turns={turns} busy={busy} error={error} onSend={send} placeholder={`Ask about “${item.title}”, or ask for a change…`} hint="Ctrl+Enter sends. Switching items starts a new session. Conversations stay private on this machine." draft={draft} />
     </div>
   </aside>;
 }
