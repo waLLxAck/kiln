@@ -124,6 +124,7 @@ export class Router {
       case 'repository.migrationPlan': return migrationPlan(this.wb.root, sourceSchema.parse(args).source);
       case 'repository.migrate': { const a = z.object({ expect: z.string(), confirm: z.literal(true), source: z.string().min(1).optional() }).parse(args); return applyMigration(this.wb, a.expect, a.source); }
       case 'items.list': { const a = z.object({ query: z.string().default(''), archived: z.boolean().default(false) }).parse(args); return this.wb.search(a.query, a.archived); }
+      case 'items.search': { const a = z.object({ query: z.string().default(''), archived: z.boolean().default(false), limit: z.number().int().positive().max(1000).optional() }).parse(args); return this.wb.rankedSearch(a.query, a); }
       case 'items.read': return this.wb.detail(z.object({ id: idSchema }).parse(args).id);
       case 'items.origins': return this.wb.origins(args);
       case 'items.revision': { const a = z.object({ id: idSchema, revision: hashSchema }).parse(args); return this.wb.getRevision(a.id, a.revision); }
@@ -143,6 +144,9 @@ export class Router {
       case 'skills.cleanEntry': return this.deployments.cleanScanEntry(args);
       case 'skills.import': return this.deployments.importExternal(args);
       case 'skills.sync': return this.deployments.syncInstalls();
+      case 'skills.update': return this.published(this.deployments.updateInstalls(args));
+      case 'deploy.keepCopy': return this.deployments.keepCopy(args);
+      case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
       case 'targets.list': return this.wb.targets();
       case 'targets.remove': return this.wb.removeTarget(args);
       case 'items.reorder': return this.wb.reorderItems(args);
@@ -157,6 +161,7 @@ export class Router {
       case 'trials.create': return this.wb.prepareTrial(args);
       case 'trials.finish': return this.wb.finishTrial(args);
       case 'trials.delete': return this.wb.deleteTrial(args);
+      case 'trials.judge': return this.wb.judgeTrial(args);
       case 'targets.enroll': return this.wb.enroll(args);
       case 'deploy.plan': return this.deployments.plan(args);
       case 'deploy.apply': return this.deployments.apply(args);
@@ -192,6 +197,11 @@ export class Router {
     const item = this.wb.unapprove(args);
     if (this.wb.repositoryState().ready) this.publisher.enqueue('unapprove', item.id, item.revision);
     return item;
+  }
+  /** Experimental update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
+  private published<T extends { itemId: string; approved: boolean; revision: string }>(result: T) {
+    if (result.approved && this.wb.repositoryState().ready) this.publisher.enqueue('approve', result.itemId, result.revision);
+    return result;
   }
   /** Installing an unapproved revision approves it first, so the same push to GitHub happens as with an explicit Approve. */
   installSkill(args: unknown) {

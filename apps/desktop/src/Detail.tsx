@@ -11,8 +11,14 @@ import { api, date, shortHash } from './api';
 import { isTextFile } from '../../../packages/domain/text';
 import { Badge, ContextMenu, Field, KindIcon, Lightbox, imageFile, imageSource, statusHelp } from './components';
 import { Installations } from './Installations';
+import { installUpdatesButton } from './InstallUpdates';
 import { personalTarget, SkillToggles } from './Skills';
 import { machinesEnabled } from './features';
+import { experimentOn } from './Experiments';
+import { experimentsOf, reviewOf, TrialsByRevision } from './TrialLoop';
+import { DiscardDraftDialog, ItemCodeEditor } from './item-editing';
+import { withDraftContent } from './item-draft';
+import { noteDraft } from './code-editor-state';
 
 const publishPhase: Record<string, string> = { queued: 'Waiting to commit', composing: 'Writing the commit message', committing: 'Committing', pushing: 'Pushing to GitHub' };
 /** Where this approval is on its way to GitHub: in progress, failed with a retry, or landed with its commit. */
@@ -40,8 +46,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [output, setOutput] = useState<{ output: string; reference: string; prompt: string } | null>(null);
   const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
+  // Experimental code editor: CodeMirror, live checks, editable bundled files and fields kept in the draft.
+  const codeEditor = experimentOn(snapshot.settings, 'codeEditor'), [discarding, setDiscarding] = useState(false);
   useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setCompare(null); setOutput(null); setFilePreview(null); }, [item.id]);
-  useEffect(() => { if (editing) localStorage.setItem(`kiln-draft:${item.id}`, JSON.stringify({ content: draft, base })); }, [draft, base, editing, item.id]);
+  useEffect(() => { if (editing && !codeEditor) localStorage.setItem(`kiln-draft:${item.id}`, withDraftContent(localStorage.getItem(`kiln-draft:${item.id}`), draft, base)); }, [draft, base, editing, item.id, codeEditor]);
   useEffect(() => { if (!editing) { setDraft(revision.content); setBase(revision.hash); } }, [revision.hash, editing]);
   const changeTab = (value: string) => { setTab(value); localStorage.setItem('kiln-detail-tab', value); };
   // Only skills and instruction files can be installed into agent folders, so other kinds do not get an Installs tab.
@@ -63,7 +71,9 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const tabFor = (kind: AgentKind) => changeTab(kind === 'trial' ? 'trials' : 'overview');
   useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) tabFor(kind); }; window.addEventListener('kiln:agent-started', jump); return () => window.removeEventListener('kiln:agent-started', jump); }, []);
   const approvals = detail.approvals.filter(a => a.revision === item.revision && a.trust === 'local');
-  const trials = detail.trials.filter(t => t.revision === item.revision);
+  // trialLoop: Improve and re-test from experiments. A human judgement of an experiment is not an experiment of its own, so it is not counted.
+  const trialLoop = experimentOn(snapshot.settings, 'trialLoop');
+  const trials = detail.trials.filter(t => t.revision === item.revision && !(trialLoop && reviewOf(t)));
   const deployed = snapshot.receipts.filter(r => r.itemId === item.id);
   const copied = detail.observations.filter(o => o.kind === 'copied').length;
   const currentApproved = approvals.length > 0;
@@ -93,7 +103,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         </>
         : <>
           {['skill', 'agent'].includes(item.kind) && (locations.length > 0 || copies.length > 0)
-            ? <button className={`button ${copies.length ? '' : 'primary'}`} onClick={() => copies.length ? changeTab('installs') : onAction('approve-install')} title={copies.length ? 'Manage installed copies and remove them from individual locations' : undefined}>{copies.length ? <Check size={15} /> : <Download size={15} />}{copies.length ? installedNames.length || copies.some(copy => copy.state === 'drifted') ? 'Installed' : 'Manage installations' : currentApproved ? 'Install' : 'Approve & install'}</button>
+            ? installUpdatesButton({ settings: snapshot.settings, item, approved: currentApproved, copies, onAction }) ?? <button className={`button ${copies.length ? '' : 'primary'}`} onClick={() => copies.length ? changeTab('installs') : onAction('approve-install')} title={copies.length ? 'Manage installed copies and remove them from individual locations' : undefined}>{copies.length ? <Check size={15} /> : <Download size={15} />}{copies.length ? installedNames.length || copies.some(copy => copy.state === 'drifted') ? 'Installed' : 'Manage installations' : currentApproved ? 'Install' : 'Approve & install'}</button>
             : item.kind === 'link' || (['tool', 'resource'].includes(item.kind) && /^https?:\/\/\S+$/i.test(revision.content.trim().split('\n')[0]))
               ? <button className="button primary" onClick={() => void perform(() => api('desktop.openItem', { id: item.id }))}><ExternalLink size={15} />Open link</button>
               : ['file', 'image', 'reference'].includes(item.kind)
@@ -112,14 +122,14 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
           ]} />}
         </>}</div>
     </header>
-    <nav className="detail-tabs" aria-label="Item details">{tabs.map(t => <button key={t} className={tab === t ? 'active' : ''} onClick={() => changeTab(t)}>{tabName(t)}{t === 'trials' && detail.trials.length > 0 && <span>{detail.trials.length}</span>}{t === 'made' && <span>{made.length}</span>}</button>)}</nav>
+    <nav className="detail-tabs" aria-label="Item details">{tabs.map(t => <button key={t} className={tab === t ? 'active' : ''} onClick={() => changeTab(t)}>{tabName(t)}{t === 'trials' && (trialLoop ? experimentsOf(detail.trials).length > 0 && <span title={`${trials.length} for the current revision · ${experimentsOf(detail.trials).length} in total`}>{trials.length}</span> : detail.trials.length > 0 && <span>{detail.trials.length}</span>)}{t === 'made' && <span>{made.length}</span>}</button>)}</nav>
     <div className="detail-scroll" {...scroll}><AgentStatus itemId={item.id} jobs={jobs} onOpen={tabFor} />
       {tab === 'overview' && <>
         <AgentPanel itemId={item.id} jobs={jobs} kinds={['capture', 'derive', 'distill']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} />
         {recorded.map(a => <AnalysisRecord key={a.id} analysis={a} />)}
         {isSource && <section className="content-section"><div className="section-heading"><h3>Made from this</h3><button className="text-button" onClick={() => changeTab('made')}>See all {made.length} <ArrowRight size={13} /></button></div>{made.length ? <MadeList items={made.slice(0, 6)} onSelect={onSelect} /> : <p className="muted">Nothing made from it yet{detail.analyses.length ? '; entries that were trashed or deleted no longer count' : ''}. Analyze it to distill prompts, techniques, tools and insights.</p>}</section>}
         {!isSource && <details className="item-status-details"><summary>{['archived', 'rejected'].includes(item.status) ? item.status === 'archived' ? 'Archived' : 'Rejected' : currentApproved ? 'Approved' : 'Draft'}{installable && item.kind !== 'instruction' && <> · {installedNames.length ? `Installed in ${installedNames.join(' and ')}` : 'Not installed'}{changedCopies ? ' · Copies need attention' : ''}</>}{item.kind === 'instruction' ? deployed.length ? ' · Install history available' : ' · No install records' : ''}{draftAfterApproval ? ' · New edits pending' : ''}{publishJob?.status === 'failed' ? ' · GitHub sync failed' : publishJob && !['done', 'failed'].includes(publishJob.status) ? ' · Saving to GitHub' : ''}</summary>
-          <p>{currentApproved ? 'You approved this revision.' : 'This revision has not been approved.'} {trials.some(t => t.status === 'completed') ? 'A completed test is available in Trials.' : 'No completed test for this revision.'}</p>
+          <p>{currentApproved ? 'You approved this revision.' : 'This revision has not been approved.'} {trialLoop ? (() => { const done = trials.filter(t => t.status === 'completed').length, earlier = experimentsOf(detail.trials).filter(t => t.revision !== item.revision).length; return `${done ? `${done} completed test${done === 1 ? '' : 's'} of this revision in Trials` : 'No completed test for this revision'}${earlier ? `; ${earlier} on earlier revisions` : ''}.`; })() : trials.some(t => t.status === 'completed') ? 'A completed test is available in Trials.' : 'No completed test for this revision.'}</p>
         {approvals.map(a => <div className="notice success" key={a.id}><b>Approved by {a.reviewer}</b><PublishState job={publishJob} ahead={snapshot.git.ahead} onRetry={() => void perform(async () => { if (publishJob) await api('publish.retry', { id: publishJob.id }); await refresh(); })} /><p>{a.scope}</p><p>{a.note}</p>{a.waivedChecks && <p>Checks waived: {a.waivedChecks}</p>}<small>{date(a.createdAt)}</small></div>)}
           <button className="text-button" onClick={() => changeTab('history')}>View history</button>{installable && <button className="text-button" onClick={() => changeTab('installs')}>View installs</button>}
         {draftAfterApproval && <div className="notice"><b>Draft with unapproved edits</b><p>Revision {shortHash(lastApproved.revision)} is the approved version on GitHub and the one installs use. This draft ({shortHash(item.revision)}) exists only on this machine until you approve it.</p></div>}
@@ -140,8 +150,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         {made.length ? <MadeList items={made} onSelect={onSelect} grouped /> : <p className="empty-inline">Nothing made from it yet.</p>}
       </>}
       {tab === 'content' && <>
-        <div className="section-heading"><h3>{item.kind === 'agent' ? item.agent?.filename : item.kind === 'skill' ? 'SKILL.md' : 'Content & metadata'}</h3><button className="text-button" aria-label={editing ? 'Discard local draft' : 'Edit text'} onClick={() => { if (editing) localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(!editing); }}><Pencil size={14} />{editing ? 'Discard local draft' : 'Edit'}</button></div>
-        {editing ? <form onSubmit={event => { event.preventDefault(); const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, ...fields, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}), tags: fields.tags.split(',').map(t => t.trim()).filter(Boolean) } }); localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); await refresh(); }, 'New draft revision saved'); }}>
+        <div className="section-heading"><h3>{item.kind === 'agent' ? item.agent?.filename : item.kind === 'skill' ? 'SKILL.md' : 'Content & metadata'}</h3><button className="text-button" aria-label={editing ? 'Discard local draft' : 'Edit text'} onClick={() => { if (editing && codeEditor) return setDiscarding(true); if (editing) localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(!editing); }}><Pencil size={14} />{editing ? 'Discard local draft' : 'Edit'}</button></div>
+        {editing ? codeEditor ? <ItemCodeEditor item={item} revision={revision} collections={snapshot.collections} draft={draft} onDraft={setDraft} base={base} perform={perform} refresh={refresh} onSaved={() => setEditing(false)} /> : <form onSubmit={event => { event.preventDefault(); const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, ...fields, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}), tags: fields.tags.split(',').map(t => t.trim()).filter(Boolean) } }); localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); await refresh(); }, 'New draft revision saved'); }}>
           {base !== item.revision && <div className="notice warning">This item changed elsewhere. Your unsaved text is preserved. Copy it before cancelling, then compare in History.</div>}<Field label="Title"><input name="title" defaultValue={item.title} required /></Field>{item.kind === 'agent' && <Field label="Agent filename"><input name="agentFilename" defaultValue={item.agent?.filename} required /></Field>}<Field label="Content"><textarea className="code-input editor" value={draft} onChange={e => setDraft(e.target.value)} rows={16} /></Field><div className="form-grid"><Field label="Collection"><input name="collection" defaultValue={item.collection} list="collection-names" placeholder="None (unfiled)" title="Use / for a subfolder. Changing only the collection keeps the revision and its approval." /><datalist id="collection-names">{snapshot.collections.map(name => <option key={name} value={name} />)}</datalist></Field><Field label="Tags"><input name="tags" defaultValue={item.tags.join(', ')} /></Field></div><Field label="Source"><input name="source" defaultValue={item.source} /></Field><Field label="Licence"><input name="licence" defaultValue={item.licence} /></Field><Field label="What changed? (optional)" hint="Leave it empty to use a plain revision note."><input name="summary" placeholder="Brief revision note" /></Field><div className="modal-actions"><span className="muted small">Text autosaves privately. Save creates an unapproved revision.</span><button className="button primary" type="submit">Save revision</button></div>
         </form> : <pre className="content-preview full">{revision.content}</pre>}
         <section className="content-section"><h3>Bundled files</h3>{Object.keys(revision.files).length ? <div className="file-preview-list">{Object.entries(revision.files).map(([name, content]) => <div key={name} className="bundled-file">
@@ -158,7 +168,11 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         <div className="revision-list">{detail.revisions.map(r => <button key={r.hash} className={`revision-row ${compare?.hash === r.hash ? 'selected' : ''}`} onClick={() => setCompare(r)}><div><b>{r.summary}</b><span>{r.author} · {date(r.createdAt)}</span></div><code>{shortHash(r.hash)}</code>{detail.approvals.some(a => a.revision === r.hash) && <ShieldCheck size={15} className="green" />}</button>)}</div>
         {compare && <><div className="section-heading"><h3>{shortHash(compare.hash)} → {shortHash(item.revision)}</h3>{compare.hash !== item.revision && <button className="button" onClick={() => void perform(async () => { await api('items.restore', { id: item.id, expect: item.revision, revision: compare.hash }); await refresh(); }, 'Revision restored. Installed snapshots are unchanged.')}><RotateCcw size={14} />Restore this version</button>}</div><LineDiff before={compare.content} after={revision.content} names={{ before: 'the selected version', after: 'the current draft' }} /><details><summary>Selected version metadata and files</summary><pre className="prompt-preview">{JSON.stringify({ title: compare.title, source: compare.source, tags: compare.tags, licence: compare.licence, files: Object.keys(compare.files) }, null, 2)}</pre></details></>}
       </>}
-      {tab === 'trials' && <>
+      {tab === 'trials' && trialLoop && <>
+        <AgentPanel itemId={item.id} jobs={jobs.filter(j => j.status !== 'completed')} kinds={['trial']} onOpen={onSelect} />
+        <TrialsByRevision detail={detail} jobs={jobs} approved={currentApproved} approve={['skill', 'agent'].includes(item.kind) && locations.length > 0 && !copies.length ? { label: 'Approve & install', run: () => onAction('approve-install') } : { label: 'Approve this revision', run: () => onAction('approve') }} onAction={onAction} perform={perform} refresh={refresh} />
+      </>}
+      {tab === 'trials' && !trialLoop && <>
         <AgentPanel itemId={item.id} jobs={jobs} kinds={['trial']} onOpen={onSelect} />
         <div className="section-heading"><h3>Learn from real tasks</h3><button className="button" onClick={() => onAction('trial')}><FlaskConical size={15} />New trial</button></div>{!detail.trials.length && <p className="muted">Try a typical task and a boundary case. Keep your rubric and judgement alongside this revision.</p>}
         {[...detail.trials].reverse().map(t => <div className="trial-card" key={t.id}><div className="section-heading"><b>{t.case === 'typical' ? 'Typical case' : 'Boundary case'}</b><Badge status={t.judgement ?? t.status} /></div><p>{t.note || t.task}</p><ul>{t.rubric.map(r => <li key={r}>{r}</li>)}</ul><div className="detail-meta"><code>{shortHash(t.revision)}</code><span>{t.provider} · {date(t.createdAt)}</span></div><div className="wrap-actions">{t.status === 'prepared' ? <><button className="button primary" onClick={() => onAction('result', t)}>Record result</button><button className="button" onClick={() => void perform(() => api('desktop.copyTrial', { id: t.id }), 'Handoff copied')}><Copy size={14} />Copy handoff</button></> : <button className="button" onClick={() => void perform(async () => { setOutput(await api('desktop.trialOutput', { id: t.id })); })}>View local evidence</button>}<button className="button danger-text" onClick={() => { setOutput(null); onAction('delete-trial', t); }}><Trash2 size={14} />Delete experiment</button></div></div>)}
@@ -173,6 +187,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
       </>}
     </div>
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
+    {discarding && <DiscardDraftDialog title={item.title} onCancel={() => setDiscarding(false)} onDiscard={() => { localStorage.removeItem(`kiln-draft:${item.id}`); noteDraft(item.id, false); setDiscarding(false); setEditing(false); }} />}
   </article>;
 }
 const kindPlural: Record<string, string> = { prompt: 'Prompts', skill: 'Skills', agent: 'Agents', instruction: 'Instructions', link: 'Links', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', image: 'Images', file: 'Files', reference: 'References', source: 'Sources' };

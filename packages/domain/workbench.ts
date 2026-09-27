@@ -10,7 +10,8 @@ import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, 
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
-import { environmentExperiments, experimentIds, type ExperimentId } from '../protocol/experiments';
+import { environmentExperiments, experimentIds, experimentOn, type ExperimentId } from '../protocol/experiments';
+import { closeMatches } from './fuzzy';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
@@ -32,6 +33,8 @@ function workingFingerprint(dir: string, revision: string) {
 }
 /** Summary a revision carries until a generated description replaces it. */
 export const PENDING_SUMMARY = 'Edited';
+/** Managed trials store `mode: 'codex'` for every provider (the schema predates Claude Code runs), so activity names the provider the trial records instead. */
+const agentLabel = (provider: 'codex' | 'claude' | 'manual') => provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Agent';
 /** Unknown flag names are kept (a flag removed from the list must not fail an older settings file); only true turns one on. */
 const experimentsSchema = z.record(z.string(), z.boolean()).catch({}).default({});
 export class Workbench {
@@ -360,6 +363,23 @@ export class Workbench {
     const ids = query.trim() ? new Set(this.index.search(query)) : null;
     return this.indexedItems.filter(item => (!ids || ids.has(item.id)) && (includeArchived || !['archived', 'rejected'].includes(item.status)));
   }
+  /**
+   * Search for the betterSearch experiment: best matches first (descriptions count too), a typo-tolerant fallback on titles and
+   * tags when nothing matches exactly (`close`), and `total` so a capped list can say how much it left out.
+   */
+  rankedSearch(query: string, options: { archived?: boolean; limit?: number } = {}) {
+    if (!experimentOn(this.settings(), 'betterSearch')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Ranked search is an experimental feature; turn on "Steadier, ranked search" in Settings.');
+    if (this.dirty) this.refresh();
+    const shown = (item: Item) => options.archived || !['archived', 'rejected'].includes(item.status);
+    let items: Item[], close = false;
+    if (!query.trim()) items = this.indexedItems.filter(shown);
+    else {
+      const byId = new Map(this.indexedItems.map(item => [item.id, item]));
+      items = this.index.search(query, true).flatMap(id => { const item = byId.get(id); return item && shown(item) ? [item] : []; });
+      if (!items.length) { items = closeMatches(query, this.indexedItems.filter(shown)); close = items.length > 0; }
+    }
+    return { items: options.limit ? items.slice(0, options.limit) : items, total: items.length, close };
+  }
   private revisionHistory(id: string) {
     return [...readRecords(path.join(this.itemDir(id), 'revisions'), value => revisionSchema.parse(value), this.warnings),
       ...readRecords(path.join(this.local, 'private-revisions', id), value => revisionSchema.parse(value), this.warnings)]
@@ -497,7 +517,7 @@ export class Workbench {
       writeJson(path.join(folder, 'environment.json'), { variables: data.variables, task: data.task, requestedWorkspace: data.workspace, revision: data.revision, provider: data.provider, authentication: 'Use the official client login', permissionProfile: trial.permissionProfile });
       writeJson(path.join(this.canonical, 'experiments', `${trial.id}.json`), trial);
       const item = this.getItem(data.id); if (item.revision === data.revision && item.status === 'captured') { this.dirty = true; writeJson(this.itemFile(item.id), { ...item, status: 'testing' }); }
-      this.record('trial_prepared', data.mode === 'codex' ? 'Started a Codex CLI experiment' : 'Prepared manual agent handoff; execution not yet observed', item.id, data.revision);
+      this.record('trial_prepared', data.mode === 'codex' ? `Started a ${agentLabel(data.provider)} CLI experiment` : 'Prepared manual agent handoff; execution not yet observed', item.id, data.revision);
       this.observeUnlocked({ schemaVersion: 1, eventId: `${trial.id}-prepared`, itemId: item.id, revision: data.revision, kind: 'test_prepared', source: 'kiln', confidence: 'observed', sessionId: trial.id, occurredAt: now() });
       return { trial, folder, prompt: handoff };
     });
@@ -510,6 +530,8 @@ export class Workbench {
       if (trial.deletedAt) return trial;
       const deleted = { ...trial, deletedAt: now() };
       writeJson(path.join(this.canonical, 'experiments', `${id}.json`), deleted);
+      // A human judgement of this experiment (trialLoop) goes with it, so it no longer counts as approval evidence.
+      for (const review of this.trials().filter(t => t.outputReference === `review-of:${id}`)) writeJson(path.join(this.canonical, 'experiments', `${review.id}.json`), { ...review, deletedAt: deleted.deletedAt });
       this.record('trial_deleted', 'Experiment deleted from the trial lists; historical evidence retained', trial.itemId, trial.revision);
       return deleted;
     });
@@ -524,9 +546,31 @@ export class Workbench {
       if (data.outputReference) writeJson(path.join(this.local, 'runs', trial.id, 'output-reference.json'), { reference: data.outputReference });
       const updated = { ...trial, judgement: data.cancel ? null : data.judgement, note: data.note, status: data.cancel ? 'cancelled' as const : 'completed' as const, outputReference: data.output || data.outputReference ? `local-run:${trial.id}` : '', completedAt: now() };
       writeJson(path.join(this.canonical, 'experiments', `${trial.id}.json`), updated);
-      this.record(data.cancel ? 'trial_cancelled' : 'trial_completed', data.cancel ? 'Handoff cancelled; any independently running agent must be stopped in its own window' : `${trial.mode === 'codex' ? 'Codex assessment' : 'Human judgement'}: ${data.judgement}`, trial.itemId, trial.revision);
+      this.record(data.cancel ? 'trial_cancelled' : 'trial_completed', data.cancel ? 'Handoff cancelled; any independently running agent must be stopped in its own window' : `${trial.mode === 'codex' ? `${agentLabel(trial.provider)} assessment` : 'Human judgement'}: ${data.judgement}`, trial.itemId, trial.revision);
       if (!data.cancel) this.observeUnlocked({ schemaVersion: 1, eventId: `${trial.id}-completed`, itemId: trial.itemId, revision: trial.revision, kind: 'test_completed', source: 'kiln', confidence: 'observed', sessionId: trial.id, occurredAt: now() });
       return updated;
+    });
+  }
+  /**
+   * trialLoop: the user's own verdict on an agent experiment of the current revision. It is stored as a separate, completed manual
+   * trial (`outputReference: review-of:<agent trial>`), so the agent assessment stays untouched and the two remain distinct; it counts
+   * as approval evidence like any manual trial. A newer verdict on the same experiment replaces the older one, which is kept as deleted.
+   */
+  judgeTrial(input: unknown) {
+    if (!experimentOn(this.settings(), 'trialLoop')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Turn on "Improve and re-test from experiments" in Settings to mark experiments as passed or failed.');
+    const data = z.object({ id: idSchema, judgement: z.enum(['pass', 'fail']), note: z.string().trim().max(2000).default('') }).parse(input);
+    return this.mutate(() => {
+      const reviewed = this.trials().find(t => t.id === data.id); invariant(reviewed, 'TRIAL_NOT_FOUND', 'Experiment not found.');
+      invariant(reviewed.mode === 'codex' && reviewed.status === 'completed', 'TRIAL_NOT_REVIEWABLE', 'Only a completed agent experiment can be marked as passed or failed.');
+      const item = this.reconcileItem(reviewed.itemId);
+      invariant(!item.deletedAt && item.revision === reviewed.revision, 'REVISION_CONFLICT', 'This experiment tested an earlier revision. Re-test the current revision before judging it.');
+      const reference = `review-of:${reviewed.id}`, at = now();
+      for (const earlier of this.trials().filter(t => t.outputReference === reference)) writeJson(path.join(this.canonical, 'experiments', `${earlier.id}.json`), { ...earlier, deletedAt: at });
+      const label = agentLabel(reviewed.provider), verdict = data.judgement === 'pass' ? 'passed' : 'failed';
+      const trial = trialSchema.parse({ schemaVersion: 1, id: randomUUID(), itemId: item.id, revision: reviewed.revision, provider: 'manual', mode: 'manual', variables: {}, task: `Human review of the ${label} experiment`, rubric: reviewed.rubric, case: reviewed.case, workspace: 'Local run folder (machine-private)', machine: 'local', permissionProfile: 'Human review; no agent run', agentVersion: 'n/a', model: 'human', status: 'completed', judgement: data.judgement, note: data.note || `Marked as ${verdict} after reviewing the ${label} experiment.`, outputReference: reference, createdAt: at, completedAt: at });
+      writeJson(path.join(this.canonical, 'experiments', `${trial.id}.json`), trial);
+      this.record('trial_completed', `Human judgement: ${data.judgement} (reviewed the ${label} assessment)`, item.id, item.revision);
+      return trial;
     });
   }
   observe(input: unknown) { return this.mutate(() => this.observeUnlocked(observationSchema.parse(input)), undefined, false); }
