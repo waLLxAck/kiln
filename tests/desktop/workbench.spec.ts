@@ -102,6 +102,10 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();
+    // The item that was open comes back open, still approved; the list behind it has its card.
+    await expect(page.getByRole('heading', { name: 'Make the next step clear', level: 1 })).toBeVisible();
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
+    await page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await expect(page.locator('.item-card', { hasText: /Make the next step clear/ })).toBeVisible();
     await app.evaluate(({ clipboard }) => clipboard.writeText('Do not change this on Escape'));
     await page.getByRole('button', { name: /Search or run a command/ }).click();

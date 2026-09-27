@@ -33,6 +33,9 @@ function savedDraft(id: string): { content: string; base: string } | null {
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
 const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'source' ? 'Original material' : 'Content';
 
+/** The last `showTests` request a page acted on. */
+let shownTests = 0;
+
 /**
  * The item page (design 5): a small header with one primary action, the content itself as the main column (edited in
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
@@ -41,7 +44,6 @@ const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.i
 export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
-  useEffect(() => { if (showTests?.id === detail.item.id) setView('tests'); }, [showTests, detail.item.id]);
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
   const [more, setMore] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(Boolean(savedDraft(item.id)));
@@ -53,6 +55,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [deployRevision, setDeployRevision] = useState<string | null>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setFieldsChanged(false); setFilePreview(null); setView('content'); }, [item.id]);
+  // After the reset above, which runs when the page mounts; each request opens the tests once, not again when the item is reopened later.
+  useEffect(() => { if (showTests?.id === item.id && showTests.at !== shownTests) { shownTests = showTests.at; setView('tests'); } }, [showTests, item.id]);
   useEffect(() => { if (editing) localStorage.setItem(`kiln-draft:${item.id}`, JSON.stringify({ content: draft, base })); }, [draft, base, editing, item.id]);
   useEffect(() => { if (!editing) { setDraft(revision.content); setBase(revision.hash); } }, [revision.hash, editing]);
   const isSource = item.kind === 'source';
