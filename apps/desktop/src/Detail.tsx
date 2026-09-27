@@ -23,6 +23,7 @@ type Props = {
   jobs: AgentJob[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
   /** Opens the agent chat about this item. */ onAsk?: () => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
+  /** Set when something outside the page (the list's Test, quick search) asks for this item's tests. */ showTests?: { id: string; at: number };
 };
 type View = 'content' | 'tests' | 'history';
 function savedDraft(id: string): { content: string; base: string } | null {
@@ -36,9 +37,10 @@ const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.i
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
+  useEffect(() => { if (showTests?.id === detail.item.id) setView('tests'); }, [showTests, detail.item.id]);
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
   const [more, setMore] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(Boolean(savedDraft(item.id)));

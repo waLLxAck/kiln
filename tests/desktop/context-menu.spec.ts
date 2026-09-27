@@ -47,8 +47,7 @@ test('context menu shows single-key shortcuts; A archives with a short undo; swi
     await expect(toast).toHaveCount(0);
     await expect(page.locator('.toast')).toContainText('First prompt is back in captured');
 
-    // The same key works on a focused card without opening the menu, and the toast leaves on its own after 3 seconds.
-    await card(page, 'Second prompt').click();
+    // The same key works on a focused row without opening the menu, and the toast leaves on its own after 3 seconds.
     await card(page, 'Second prompt').focus();
     await page.keyboard.press('a');
     await expect(page.locator('.item-card')).toHaveCount(2);

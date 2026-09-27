@@ -5,7 +5,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Workbench } from '../../packages/domain/workbench';
 import { transcriptMarkdown } from '../../packages/agent/youtube';
-import { desktopEnv, readyLibrary } from './fixture';
+import { desktopEnv, readyLibrary, showKind } from './fixture';
 
 test('a source has its own tab and page: no copy or test, its analysis, what was made from it with keep and archive, and links both ways', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-sources-'));
@@ -22,9 +22,8 @@ test('a source has its own tab and page: no copy or test, its analysis, what was
   const page = await app.firstWindow(); const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
-    const tab = page.getByRole('tab', { name: /^Sources/ });
-    await expect(tab.locator('small')).toHaveText('1', { timeout: 15_000 });
-    await tab.click();
+    await expect(page.locator('.item-card', { hasText: 'Design chat' })).toBeVisible({ timeout: 15_000 });
+    await showKind(page, 'source');
     const row = page.locator('.item-card', { hasText: 'Design chat' });
     await expect(page.locator('.item-card')).toHaveCount(1);
     await expect(row.locator('.lib-made')).toHaveText('2 made');
@@ -71,14 +70,15 @@ test('a source has its own tab and page: no copy or test, its analysis, what was
     await expect(made.getByRole('button', { name: /^Archived/ })).toHaveCount(0);
     await page.screenshot({ path: 'test-results/source-made.png' });
 
-    // No copy on its menu either.
+    // No copy on its menu either. Esc goes back to the list.
+    await page.keyboard.press('Escape');
     await row.click({ button: 'right' });
     const menu = page.getByRole('menu');
     await expect(menu.getByRole('menuitem', { name: /^Copy/ })).toHaveCount(0);
     await menu.getByRole('menuitem', { name: /^Show what was made from it/ }).click();
 
     // The library, filtered to the source across collections.
-    await expect(page.getByRole('group', { name: 'Filters' })).toContainText('Source: Design chat');
+    await expect(page.getByRole('button', { name: 'Remove from: Design chat' })).toBeVisible();
     await expect(page.locator('.item-card')).toHaveCount(2);
     await expect(page.locator('.item-card', { hasText: 'Unrelated prompt' })).toHaveCount(0);
 
@@ -87,6 +87,7 @@ test('a source has its own tab and page: no copy or test, its analysis, what was
     await detail.getByRole('button', { name: 'From “Design chat”' }).click();
     await expect(sourcePage.getByRole('heading', { name: 'Design chat' })).toBeVisible();
 
+    await page.keyboard.press('Escape');
     // The sort pill names the order. Across the library the source mixes in; inside its collection it leads, whatever the order.
     const sortPill = page.getByRole('button', { name: /^Sort: / }), titles = page.locator('.item-card .item-title');
     await expect(sortPill).toHaveText(/Recently added/);
@@ -101,7 +102,7 @@ test('a source has its own tab and page: no copy or test, its analysis, what was
     await expect(page.getByRole('button', { name: 'Move selected item up' })).toHaveCount(0);
     await sortPill.click();
     await page.getByRole('menuitem', { name: /^Custom order/ }).click();
-    await page.locator('.item-card', { hasText: 'Compare designs side by side' }).click();
+    await page.locator('.item-card', { hasText: 'Compare designs side by side' }).click({ modifiers: ['Control'] });
     await expect(page.getByRole('button', { name: 'Move selected item up' })).toBeDisabled();
     await expect(titles).toHaveText(['Design chat', 'Compare designs side by side']);
     expect(errors).toEqual([]);

@@ -1,6 +1,7 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { showKind } from './fixture';
 
 test('packaged Windows app opens the selected migrated library', async () => {
   test.skip(!process.env.KILN_PACKAGED_EXE, 'Explicit packaged executable required.');
@@ -10,9 +11,9 @@ test('packaged Windows app opens the selected migrated library', async () => {
   const page = await app.firstWindow(); const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.getByRole('tab', { name: /^Skills/ }).click();
+    await showKind(page, 'skill');
     await expect(page.locator('.item-card')).toHaveCount(217);
-    await page.getByRole('button', { name: /build-knowledge-system/ }).first().click();
+    await page.locator('.item-card', { hasText: /build-knowledge-system/ }).first().click();
     await expect(page.getByRole('heading', { name: 'build-knowledge-system', exact: true })).toBeVisible();
     const state = await page.evaluate(async () => await (window as any).kiln.call('snapshot', {}));
     if (process.env.KILN_PACKAGED_LIBRARY) expect(state.root.replaceAll('\\', '/')).toBe(process.env.KILN_PACKAGED_LIBRARY.replaceAll('\\', '/'));

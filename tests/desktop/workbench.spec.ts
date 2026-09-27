@@ -9,7 +9,7 @@ type Page = Awaited<ReturnType<Awaited<ReturnType<typeof electron.launch>>['firs
 async function createItem(page: Page, input: { kind: string; title: string; content: string }) {
   await page.evaluate(async input => { await (window as any).kiln.call('items.create', { ...input, collection: 'Personal', tags: [], files: {}, source: '', licence: 'Unknown' }); }, input);
   await page.getByRole('button', { name: 'Refresh library' }).click();
-  await page.getByRole('button', { name: new RegExp(input.title) }).click();
+  await page.locator('.item-card', { hasText: input.title }).click();
 }
 
 test('real desktop capture → copy → trial → approval → deploy → edit → rollback', async () => {
@@ -102,9 +102,9 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();
-    await expect(page.getByRole('button', { name: /Make the next step clear/ })).toBeVisible();
+    await expect(page.locator('.item-card', { hasText: /Make the next step clear/ })).toBeVisible();
     await app.evaluate(({ clipboard }) => clipboard.writeText('Do not change this on Escape'));
-    await page.getByRole('button', { name: /Quick search/ }).click();
+    await page.getByRole('button', { name: /Search or run a command/ }).click();
     const palette = await app.waitForEvent('window');
     await expect(palette.getByRole('combobox', { name: 'Quick search' })).toBeVisible();
     await palette.getByRole('combobox').fill('clear');
@@ -139,7 +139,9 @@ test('delete started experiments from both lists and keep them deleted after reo
     await expect(page.getByRole('button', { name: 'Delete experiment', exact: true })).toHaveCount(1);
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
-    await page.getByRole('button', { name: /Delete experiment fixture/ }).click();
+    // The library comes back as it was left, open item included; Esc returns to the list.
+    await page.keyboard.press('Escape');
+    await page.locator('.item-card', { hasText: /Delete experiment fixture/ }).click();
     await page.getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Open tests', exact: true }).click();
     await page.getByRole('button', { name: 'Delete experiment', exact: true }).click();

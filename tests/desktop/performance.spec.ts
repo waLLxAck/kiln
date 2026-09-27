@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { desktopEnv, readyLibrary } from './fixture';
+import { desktopEnv, readyLibrary, showKind } from './fixture';
 
 test('217 skills: import preview stays responsive, panels resize, stalls are logged', async () => {
   test.setTimeout(120_000);
@@ -44,7 +44,7 @@ test('217 skills: import preview stays responsive, panels resize, stalls are log
     await page.getByRole('button', { name: 'Import 217 skills', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 60000 });
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
-    await page.getByRole('tab', { name: /^Skills/ }).click();
+    await showKind(page, 'skill');
     await expect(page.locator('.item-card')).toHaveCount(217);
     await page.locator('.item-card').first().click();
     await expect(page.getByRole('button', { name: 'Edit text', exact: true })).toBeVisible();

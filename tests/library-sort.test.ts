@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Item } from '../packages/protocol/schema';
-import { arrangeItems, moveInOrder, nextSort, sortItems, sortLabel } from '../apps/desktop/src/library-sort';
+import { arrangeItems, groupItems, moveInOrder, nextSort, sortItems, sortLabel } from '../apps/desktop/src/library-sort';
 const at = (day: number) => `2026-09-${String(day).padStart(2, '0')}T10:00:00.000Z`;
 const item = (id: string, kind: Item['kind'], created: number, extra: Partial<Item> = {}) => ({ id, kind, title: id, status: 'captured', favourite: false, order: created, createdAt: at(created), updatedAt: at(created), ...extra }) as Item;
 const items = [item('old-source', 'source', 1), item('prompt', 'prompt', 5, { updatedAt: at(6) }), item('skill', 'skill', 3, { updatedAt: at(9) }), item('new-source', 'source', 4)];
@@ -34,4 +34,11 @@ test('the sort pill names heading orders too', () => {
   assert.equal(sortLabel(nextSort({ key: 'title', dir: 'asc' }, 'title')!), 'Title Z–A');
   assert.equal(sortLabel(nextSort(null, 'kind')!), 'Type');
   assert.equal(sortLabel({ key: 'order', dir: 'asc' }), 'Custom order');
+});
+test('groups keep the list order inside them, with unfiled items last', () => {
+  const filed = [item('a', 'prompt', 1, { collection: 'Zed' }), item('b', 'skill', 2, { collection: '' }), item('c', 'prompt', 3, { collection: 'Alpha/One' }), item('d', 'source', 4, { collection: 'Zed' })];
+  assert.deepEqual(groupItems(filed, 'collection').map(g => [g.label, ids(g.items)]), [['Alpha / One', ['c']], ['Zed', ['a', 'd']], ['No collection', ['b']]]);
+  assert.deepEqual(groupItems(filed, 'kind').map(g => g.label), ['Sources', 'Prompts', 'Skills']);
+  assert.deepEqual(groupItems(filed, 'none').map(g => ids(g.items)), [['a', 'b', 'c', 'd']]);
+  assert.deepEqual(groupItems([item('x', 'prompt', 1, { status: 'captured' }), item('y', 'prompt', 2, { status: 'approved' })], 'status').map(g => g.label), ['Approved', 'Drafts']);
 });

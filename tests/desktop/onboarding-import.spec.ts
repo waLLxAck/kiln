@@ -31,8 +31,8 @@ test('setup imports skills and agents and opens a current, bulk-manageable libra
     await expect(dialog).toHaveCount(0);
     await page.getByRole('button', { name: 'Review and bulk manage my library' }).click();
     await expect(page.locator('.item-card')).toHaveCount(2);
-    await expect(page.getByRole('tab', { name: /^Skills\s*1$/ })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /^Agents\s*1$/ })).toBeVisible();
+    await expect(page.locator('.item-card .item-kind.skill')).toHaveCount(1);
+    await expect(page.locator('.item-card .item-kind.agent')).toHaveCount(1);
     await page.getByRole('button', { name: 'Select all', exact: true }).click();
     await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
     await expect(page.locator('.item-card')).toHaveCount(0);
@@ -106,19 +106,19 @@ test('the import list skips folders that only hold skills, and two different ski
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('an agents collection with a remembered skill tab opens All without a ghost Skills zero tab', async () => {
+test('an agents collection remembered with an old kind tab opens with no leftover filter', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-empty-kind-'));
   const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
   try {
     const page = await app.firstWindow();
-    await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toBeVisible();
     await page.evaluate(async () => {
       await window.kiln.call('items.create', { kind: 'agent', title: 'Reviewer', content: 'Review.', agent: { provider: 'claude', filename: 'reviewer.md' }, collection: 'Agents' });
       localStorage.setItem('kiln-view-memory', JSON.stringify({ location: { section: 'library', collection: 'Agents', tab: 'skill' }, sections: {}, views: {} }));
     });
     await page.reload();
-    await expect(page.getByRole('tab', { name: /^All\s*1$/ })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('tab', { name: /^Skills/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'All', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.q-token')).toHaveCount(0);
     await expect(page.locator('.item-card')).toHaveCount(1);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

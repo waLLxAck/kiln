@@ -26,20 +26,20 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   };
   const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
   const row = (title: string) => page.locator('.item-card').filter({ has: page.locator('.item-title', { hasText: exact(title) }) }).first();
-  await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible({ timeout: 60_000 });
-  // A slightly narrower list, as if its divider had been dragged, gives the detail pane room for paths and run details.
-  await page.evaluate(() => localStorage.setItem('kiln-list-width', '540'));
-  await page.reload();
-  await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible({ timeout: 60_000 });
+  const search = page.getByRole('combobox', { name: 'Search library' });
+  await expect(search).toBeVisible({ timeout: 60_000 });
+  /** Back from an open item to the list, as Esc does. */
+  const back = () => page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button').first().click();
 
   // 1. A skill with its install locations.
-  await page.getByRole('tab', { name: /^Skills/ }).click();
+  await search.fill('kind:skill'); await search.press('Enter'); await search.press('Escape');
   await row('code-review').click();
   await detailTab('installs');
   await expect(page.getByRole('group', { name: 'Installed for' })).toBeVisible();
   await shot('skill-installs', 'A skill with one install switch per location, and each folder it is in, including a copy edited outside Kiln.');
 
   // 2. A copy that differs from the approved version, compared file by file.
+  await back();
   await row('research').click();
   await detailTab('installs');
   await page.getByRole('group', { name: 'Installed for' }).getByRole('button', { name: /^Agents/ }).click();
@@ -48,7 +48,8 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
 
   // 3. A video distilled into a collection of entries with timestamped links.
-  await page.getByRole('tab', { name: /^All/ }).click();
+  await back();
+  await page.getByRole('button', { name: 'All', exact: true }).click();
   await page.getByRole('button', { name: /I let a seven-year-old test my app/ }).first().click();
   await row('I let a seven-year-old test my app (with an agent)').click();
   await detailTab('overview');
@@ -56,6 +57,7 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
   await shot('video-distilled', 'A YouTube video distilled into a prompt, techniques, an insight and a tool, each linked to its minute in the video.');
 
   // 4. The distilled prompt tested on a real project, fixed, and tested again.
+  await back();
   await row('Try it as a seven-year-old').click();
   await detailTab('trials');
   await expect(page.locator('.agent-result').first()).toBeVisible();
@@ -76,7 +78,7 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
 
   // 7. Asking the agent about a distilled entry, with the video's transcript as context, in the dark theme.
   await page.getByRole('button', { name: /I let a seven-year-old test my app/ }).first().click();
-  await page.getByRole('tab', { name: /^All/ }).click();
+  if (await page.getByRole('toolbar', { name: 'Item navigation' }).count()) await back();
   await row('Try it as a seven-year-old').click();
   await detailTab('overview');
   await page.getByRole('button', { name: 'Toggle theme' }).click();
