@@ -29,7 +29,8 @@ test('experiments offer enrolled projects and browsing, preserve manual selectio
     await app.evaluate(({ dialog }, browsed) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [browsed] })) as typeof dialog.showOpenDialog; }, browsed);
     await page.getByRole('button', { name: 'Choose project folder…', exact: true }).click();
     await expect(selector).toHaveValue(browsed);
-    await page.getByRole('button', { name: 'Manual handoff instead', exact: true }).click();
+    // The grid's own run bar (open while nothing is tested) sits inert behind the modal; this is the dialog's handoff.
+    await page.getByRole('dialog').getByRole('button', { name: 'Manual handoff instead', exact: true }).click();
     await expect(selector).toHaveValue(browsed);
     await page.getByLabel('Representative task', { exact: true }).fill('Review the entry point');
     await page.getByLabel('Evaluation rubric', { exact: true }).fill('Identify missing error handling');
@@ -45,7 +46,7 @@ test('experiments offer enrolled projects and browsing, preserve manual selectio
     fs.rmdirSync(project);
     await app.evaluate(({ dialog }) => { dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox; });
     await page.getByRole('button', { name: 'Run experiment', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('missing or unreadable');
+    await expect(page.getByRole('dialog').getByRole('alert')).toContainText('missing or unreadable');
     const jobs = await page.evaluate(() => (window as any).kiln.call('agent.jobs'));
     expect(jobs).toHaveLength(0);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
@@ -66,7 +67,9 @@ test('the experiments grid runs from an inline bar with the project fixed by its
     }, { project });
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
     await page.getByText('Grid experiment fixture', { exact: true }).first().click();
-    await page.getByRole('button', { name: 'Test', exact: true }).click();
+    // A prompt's primary action is Copy, so Test is in the ⋯ menu; it opens the grid.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Test', exact: true }).click();
     const grid = page.getByRole('region', { name: 'Experiments', exact: true });
     // With nothing tested yet the run bar is already open, with a project choice.
     await expect(grid.getByText('No experiments yet')).toBeVisible();
@@ -82,12 +85,13 @@ test('the experiments grid runs from an inline bar with the project fixed by its
     await bar.getByRole('button', { name: 'Run', exact: true }).click();
     await expect(bar.getByRole('alert')).toContainText('missing or unreadable');
     expect(await page.evaluate(() => (window as any).kiln.call('agent.jobs'))).toHaveLength(0);
-    await page.evaluate(async () => {
-      const api = (window as any).kiln.call;
-      const item = (await api('snapshot')).items.find((i: { title: string }) => i.title === 'Grid experiment fixture');
-      await api('trials.create', { id: item.id, revision: item.revision, provider: 'manual', task: 'Disposable trial', rubric: ['Observe output'], case: 'typical' });
-    });
-    await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
+    // The bar's manual handoff prepares a disposable trial, which lands in the Manual column.
+    await bar.getByRole('button', { name: 'Manual handoff instead', exact: true }).click();
+    await page.getByRole('dialog').getByLabel('Representative task', { exact: true }).fill('Disposable trial');
+    await page.getByRole('dialog').getByLabel('Evaluation rubric', { exact: true }).fill('Observe output');
+    await page.getByRole('button', { name: 'Prepare trial', exact: false }).click();
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(grid.getByRole('columnheader', { name: /Manual/ })).toBeVisible();
     // Add project… offers enrolled projects; picking one adds its column and arms the bar on that cell.
     await grid.getByRole('button', { name: 'Add project…' }).click();
     await page.getByRole('menuitem', { name: /my-game/ }).click();
