@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { AgentService } from '../../packages/agent/service';
+import { runFinished } from '../../packages/agent/run-notice';
 import { Workbench } from '../../packages/domain/workbench';
 import { Router } from '../../packages/domain/router';
 import { WorkbenchError } from '../../packages/domain/errors';
@@ -9,7 +10,12 @@ const log = (event: string, fields?: Record<string, unknown>) => parentPort!.pos
 const routerOptions = { log, composer: null };
 let wb = new Workbench(workerData.root, workerData.local);
 let router = new Router(wb, routerOptions);
-const newAgentService = (workbench: Workbench) => new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
+const newAgentService = (workbench: Workbench) => {
+  const service = new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
+  // runNotifications: main decides whether to show a desktop notification; the event is sent for every finished run.
+  service.onFinished = job => parentPort!.postMessage({ agentFinished: runFinished(job, id => { try { return workbench.getItem(id).title; } catch { return undefined; } }) });
+  return service;
+};
 let agent = newAgentService(wb);
 // One owner and one queue preserve ordering across both desktop windows.
 let queue = Promise.resolve();
@@ -19,7 +25,7 @@ parentPort!.on('message', request => {
     try {
       let data;
       if (request.method === 'attach') {
-        if (agent.running) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
+        if (agent.running || agent.queued) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
         const next = new Workbench(request.args[0], workerData.local);
         wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);

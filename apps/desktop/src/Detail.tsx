@@ -16,6 +16,7 @@ import { personalTarget, SkillToggles } from './Skills';
 import { machinesEnabled } from './features';
 import { experimentOn } from './Experiments';
 import { experimentsOf, reviewOf, TrialsByRevision } from './TrialLoop';
+import { OPEN_RESULT_TAB_EVENT } from './Runs';
 
 const publishPhase: Record<string, string> = { queued: 'Waiting to commit', composing: 'Writing the commit message', committing: 'Committing', pushing: 'Pushing to GitHub' };
 /** Where this approval is on its way to GitHub: in progress, failed with a retry, or landed with its commit. */
@@ -64,7 +65,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const scroll = useScrollMemory(`detail:${item.id}:${tab}`, true);
   // Agent results live in the tab they belong to (experiments under Trials, notes and skill drafts under Overview), so jump there when a run starts.
   const tabFor = (kind: AgentKind) => changeTab(kind === 'trial' ? 'trials' : 'overview');
-  useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) tabFor(kind); }; window.addEventListener('kiln:agent-started', jump); return () => window.removeEventListener('kiln:agent-started', jump); }, []);
+  // runNotifications: "Open result" on a finished run shows the same tab.
+  useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) tabFor(kind); }; window.addEventListener('kiln:agent-started', jump); window.addEventListener(OPEN_RESULT_TAB_EVENT, jump); return () => { window.removeEventListener('kiln:agent-started', jump); window.removeEventListener(OPEN_RESULT_TAB_EVENT, jump); }; }, []);
   const approvals = detail.approvals.filter(a => a.revision === item.revision && a.trust === 'local');
   // trialLoop: Improve and re-test from experiments. A human judgement of an experiment is not an experiment of its own, so it is not counted.
   const trialLoop = experimentOn(snapshot.settings, 'trialLoop');
