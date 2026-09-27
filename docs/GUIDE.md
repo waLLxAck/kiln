@@ -382,7 +382,7 @@ Distilling a captioned YouTube video creates a collection of reusable entries wi
 
 The CLI has `machines status`, `machines list`, `machines report` and `machines mark <machine id> --item <id> --location <key> [--unmark]`; `skills sync` installs marked items too.
 
-Machines is not reliable yet, so release builds (the downloads) show it as **Coming soon**, with a short note on what it will do, and nothing else in the app links into it: an item's Installs tab offers **Install a specific revision…** for the folders Kiln manages. Personal skill folders are still chosen in **Settings**, and the install toggles show each folder's live state. Builds from source (`npm run dev`, `npm start`) keep the full section; to see it in a release-style build, build with `KILN_SHOW_MACHINES=1` (see [DEVELOPMENT.md](DEVELOPMENT.md)).
+Machines is not reliable yet, so release builds (the downloads) show it as **Coming soon**, with a short note on what it will do, and nothing else in the app links into it: an item's Installs section offers **Install a specific revision…** for the folders Kiln manages. Personal skill folders are still chosen in **Settings**, and the install toggles show each folder's live state. Builds from source (`npm run dev`, `npm start`) keep the full section; to see it in a release-style build, build with `KILN_SHOW_MACHINES=1` (see [DEVELOPMENT.md](DEVELOPMENT.md)).
 
 ## Product boundaries
 
