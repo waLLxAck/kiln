@@ -1057,3 +1057,13 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .skill-toggle.outdated:hover { background: var(--accent-tint); border-color: var(--accent-strong); }
 .install-mark.outdated { color: var(--accent-ink); background: var(--accent); }
 .badge.update_available { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+/* Experimental: betterSearch (steadier, ranked search) */
+.search-field .search-busy { color: var(--accent); }
+.search-close-note { margin: 2px 2px 0; font-size: 12px; color: var(--warn); }
+.better-palette { position: relative; }
+.better-palette .palette-label { display: flex; justify-content: space-between; gap: 12px; }
+.palette-capped { font-weight: 500; letter-spacing: 0; color: var(--faint); }
+.palette-group { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 10px 12px 4px; }
+.palette-copied { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px; background: color-mix(in srgb, var(--panel) 94%, transparent); font-size: 16px; color: var(--text); }
+.palette-copied svg { color: var(--ok); flex-shrink: 0; }
+.palette-copied b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
