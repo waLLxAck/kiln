@@ -108,7 +108,7 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     const palette = await app.waitForEvent('window');
     await expect(palette.getByRole('combobox', { name: 'Quick search' })).toBeVisible();
     await palette.getByRole('combobox').fill('clear');
-    await expect(palette.getByRole('option')).toHaveCount(1);
+    await expect(palette.getByRole('group', { name: 'Items' }).getByRole('option')).toHaveCount(1);
     await palette.keyboard.press('Escape');
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe('Do not change this on Escape');
     await createItem(page, { kind: 'prompt', title: 'Untrusted markup', content: '<img src=x onerror="window.compromised=true"><script>window.compromised=true</script>' });
