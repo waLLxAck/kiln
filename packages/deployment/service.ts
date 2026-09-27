@@ -1,5 +1,7 @@
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
-import { targetSkillsFolder, skillLocation, locationFolder, type SkillLocation } from '../providers/skill-locations';
+import { targetSkillsFolder, skillLocation, skillLocationLabel, locationFolder, type SkillLocation } from '../providers/skill-locations';
+import { experimentOn } from '../protocol/experiments';
+import { readInstalledCopy } from './keep';
 import { scanAgents } from '../domain/agents-import';
 import { agentFolder } from '../domain/agent-format';
 import fs from 'node:fs';
@@ -222,6 +224,7 @@ export class DeploymentService {
     const result: Installation[] = [];
     const items = (Array.isArray(itemId) ? itemId.map(id => this.wb.getItem(id)) : itemId ? [this.wb.getItem(itemId)] : this.wb.listItems()).filter(item => ['skill', 'agent'].includes(item.kind));
     const receipts = this.receipts(), targets = this.wb.targets();
+    const updates = experimentOn(this.wb.settings(), 'installUpdates'), approvals = updates ? this.wb.approvals() : [];
     for (const item of items) {
       let revision: Revision | undefined; try { revision = this.wb.getRevision(item.id); } catch { continue; }
       const name = this.folderName(item, revision); if (!name) continue;
@@ -234,7 +237,7 @@ export class DeploymentService {
           if (!candidates.some(c => c.destination === destination)) candidates.push({ target: { ...target, id: '', provider: location === 'agents' ? 'codex' : location }, location, destination });
         }
       }
-      const seen = new Set<string>();
+      const seen = new Set<string>(); let approved: Revision | null | undefined;
       for (const { target, location, destination } of candidates) {
         if (seen.has(destination)) continue;
         seen.add(destination);
@@ -243,7 +246,8 @@ export class DeploymentService {
         const owned = last?.status === 'applied' && last.itemId === item.id ? last : undefined;
         const current = this.currentState(destination);
         const state: Installation['state'] = owned ? (current === owned.hash ? 'installed' : 'drifted') : 'external';
-        result.push({ itemId: item.id, targetId: target.id, provider: target.provider, location: revision.kind === 'skill' ? location : undefined, scope: target.scope, destination, state, linked, matches: current !== null && current === rendered, receiptId: owned?.id ?? null });
+        const outdated = updates && owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
+        result.push({ itemId: item.id, targetId: target.id, provider: target.provider, location: revision.kind === 'skill' ? location : undefined, scope: target.scope, destination, state, linked, matches: current !== null && current === rendered, receiptId: owned?.id ?? null, ...(outdated ? { outdated: true as const } : {}) });
       }
     }
     return result;
@@ -538,5 +542,106 @@ export class DeploymentService {
       }
       return { id: journal.id, status: 'partial: files changed; manual inspection required' };
     }));
+  }
+  // Experimental: installUpdates ("Update installed copies") and keepOutsideEdits ("Keep changes made outside Kiln").
+  /** The revision an update installs: the current one when it is approved on this machine, else the newest local approval. */
+  approvedRevision(itemId: string, approvals = this.wb.approvals()): Revision | null {
+    const item = this.wb.getItem(itemId), local = approvals.filter(a => a.itemId === itemId && a.trust === 'local');
+    const hash = local.some(a => a.revision === item.revision) ? item.revision : local.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.revision;
+    if (!hash) return null;
+    try { return this.wb.getRevision(itemId, hash); } catch { return null; }
+  }
+  /** Whether a copy Kiln wrote holds something other than the approved revision, which would be written to this same place. */
+  private behind(item: Item, target: Target, destination: string, owned: Receipt, approved: Revision | null) {
+    if (!approved || owned.revision === approved.hash || this.renderedHash(approved) === owned.hash) return false;
+    try { return this.skillDestination(target, this.folderName(item, approved), approved) === destination; } catch { return false; }
+  }
+  private copyLabel(copy: Pick<Installation, 'targetId' | 'scope' | 'location' | 'provider'>) {
+    if (copy.scope === 'project') return this.wb.targets().find(t => t.id === copy.targetId)?.name ?? 'project folder';
+    return copy.location ? skillLocationLabel[copy.location] : ({ codex: 'Codex', claude: 'Claude', copilot: 'Copilot' } as const)[copy.provider];
+  }
+  private approveHere(item: Item, note: string) {
+    this.wb.approve({ id: item.id, revision: item.revision, reviewer: os.userInfo().username, scope: 'Installed from Kiln', note, waivedChecks: 'Approved from Kiln; no trial evidence linked.' });
+  }
+  /**
+   * Update: brings copies Kiln wrote, and that are unchanged since, up to the approved revision through the usual plan and apply,
+   * so receipts, backups and drift checks stay as for any install. Copies edited outside Kiln, differing external folders and links
+   * are never overwritten; they are reported as skipped. An edited copy whose bytes already equal the approved revision is adopted
+   * as it is. `approve` first approves the current revision, which must still be `expect`.
+   */
+  updateInstalls(input: unknown) {
+    const data = z.object({ itemId: idSchema, targetId: idSchema.optional(), approve: z.boolean().default(false), expect: hashSchema.optional() }).parse(input);
+    invariant(experimentOn(this.wb.settings(), 'installUpdates'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Update installed copies” in Settings → Experimental features first.');
+    const item = this.wb.getItem(data.itemId);
+    invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before updating its installs.');
+    invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agents have installed copies to update.');
+    let approved = false;
+    if (data.approve) {
+      invariant(data.expect === item.revision, 'REVISION_CONFLICT', 'This item changed since you opened it. Review the new revision before approving it.');
+      if (!this.wb.approvals().some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local')) { this.approveHere(item, 'Approved by choosing Approve & update installs in Kiln.'); approved = true; }
+    }
+    const revision = this.approvedRevision(item.id); invariant(revision, 'APPROVAL_REQUIRED', 'Approve a revision before updating installed copies.');
+    const wanted = this.renderedHash(revision);
+    const updated: { label: string; destination: string; targetId: string }[] = [], adopted: typeof updated = [], skipped: { label: string; destination: string; reason: string }[] = [];
+    let current = 0;
+    for (const copy of this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId)) {
+      const label = this.copyLabel(copy), entry = { label, destination: copy.destination, targetId: copy.targetId };
+      try {
+        if (copy.outdated) {
+          const plan = this.plan({ itemId: item.id, revision: revision.hash, targetId: copy.targetId });
+          invariant(!plan.blocked && plan.destination === copy.destination, 'TARGET_BLOCKED', plan.blocked ?? 'The approved revision installs to a different folder.');
+          this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true }); updated.push(entry);
+        } else if (copy.state === 'installed') current++;
+        else if (copy.linked) skipped.push({ ...entry, reason: 'a link to a folder elsewhere' });
+        else if (copy.state === 'drifted' && copy.targetId && this.currentState(copy.destination) === wanted) { this.adopt(this.target(copy.targetId), item, revision, copy.destination); adopted.push(entry); }
+        else if (copy.state === 'drifted') skipped.push({ ...entry, reason: 'edited outside Kiln' });
+        else if (this.currentState(copy.destination) !== wanted) skipped.push({ ...entry, reason: 'not installed by Kiln and different' });
+      } catch (error) { skipped.push({ ...entry, reason: (error instanceof Error ? error.message : String(error)).replace(/^[A-Z_]+: /, '') }); }
+    }
+    return { itemId: item.id, revision: revision.hash, approved, updated, adopted, current, skipped };
+  }
+  /**
+   * Keep these changes: saves an installed copy (edited outside Kiln, or an external folder that differs) as a new draft of the
+   * same item. The update names the revision the user was looking at, so an edit made meanwhile raises the usual conflict.
+   * `exact` says whether the folder's bytes equal the new revision, which is what lets approving adopt it without rewriting.
+   */
+  keepCopy(input: unknown) {
+    const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
+    invariant(experimentOn(this.wb.settings(), 'keepOutsideEdits'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Keep changes made outside Kiln” in Settings → Experimental features first.');
+    const item = this.wb.getItem(data.itemId), target = this.target(data.targetId);
+    invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before keeping changes into it.');
+    invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agents have installed copies.');
+    invariant(item.revision === data.expect, 'REVISION_CONFLICT', 'This item changed elsewhere. Reload it, then keep the installed copy again.');
+    const revision = this.wb.getRevision(item.id), name = this.folderName(item, revision); invariant(name, 'INVALID_SKILL_NAME', 'This item has no usable folder name.');
+    const destination = this.skillDestination(target, name, revision);
+    const copy = readInstalledCopy(destination, revision.kind === 'agent' ? 'agent' : 'skill');
+    invariant(revision.kind === 'agent' || this.folderName(item, { ...revision, content: copy.content }) === name, 'NAME_CHANGED', `The copy’s SKILL.md no longer names the skill “${name}” like its folder. Put the name back, or import the folder as a new item.`);
+    const label = this.copyLabel({ targetId: target.id, scope: target.scope, provider: target.provider, location: revision.kind === 'skill' ? skillLocation(target) : undefined });
+    const summary = `Kept changes from the ${label} copy`;
+    const updated = this.wb.update({ id: item.id, expect: data.expect, summary, value: { ...this.wb.authoring(item.id), content: copy.content, files: copy.files } });
+    invariant(updated.revision !== data.expect, 'NOTHING_TO_KEEP', 'The installed copy already matches this revision; there is nothing to keep.');
+    let exact = false; try { exact = stateHash(readDestination(destination)) === this.renderedHash(this.wb.getRevision(item.id)); } catch { /* Ignored entries too large to read make the folder inexact anyway. */ }
+    return { itemId: item.id, revision: updated.revision, destination, label, summary, exact, ignored: copy.ignored };
+  }
+  /**
+   * Approve & install after keeping: approves the kept revision and records the folder it came from as the installed copy, without
+   * moving or rewriting it. Refuses before approving when the folder no longer equals that revision.
+   */
+  approveKept(input: unknown) {
+    const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
+    invariant(experimentOn(this.wb.settings(), 'keepOutsideEdits'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Keep changes made outside Kiln” in Settings → Experimental features first.');
+    const item = this.wb.getItem(data.itemId), target = this.target(data.targetId);
+    invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item first.');
+    invariant(item.revision === data.expect, 'REVISION_CONFLICT', 'This item changed since the changes were kept. Review the new revision before approving it.');
+    const revision = this.wb.getRevision(item.id), name = this.folderName(item, revision); invariant(name, 'INVALID_SKILL_NAME', 'This item has no usable folder name.');
+    const destination = this.skillDestination(target, name, revision);
+    const current = stateHash(readDestination(destination));
+    invariant(current !== null && current === this.renderedHash(revision), 'TARGET_CHANGED', 'The folder no longer matches the kept revision, so nothing was approved or installed. Compare it, then keep the changes again.');
+    let approved = false;
+    if (!this.wb.approvals().some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local')) { this.approveHere(item, 'Approved by choosing Approve & install after keeping changes made outside Kiln.'); approved = true; }
+    const owned = this.latest(destination), unchanged = owned?.itemId === item.id && owned.hash === current;
+    const receipt = unchanged ? owned : this.adopt(target, item, revision, destination);
+    if (target.scope === 'personal') this.wb.setInstall(item.id, item.kind === 'skill' && target.skillFolder ? 'codex-native' : target.provider, true);
+    return { itemId: item.id, revision: revision.hash, destination, method: unchanged ? 'unchanged' as const : 'adopted' as const, approved, receipt };
   }
 }
