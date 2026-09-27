@@ -19,8 +19,9 @@ test('experiments offer enrolled projects and browsing, preserve manual selectio
     }, { project });
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
     await page.getByText('Project experiment fixture', { exact: true }).first().click();
-    // Test opens the experiments grid; Run options… opens the full run dialog from there.
-    await page.getByRole('button', { name: 'Test', exact: true }).click();
+    // Tests opens the experiments grid; Run options… opens the full run dialog from there.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Open tests', exact: true }).click();
     await page.getByRole('button', { name: 'Run options…', exact: true }).click();
     const selector = page.getByLabel('Project / repository', { exact: true });
     await expect(selector).toHaveValue('');

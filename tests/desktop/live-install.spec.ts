@@ -41,7 +41,7 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     fixtureId = await page.evaluate(async () => (await window.kiln.call<{ items: { id: string; title: string; status: string }[] }>('snapshot')).items.filter(i => i.title === 'Kiln installation check' && i.status === 'captured').at(-1)!.id);
     await page.getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).toHaveText('approved');
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     for (const [index, environment] of ['Personal Codex', 'Personal Claude Code'].entries()) {
       await page.getByRole('button', { name: 'Deploy', exact: true }).first().click();
@@ -52,7 +52,6 @@ test('authorized live install/uninstall affects only the disposable fixture in C
       await expect(page.getByRole('dialog')).toHaveCount(0);
       expect(fs.readFileSync(path.join(destinations[index], 'SKILL.md'), 'utf8')).toBe(content);
     }
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'deployments', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Uninstall skill', exact: true })).toHaveCount(2);
     await page.screenshot({ path: path.join(evidence, 'test-skill-installed.png') });
     for (let index = 0; index < 2; index++) {
@@ -61,8 +60,8 @@ test('authorized live install/uninstall affects only the disposable fixture in C
       await expect(page.getByRole('dialog')).toHaveCount(0);
     }
     for (const destination of destinations) expect(fs.existsSync(destination)).toBe(false);
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'content', exact: true }).click();
-    await page.getByRole('button', { name: 'Move to archived' }).click();
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Move to archived' }).click();
     for (const [relative, expected] of Object.entries(before.installed)) {
       if (relative.endsWith(':link')) expect(fs.readlinkSync(path.join(os.homedir(), relative.slice(0, -5)))).toBe(expected);
       else expect(createHash('sha256').update(fs.readFileSync(path.join(os.homedir(), relative))).digest('hex')).toBe(expected);
@@ -72,7 +71,6 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     fs.writeFileSync(path.join(evidence, 'live-install-result.json'), JSON.stringify(result, null, 2));
     await page.getByRole('tab', { name: /^Skills/ }).click();
     await page.getByRole('button', { name: /build-knowledge-system/ }).first().click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'overview', exact: true }).click();
     await page.screenshot({ path: path.join(evidence, 'migrated-library.png') });
   } finally {
     // Cleanup goes through the same guarded domain operation, only for this fixture.

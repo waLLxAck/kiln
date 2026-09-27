@@ -18,7 +18,12 @@ export async function takeScreenshots({ page, ids, out }: ShotContext) {
     captions[name] = caption;
   };
   const nav = (name: string) => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click();
-  const detailTab = (name: string) => page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: new RegExp(`^${name}`) }).click();
+  // The item page is one document with a rail: installs are always in the rail, Tests swap in from it, and "Content" goes back.
+  const detailTab = async (name: 'installs' | 'overview' | 'trials') => {
+    if (name === 'trials') { await page.getByRole('button', { name: 'Open tests', exact: true }).click(); return; }
+    const back = page.getByRole('button', { name: 'Content', exact: true });
+    if (await back.count()) await back.click();
+  };
   const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
   const row = (title: string) => page.locator('.item-card').filter({ has: page.locator('.item-title', { hasText: exact(title) }) }).first();
   await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible({ timeout: 60_000 });

@@ -3,9 +3,27 @@ import remarkGfm from 'remark-gfm';
 import { api } from './api';
 import { useState } from 'react';
 
-export function Markdown({ children }: { children: string }) {
+type Node = { type: string; value?: string; children?: Node[]; data?: Record<string, unknown> };
+/**
+ * Marks {{variables}} in prose as `.variable-token` spans. Code spans and blocks are left alone: a template in a code
+ * sample is an example, not something Kiln fills in.
+ */
+function remarkVariables() {
+  const walk = (node: Node) => {
+    if (!node.children) return;
+    node.children = node.children.flatMap(child => {
+      if (child.type !== 'text' || !child.value?.includes('{{')) { walk(child); return [child]; }
+      return child.value.split(/(\{\{\s*[A-Za-z_][\w.-]*\s*\}\})/).filter(Boolean).map(part => /^\{\{[\s\S]*\}\}$/.test(part)
+        ? { type: 'text', value: part.replace(/^\{\{\s*|\s*\}\}$/g, ''), data: { hName: 'span', hProperties: { className: ['variable-token'], title: 'Filled in when you copy or test it' } } }
+        : { type: 'text', value: part });
+    });
+  };
+  return (tree: Node) => walk(tree);
+}
+
+export function Markdown({ children, variables = false }: { children: string; /** Highlights {{variables}}. */ variables?: boolean }) {
   const [error, setError] = useState('');
-  return <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+  return <div className="markdown-content"><ReactMarkdown remarkPlugins={variables ? [remarkGfm, remarkVariables] : [remarkGfm]} components={{
     a: ({ href, children }) => /^https?:\/\//i.test(href ?? '')
       ? <a href={href} onClick={event => { event.preventDefault(); setError(''); void api('desktop.openContentUrl', { url: href }).catch(error => setError(String(error))); }}>{children}</a>
       : <span>{children}</span>,

@@ -47,7 +47,7 @@ test('217 skills: import preview stays responsive, panels resize, stalls are log
     await page.getByRole('tab', { name: /^Skills/ }).click();
     await expect(page.locator('.item-card')).toHaveCount(217);
     await page.locator('.item-card').first().click();
-    await expect(page.getByRole('button', { name: 'Open editor', exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Edit text', exact: true })).toBeVisible();
     await page.evaluate(() => { const end = performance.now() + 1800; while (performance.now() < end) { /* Deliberate renderer stall. */ } });
     const file = path.join(local, 'desktop', 'logs', 'performance.jsonl');
     await expect.poll(() => fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '').toContain('renderer.stall');
