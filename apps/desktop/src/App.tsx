@@ -432,7 +432,7 @@ export default function App() {
       hint={section === 'trash' ? 'Right-click to restore or delete permanently. Ctrl-click picks several items at once.' : section === 'archive' ? 'Right-click to change status or move to trash. Ctrl-click picks several items at once.' : 'Click opens an item. Right-click for actions and their shortcuts. Ctrl-click or Shift-click picks several items at once. Swipe sideways to archive.'} />
   </section>;
   const itemPage = itemView && <div className="item-view">
-    <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} />
+    <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
     {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} showTests={testRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;

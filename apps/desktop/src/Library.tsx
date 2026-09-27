@@ -1,6 +1,6 @@
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { useRef, useState, type ReactNode } from 'react';
-import { ArrowDownUp, ArrowLeft, Check, ChevronDown, ChevronUp, Github, Rows3 } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, Check, ChevronDown, ChevronUp, Github, RefreshCw, Rows3 } from 'lucide-react';
 import type { Approval, Installation, Item, Provider, Target, Trial } from '../../../packages/protocol/schema';
 import { Badge, ContextMenu, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
@@ -94,8 +94,11 @@ export function GroupMenu({ group, onGroup }: { group: GroupKey; onGroup: (group
   return <MenuPill icon={<Rows3 size={13} />} name="Group" value={groupLabel[group]} title="Group the list under headings" entries={(Object.keys(groupLabel) as GroupKey[]).map(g => ({ label: groupLabel[g], checked: g === group, onSelect: () => onGroup(g) }))} />;
 }
 
-/** The thin bar above an open item: back to the list, and where the item sits in it with steps to its neighbours. */
-export function ItemBar({ label, position, total, onBack, onStep }: { label: string; position: number; total: number; onBack: () => void; onStep: (direction: number) => void }) {
+/**
+ * The thin bar above an open item: back to the list, and where the item sits in it with steps to its neighbours. Refresh sits
+ * here too, since the list heading that has it is hidden while an item is open.
+ */
+export function ItemBar({ label, position, total, onBack, onStep, onRefresh }: { label: string; position: number; total: number; onBack: () => void; onStep: (direction: number) => void; onRefresh: () => void }) {
   return <div className="item-bar" role="toolbar" aria-label="Item navigation">
     <button type="button" className="item-bar-back" onClick={onBack} title="Back to the list (Esc)"><ArrowLeft size={14} />{label}</button>
     <span className="item-bar-sep" />
@@ -103,5 +106,6 @@ export function ItemBar({ label, position, total, onBack, onStep }: { label: str
     <button type="button" className="icon-button" aria-label="Previous item" title="Previous item (Alt+↑)" disabled={position <= 1} onClick={() => onStep(-1)}><ChevronUp size={15} /></button>
     <button type="button" className="icon-button" aria-label="Next item" title="Next item (Alt+↓)" disabled={position < 1 || position >= total} onClick={() => onStep(1)}><ChevronDown size={15} /></button>
     <kbd className="item-bar-esc">Esc</kbd>
+    <button type="button" className="icon-button" aria-label="Refresh library" title="Re-read the library and installed copies" onClick={onRefresh}><RefreshCw size={14} /></button>
   </div>;
 }
