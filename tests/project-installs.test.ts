@@ -128,7 +128,7 @@ test('the library repository root is not a project to install into', () => {
   } finally { f.close(); }
 });
 
-test('the library is recognised through a link on its path (such as a linked home folder), either way round', () => {
+test('the library is recognised through a link on its path (such as a linked home folder), either way round', { skip: process.platform === 'win32' && 'Windows has no such system links, and creating symlinks needs privileges there' }, () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-project-installs-link-')), home = process.env.HOME;
   fs.mkdirSync(path.join(base, 'real', 'home'), { recursive: true }); fs.symlinkSync(path.join(base, 'real'), path.join(base, 'link'));
   // A link above the home folder is one noLinks allows, like /home -> /var/home on Fedora Atomic.
