@@ -109,6 +109,27 @@ test('machines report through GitHub, mark each other remotely, and the owner ke
   } finally { f.close(); }
 });
 
+test('sync on the owner fetches first, so a mark pushed from elsewhere after its last fetch installs without a pull', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    const b = f.clone();
+    b.wb.enroll({ name: 'Agents', root: b.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    b.router.call('fleet.report'); await b.router.fleet.idle();
+    const idB = (await b.view(false)).self.id;
+    await a.view();
+    a.router.call('fleet.mark', { machineId: idB, itemId: item.id, location: 'agents', wanted: true }); await a.router.fleet.idle();
+    assert.deepEqual(f.onGitHub(idB).wanted, { [item.id]: ['agents'] });
+    assert.deepEqual((await b.view(false)).wanted, {}, 'B has not fetched since the mark');
+
+    const synced = b.router.call('skills.sync') as { location?: string; result: string }[];
+    assert.deepEqual(synced.map(r => [r.location, r.result]), [['agents', 'installed approved revision']]);
+    assert.ok(fs.existsSync(path.join(b.home, '.agents', 'skills', 'careful-review', 'SKILL.md')));
+  } finally { f.close(); }
+});
+
 test('when this checkout and GitHub have both moved, reports and marks wait for the merge, then apply on the newer files', async () => {
   const f = fleet();
   try {
