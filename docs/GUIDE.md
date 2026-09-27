@@ -30,7 +30,7 @@ What ships today:
 
 | Capability | What you can do today |
 | --- | --- |
-| Capture | Paste or drop text, links, images and files; save the original immediately or ask an agent to analyze it. Use the tray and configurable global quick-search shortcut. |
+| Capture | Paste or drop text, links, images and files; save the original immediately or ask an agent to analyze it. Use the tray and configurable global [quick search](#quick-search) to copy, fill in variables and run app actions. |
 | Source analysis | Turn captured material into prompts, insights, techniques, tools and resources, grouped in a collection and linked to their source. |
 | YouTube distillation | Fetch captions and metadata with `yt-dlp`, retain the transcript, and extract reusable entries with timestamped source links. |
 | Library organization | Search, filter by kind/status/provider/location/tags, favorite items, manage collections, select in bulk, archive, trash and restore. |
@@ -113,6 +113,25 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
 See [what changed in 0.19.1](releases/0.19.1.md).
+
+## Quick search
+
+Quick search is a small window for using your library without opening Kiln. Open it with the global shortcut above, **Ctrl+K** in Kiln, or **Quick search** in the tray menu.
+
+One box searches two lists. **Items** matches titles, content and tags; title matches are highlighted and come first. **Actions** covers **Capture…**, **Install everything marked for this machine**, **Go to** Library, Machines, Config files, Activity, Experiments, Settings, Archive or Trash, **New collection**, **Toggle theme**, and **Ask the agent about** the last item you highlighted. With nothing typed, your most used items come first. Typing a command's words ("go sett") selects it.
+
+The right side previews the highlighted item. A prompt with `{{variables}}` shows a field for each: the preview fills in as you type, and what you copy is exactly that text. Blank fields stay as `{{name}}`, and the saved template is unchanged.
+
+| Key | Does |
+|---|---|
+| ↑ / ↓ | Move through items and actions |
+| Enter | Copy the item (prompts, skills, images and other pasteable kinds); open a link in the browser; open a source in Kiln. Runs a highlighted action. |
+| Ctrl+Enter | Open the item in Kiln |
+| Shift+Enter | Test it: opens it in Kiln with a new experiment |
+| Tab | The item's actions: fill in variables, copy, open in Kiln, test, ask the agent, open the stored file or link. Esc goes back. |
+| Esc | Close quick search |
+
+The footer shows the keys for the highlighted row, and each one can be clicked. Opening quick search again starts with an empty box.
 
 ## Set up a library
 

@@ -1,0 +1,74 @@
+/* ---------- Quick search: items and actions, with a preview that fills {{variables}} ---------- */
+.pal { overflow: hidden; }
+.pal-search { display: flex; align-items: center; gap: 10px; height: 54px; flex-shrink: 0; padding: 0 12px 0 18px; border-bottom: 1px solid var(--line); }
+.pal-search-icon { color: var(--muted); flex-shrink: 0; }
+.pal-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font-size: 16px; color: var(--text); }
+.pal-search input::placeholder { color: var(--faint); }
+.pal-scope { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--accent-tint-2); color: var(--accent-text); font-weight: 600; font-size: 12.5px; max-width: 300px; flex-shrink: 0; }
+.pal-scope span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal > .error-box { margin: 8px 12px 0; }
+
+.pal-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 370px minmax(0, 1fr); }
+.pal-results { overflow-y: auto; padding: 4px 8px 10px; border-right: 1px solid var(--line); }
+.pal-section { display: flex; align-items: center; gap: 6px; padding: 10px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pal-section.flat { padding: 0 0 6px; }
+.pal-count { color: var(--faint); font-weight: 500; letter-spacing: normal; text-transform: none; }
+.pal-stale { opacity: .6; }
+.pal-row { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 10px; border-radius: var(--r-md); text-align: left; position: relative; color: var(--text); }
+.pal-row.action { min-height: 34px; }
+.pal-row.on { background: var(--accent-tint); }
+.pal-row.on::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--accent); }
+.pal-row.disabled .pal-title { color: var(--faint); }
+.pal-row .item-kind { width: 28px; height: 28px; }
+.pal-row .item-kind svg { width: 15px; height: 15px; }
+.pal-row .badge { flex-shrink: 0; }
+.pal-icon { width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+.pal-icon.plain { color: var(--muted); }
+.pal-row.on .pal-icon.plain { color: var(--accent-text); }
+.pal-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pal-title { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-text .pal-title { flex: none; }
+.pal-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-mark { background: var(--accent-tint-2); color: inherit; border-radius: 3px; padding: 0 1px; }
+.pal-none { padding: 18px 12px 6px; color: var(--muted); text-align: center; }
+
+/* Preview */
+.pal-preview { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; background: var(--bg); }
+.pal-pv-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 1; }
+.pal-pv-head .item-kind.big { width: 36px; height: 36px; border-radius: var(--r-md); }
+.pal-pv-head .item-kind.big svg { width: 18px; height: 18px; }
+.pal-pv-title { flex: 1; min-width: 0; }
+.pal-pv-title h2 { font-size: 15px; margin: 0 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 10px; padding: 10px 18px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.pal-var { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pal-var span { font-family: var(--mono); font-size: 11.5px; color: var(--accent-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-var input { height: 30px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--bg); color: var(--text); outline: 0; font-size: 13px; min-width: 0; }
+.pal-var input::placeholder { color: var(--faint); font-size: 12px; }
+.pal-var input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); background: var(--panel); }
+.pal-content { flex: 1; padding: 12px 18px 16px; font-size: 13px; }
+.pal-content .markdown-content { font-size: 13px; }
+.pal-content .markdown-content > :first-child { margin-top: 0; }
+.pal-content .markdown-content h1 { font-size: 16px; }
+.pal-content .markdown-content h2 { font-size: 14px; }
+.pal-content .markdown-content h3 { font-size: 13px; }
+.pal-front { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); font-family: var(--mono); font-size: 11.5px; }
+.pal-front dt { color: var(--muted); }
+.pal-front dd { margin: 0; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-pv-foot { display: flex; align-items: center; gap: 6px; padding: 8px 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); background: var(--panel); position: sticky; bottom: 0; }
+.pal-empty { padding: 24px 18px; }
+
+.pal-action-preview { padding: 26px 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.pal-action-preview h2 { font-size: 16px; margin: 4px 0 0; }
+.pal-action-preview p { margin: 0; max-width: 400px; line-height: 1.5; }
+.pal-action-icon { width: 40px; height: 40px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-tint); color: var(--accent-text); }
+.pal-action-icon svg { width: 20px; height: 20px; }
+.pal-affects { margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); width: 100%; max-width: 400px; }
+.pal-affect { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); padding: 2px 0; }
+.pal-affect svg { color: var(--faint); flex-shrink: 0; }
+
+/* Footer: the keys for the highlighted row; each is also a button. */
+.pal-footer { display: flex; align-items: center; gap: 4px; flex-shrink: 0; min-height: 40px; padding: 0 10px; border-top: 1px solid var(--line); background: var(--subtle); font-size: 12px; color: var(--muted); }
+.pal-key { display: inline-flex; align-items: center; gap: 3px; height: 28px; padding: 0 7px; border-radius: var(--r-sm); color: var(--muted); }
+.pal-key:hover { background: var(--subtle-2); color: var(--text); }
+.pal-key span { margin-left: 3px; }
+.pal-grow { flex: 1; }

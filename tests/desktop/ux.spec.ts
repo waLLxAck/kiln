@@ -95,10 +95,12 @@ test('quick search previews content and opens the exact item through a filtered 
     await page.getByRole('button', { name: /Quick search/ }).click();
     const palette = await windowPromise;
     await palette.getByRole('combobox', { name: 'Quick search' }).fill('Search target');
-    await expect(palette.locator('.palette-preview h2')).toHaveText('Search target');
-    await expect(palette.locator('.palette-preview .markdown-content h1')).toHaveText('Readable heading');
+    await expect(palette.locator('.pal-preview h2')).toHaveText('Search target');
+    await expect(palette.locator('.pal-preview .markdown-content h1')).toHaveText('Readable heading');
+    // The footer follows the selection: a prompt copies on Enter and opens in Kiln with Ctrl+Enter.
+    await expect(palette.locator('.pal-footer')).toContainText('Copy');
     await palette.screenshot({ path: 'artifacts/ux-0.15.0-search.png' });
-    await palette.getByRole('button', { name: 'Open item', exact: true }).click();
+    await palette.getByRole('button', { name: /Open in Kiln/ }).click();
     await expect(page.getByRole('heading', { name: 'Search target', exact: true })).toBeVisible();
     await expect(page.locator('.item-card.selected')).toContainText('Search target');
     expect(await page.evaluate(() => localStorage.getItem('kiln-selected'))).toBe(item.id);
