@@ -6,12 +6,11 @@ import type { Installation, Item, Provider, ProviderId, Snapshot, Target } from 
 import { api } from './api';
 import { Badge, InlineError, Modal, providerName } from './components';
 import { FolderComparison } from './Compare';
-import { experimentOn } from './ExperimentalFeatures';
 import { KeepButton, KeptDialog, keepExplanation, updateMessage, type KeepResult, type UpdateResult } from './InstallUpdates';
 
 import { personalTarget } from './skill-folders';
 export { personalTarget };
-/** `outdated` only appears while the experimental installUpdates flag is on: the backend marks such copies only then. */
+/** `outdated`: Kiln installed the copy, it is unchanged since, and a newer revision is approved. */
 export type SkillState = 'off' | 'on' | 'outdated' | 'linked' | 'found' | 'differs' | 'drifted';
 export function skillState(item: Item, target: Target, installations: Installation[]): { state: SkillState; installation?: Installation } {
   const installation = installations.find(i => i.itemId === item.id && i.targetId === target.id);
@@ -69,7 +68,7 @@ export function SkillInstallDialog({ item, provider, target, installations, appr
   const remove = (force = false) => run(() => api('skills.remove', { itemId: item.id, targetId: target.id, force, confirm: true }), `${item.title} removed from ${label} ({method}). The item stays in your library.`);
   const reveal = () => void api('desktop.revealPath', { path: destination }).catch(e => setError(String(e)));
   const update = () => run(async () => ({ destination, method: updateMessage(item.title, await api<UpdateResult>('skills.update', { itemId: item.id, targetId: target.id })) }), '{method}');
-  const keeping = experimentOn(settings, 'keepOutsideEdits') && (state === 'differs' || state === 'drifted');
+  const keeping = state === 'differs' || state === 'drifted';
   const [kept, setKept] = useState<KeepResult | null>(null);
   if (kept) return <KeptDialog item={item} targetId={target.id} result={kept} settings={settings} onDone={onDone} />;
   const titles: Record<SkillState, string> = { off: `Install for ${label}`, on: `Remove from ${label}`, outdated: `Update available in ${label}`, linked: `Linked copy in ${label}`, found: `Existing copy in ${label}`, differs: `Different version in ${label}`, drifted: `Edited copy in ${label}` };

@@ -32,7 +32,7 @@ Screenshots of Kiln on Windows with a made-up library; the agent's replies in th
 - **Approval** pins an exact revision and publishes it to your own Kiln repository on GitHub. Only approved revisions are installed; new edits become drafts.
 - **Config files**: agent instructions, permissions, MCP settings, hooks and shell profiles in one editor, with syntax checks and previous versions.
 - **A CLI** (`kiln`, from a source build) with JSON results, using the same library and approval rules as the desktop app.
-- **Experimental features**: upcoming changes you can try one at a time from Settings, all off by default. 0.22.0 adds ten: updating installed copies, keeping edits made outside Kiln, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications, ranked search, docked chat with history, keyboard navigation and undo, and installing into project folders.
+- **New in 0.22.0**, now always on: updating installed copies, keeping edits made outside Kiln, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications, ranked search, docked chat with history, keyboard navigation and undo, and installing into project folders.
 - **No API key**: agent runs use your existing, signed-in Codex or Claude Code CLI and its account usage. Editing, approval and installation do not call a model.
 
 The [user guide](docs/GUIDE.md) covers every feature in detail, along with limits and product boundaries.

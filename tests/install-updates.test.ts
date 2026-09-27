@@ -4,17 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { Workbench } from '../packages/domain/workbench';
-import { Router } from '../packages/domain/router';
 import { DeploymentService } from '../packages/deployment/service';
 import { WorkbenchError } from '../packages/domain/errors';
-import type { ExperimentId } from '../packages/protocol/experiments';
 
-// Experimental installUpdates ("Update installed copies") and keepOutsideEdits ("Keep changes made outside Kiln").
+// Update installed copies, and keep changes made outside Kiln.
 const skill = (body: string) => `---\nname: careful-review\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\n${body}\n`;
-function fixture(flags: ExperimentId[] = ['installUpdates', 'keepOutsideEdits']) {
+function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-install-updates-'));
   const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
-  for (const id of flags) wb.setExperiment({ id, enabled: true });
   const deployment = new DeploymentService(wb);
   const home = path.join(root, 'home'); fs.mkdirSync(home);
   const codex = wb.enroll({ name: 'Codex skills', root: home, provider: 'codex', scope: 'personal', profile: 'Personal' });
@@ -39,13 +36,10 @@ test('an installed copy behind a newer approval is outdated; drafts, edited and 
     approve(f.wb, item.id);
     assert.equal(copy(f, item.id, f.agents)?.state, 'installed');
     assert.equal(copy(f, item.id, f.agents)?.outdated, true, 'installed, then a newer revision was approved');
-    // An identical external copy of the approved revision stays "found"; with the flag off nothing is marked.
+    // An identical external copy of the approved revision stays "found".
     fs.mkdirSync(f.claudeCopy, { recursive: true }); fs.writeFileSync(path.join(f.claudeCopy, 'SKILL.md'), skill('Version two.'));
     const external = copy(f, item.id, f.claudeCopy)!;
     assert.equal(external.state, 'external'); assert.equal(external.matches, true); assert.equal(external.outdated, undefined);
-    f.wb.setExperiment({ id: 'installUpdates', enabled: false });
-    assert.ok(f.deployment.installations(item.id).every(i => !('outdated' in i)), 'flag off: installations are exactly as before');
-    f.wb.setExperiment({ id: 'installUpdates', enabled: true });
     // Edited outside Kiln stays drifted, never outdated.
     fs.appendFileSync(path.join(f.agents, 'SKILL.md'), 'Local note.\n');
     assert.equal(copy(f, item.id, f.agents)?.state, 'drifted');
@@ -98,23 +92,8 @@ test('Approve & update installs approves exactly the revision the user saw, then
   } finally { f.close(); }
 });
 
-test('both experimental operations refuse while their flag is off', () => {
-  const f = fixture([]);
-  const router = new Router(f.wb, { composer: null });
-  try {
-    const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('Version one.') });
-    f.deployment.installSkill({ itemId: item.id, targetId: f.codex.id, confirm: true });
-    fs.appendFileSync(path.join(f.agents, 'SKILL.md'), 'Local note.\n');
-    const expect = f.wb.getItem(item.id).revision;
-    assert.throws(() => router.call('skills.update', { itemId: item.id }), hasCode('CAPABILITY_UNSUPPORTED'));
-    assert.throws(() => router.call('deploy.keepCopy', { itemId: item.id, targetId: f.codex.id, expect }), hasCode('CAPABILITY_UNSUPPORTED'));
-    assert.throws(() => router.call('deploy.approveKept', { itemId: item.id, targetId: f.codex.id, expect }), hasCode('CAPABILITY_UNSUPPORTED'));
-    assert.equal(f.wb.getItem(item.id).revision, expect, 'nothing was kept');
-  } finally { f.close(); }
-});
-
 test('Keep these changes saves the edited copy as a draft of the same item, and approving adopts the folder as it is', () => {
-  const f = fixture(['keepOutsideEdits']);
+  const f = fixture();
   try {
     const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('Version one.'), files: { 'notes.md': Buffer.from('old').toString('base64') } });
     f.deployment.installSkill({ itemId: item.id, targetId: f.codex.id, confirm: true });
@@ -176,7 +155,7 @@ test('a differing external copy can be kept; approval refuses when the folder ch
 });
 
 test('a kept copy is exact only when nothing was left out, even an ignored folder holding no files', () => {
-  const f = fixture(['keepOutsideEdits']);
+  const f = fixture();
   try {
     const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('Version one.') });
     f.deployment.installSkill({ itemId: item.id, targetId: f.codex.id, confirm: true });
@@ -192,7 +171,7 @@ test('a kept copy is exact only when nothing was left out, even an ignored folde
 });
 
 test('keeping refuses links inside the copy, a renamed skill and a copy that already matches', () => {
-  const f = fixture(['keepOutsideEdits']);
+  const f = fixture();
   try {
     const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('Version one.') });
     f.deployment.installSkill({ itemId: item.id, targetId: f.codex.id, confirm: true });
@@ -209,7 +188,7 @@ test('keeping refuses links inside the copy, a renamed skill and a copy that alr
 });
 
 test('an agent definition edited in place can be kept and adopted', () => {
-  const f = fixture(['keepOutsideEdits']);
+  const f = fixture();
   try {
     const agent = (body: string) => `---\nname: reviewer\ndescription: Review code\n---\n${body}\n`;
     const item = f.wb.create({ title: 'Reviewer', kind: 'agent', content: agent('Read the diff.'), agent: { provider: 'claude', filename: 'reviewer.md' } });

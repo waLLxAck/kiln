@@ -11,7 +11,6 @@ import { agentLabel, countSettingsChanges, isClaudeSettings, parseSettings, purp
 import './config.css';
 import { CodeEditor as CodeMirrorEditor } from './CodeEditor';
 import { languageFor, type CodeLanguage } from './code-language';
-import { useCodeEditorOn } from './code-editor-state';
 
 type Props = { perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; /** Re-reads the library after a copy is saved into it. */ refresh: () => Promise<void>; onOpenLibrary: (id: string) => void };
 type Tab = 'permissions' | 'hooks' | 'raw';
@@ -194,16 +193,9 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
   </div>;
 }
 
-/** A plain text editor with line numbers. Lines do not wrap, so the numbers stay aligned. With the codeEditor experiment it is CodeMirror instead. */
+/** The file's text in CodeMirror: line numbers, find and replace, highlighting for the file's language. */
 function CodeEditor({ label, value, onChange, language }: { label: string; value: string; onChange: (value: string) => void; language?: CodeLanguage }) {
-  const gutter = useRef<HTMLDivElement>(null);
-  const codeMirror = useCodeEditorOn();
-  if (codeMirror) return <CodeMirrorEditor className="home-code" value={value} onChange={onChange} language={language} ariaLabel={`${label} content`} />;
-  const lines = value.split('\n').length;
-  return <div className="cfg-code">
-    <div className="cfg-gutter" ref={gutter} aria-hidden="true">{Array.from({ length: lines }, (_, i) => <span key={i}>{i + 1}</span>)}</div>
-    <textarea className="code-input" aria-label={`${label} content`} spellCheck={false} value={value} onChange={event => onChange(event.target.value)} onScroll={event => { if (gutter.current) gutter.current.scrollTop = event.currentTarget.scrollTop; }} />
-  </div>;
+  return <CodeMirrorEditor className="home-code" value={value} onChange={onChange} language={language} ariaLabel={`${label} content`} />;
 }
 
 function Status({ content, file }: { content: HomeFileContent; file: string }) {

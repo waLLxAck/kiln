@@ -1,6 +1,5 @@
 import { MAX_ATTACHMENT_BASE64_LENGTH } from './limits';
 import { z } from 'zod';
-import type { ExperimentFlags } from './experiments';
 
 export const idSchema = z.string().uuid();
 export const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -97,10 +96,10 @@ export type Installation = { location?: 'agents' | 'claude' | 'codex' | 'copilot
 /** Desired personal installs, stored in the library so another machine can reproduce them. */
 export type Installs = Record<string, (ProviderId | 'codex-native')[]>;
 /** `codexModel`/`codexEffort` empty means "the CLI catalog default"; the resolved values are recorded on each agent job. */
-export type Settings = { shortcut: string; launchAtLogin: boolean; theme: 'light' | 'dark' | 'system'; agentProvider: RunProviderId; codexModel: string; codexEffort: string; /** Codex model and effort that write commit messages when an approval is pushed. Cheaper than the main model; a failure falls back to a plain generated message. */ commitModel: string; commitEffort: string; /** Local folder scanned for newer `Kiln Setup <version>.exe` installers (normally the repository's `release` output). Empty disables update checks. */ updateSource: string; /** Experimental features turned on in Settings; see experiments.ts. Off unless listed as true. */ experiments: ExperimentFlags };
+export type Settings = { shortcut: string; launchAtLogin: boolean; theme: 'light' | 'dark' | 'system'; agentProvider: RunProviderId; codexModel: string; codexEffort: string; /** Codex model and effort that write commit messages when an approval is pushed. Cheaper than the main model; a failure falls back to a plain generated message. */ commitModel: string; commitEffort: string; /** Local folder scanned for newer `Kiln Setup <version>.exe` installers (normally the repository's `release` output). Empty disables update checks. */ updateSource: string };
 /** Whether this library is a Kiln repository that can publish approvals: standard layout, Git, and a GitHub remote. Anything short of `ready` sends the desktop app to setup. */
 export type RepositoryState = { standard: boolean; /** Created by Kiln to be nothing but a library. A skills repository that adopted the layout in place is an import source instead. */ dedicated: boolean; git: boolean; remote: boolean; ready: boolean };
-/** `organise` (autoSync experiment): moves, collection changes and desired installs of items already on GitHub. */
+/** `organise` (background sync): moves, collection changes and desired installs of items already on GitHub. */
 export type PublishAction = 'approve' | 'unapprove' | 'organise';
 export type PublishStatus = 'queued' | 'composing' | 'committing' | 'pushing' | 'done' | 'failed';
 /** One approval (or withdrawal) on its way to GitHub. Approve returns immediately; this record tells the UI how far the commit and push got. */

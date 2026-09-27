@@ -6,7 +6,7 @@ import { bundleFiles, contained, digest, noLinks, safeRelative } from '../storag
 
 export type InstalledCopy = { content: string; files: Record<string, string>; /** Entries left out by the importer's rules, relative to the copy. */ ignored: string[]; /** The state hash of the bytes read (as a deployment hashes a folder), so exactness needs no second read. */ hash: string };
 /**
- * Reads an installed copy for "Keep these changes" (experimental keepOutsideEdits) with the skill importer's rules: the same
+ * Reads an installed copy for "Keep these changes" with the skill importer's rules: the same
  * ignored entries, 25 MB cap, bundle checks and UTF-8 SKILL.md. Unlike the importer nothing is followed: the copy itself, a folder
  * above it or any entry inside that is a link is refused, so only files that live inside the copy's own folder are read.
  * An agent definition is its single file, capped at 2 MB like the agent importer.

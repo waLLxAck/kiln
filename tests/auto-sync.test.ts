@@ -8,30 +8,28 @@ import { Workbench } from '../packages/domain/workbench';
 import { Router } from '../packages/domain/router';
 import { initialiseRepository } from '../packages/git/standard';
 import { conflicts, finishMerge, mergeFetched, resolveItemConflict } from '../packages/git/conflicts';
-import { pullFetched, type PullResult } from '../packages/git/sync';
+import type { PullResult } from '../packages/git/sync';
 import type { Item } from '../packages/protocol/schema';
 
-delete process.env.KILN_EXPERIMENTS;
 process.env.KILN_ORGANISE_DELAY_MS = '20';
 const skill = (name: string, extra = '') => `---\nname: ${name}\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\nRead the diff. Verify claims.${extra}\n`;
 const approveArgs = (item: { id: string; revision: string }) => ({ id: item.id, revision: item.revision, reviewer: 'Human', scope: 'Test', note: 'Reviewed', waivedChecks: 'Fixture' });
 const run = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 type Side = ReturnType<typeof open>;
-function open(library: string, local: string, flag = true) {
+function open(library: string, local: string) {
   const wb = new Workbench(library, local);
-  wb.setExperiment({ id: 'autoSync', enabled: flag });
   const router = new Router(wb, { composer: null, describer: null });
   return { wb, router, library, git: (...args: string[]) => run(library, ...args) };
 }
 /** One library pushed to a bare local "GitHub", and a second machine that cloned it. */
-function world(flag = true) {
+function world() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln sync '));
   const created = initialiseRepository({ parent: root, name: 'library' }); assert.ok(created.committed, created.message);
   const origin = path.join(root, 'origin.git'); execFileSync('git', ['init', '--bare', '--initial-branch=main', origin], { windowsHide: true });
   run(created.root, 'config', 'core.autocrlf', 'false'); run(created.root, 'remote', 'add', 'origin', origin); run(created.root, 'push', '-u', 'origin', 'HEAD');
-  const a = open(created.root, path.join(root, 'private-a'), flag);
+  const a = open(created.root, path.join(root, 'private-a'));
   const other = path.join(root, 'other'); execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', origin, other], { windowsHide: true });
-  const b = open(other, path.join(root, 'private-b'), flag);
+  const b = open(other, path.join(root, 'private-b'));
   return { root, origin, a, b, close() { a.wb.close(); b.wb.close(); fs.rmSync(root, { recursive: true, force: true }); } };
 }
 async function publish(side: Side, title: string, name: string, collection = 'Personal') {
@@ -153,22 +151,6 @@ test('Merge from GitHub runs beside drafts and commits neither the drafts nor th
   } finally { w.close(); }
 });
 
-test('with the flag off, merge still refuses a dirty tree, pull stays unavailable and organising makes no job', async () => {
-  const w = world(false);
-  try {
-    const item = await publish(w.a, 'Organised item', 'organised-item');
-    w.a.wb.create({ title: 'A draft', kind: 'prompt', content: 'Draft' });
-    assert.throws(() => mergeFetched(w.a.wb), /Checkpoint or resolve local changes before merging/);
-    assert.throws(() => w.a.router.call('sync.pull'), (error: Error & { code?: string }) => error.code === 'CAPABILITY_UNSUPPORTED');
-    await assert.rejects(async () => w.a.router.call('sync.fetch'), (error: Error & { code?: string }) => error.code === 'CAPABILITY_UNSUPPORTED');
-    w.a.router.call('items.move', { ids: [item.id], collection: 'Elsewhere' });
-    await new Promise(resolve => setTimeout(resolve, 80));
-    assert.equal(w.a.router.flushOrganisation(), null);
-    assert.ok(!w.a.router.publisher.list().some(j => j.action === 'organise'));
-    assert.equal(w.a.wb.snapshot().git.behind, 0);
-  } finally { w.close(); }
-});
-
 test('organisation of published items is committed alone: never drafts, never draft content', async () => {
   const w = world();
   try {
@@ -237,7 +219,6 @@ test('desired installs of published items are published by themselves', async ()
 test('Approve & install after keeping publishes the desired install when the kept revision was already approved', async () => {
   const w = world();
   try {
-    w.a.wb.setExperiment({ id: 'keepOutsideEdits', enabled: true });
     const item = await publish(w.a, 'Kept skill', 'kept-skill');
     const home = path.join(w.root, 'agent home'); fs.mkdirSync(home);
     const target = w.a.wb.enroll({ name: 'Claude', root: home, provider: 'claude', scope: 'personal', profile: 'Personal' });
@@ -300,7 +281,7 @@ test('finishing a merge commits only the conflict records about the items it con
   } finally { w.close(); }
 });
 
-test('an approval that is not trusted here is not kept, and with the flag off resolving still resets to draft', async () => {
+test('an approval that is not trusted here is not kept', async () => {
   const w = world();
   try {
     const { id, theirs } = await divergedApprovals(w);
@@ -309,17 +290,5 @@ test('an approval that is not trusted here is not kept, and with the flag off re
     resolveItemConflict(w.a.wb, { id, choice: 'theirs' });
     assert.equal(w.a.wb.getItem(id).status, 'captured');
   } finally { w.close(); }
-  const off = world();
-  try {
-    const { id } = await divergedApprovals(off);
-    off.a.wb.setExperiment({ id: 'autoSync', enabled: false });
-    resolveItemConflict(off.a.wb, { id, choice: 'ours' });
-    assert.equal(off.a.wb.getItem(id).status, 'captured');
-  } finally { off.close(); }
 });
 
-test('pullFetched refuses without the flag', () => {
-  const w = world(false);
-  try { assert.throws(() => pullFetched(w.a.wb), (error: Error & { code?: string }) => error.code === 'CAPABILITY_UNSUPPORTED'); }
-  finally { w.close(); }
-});

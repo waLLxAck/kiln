@@ -10,7 +10,6 @@ import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, 
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
-import { environmentExperiments, experimentIds, experimentOn, type ExperimentId } from '../protocol/experiments';
 import { closeMatches } from './fuzzy';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
@@ -36,7 +35,6 @@ export const PENDING_SUMMARY = 'Edited';
 /** Managed trials store `mode: 'codex'` for every provider (the schema predates Claude Code runs), so activity names the provider the trial records instead. */
 const agentLabel = (provider: 'codex' | 'claude' | 'manual') => provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Agent';
 /** Unknown flag names are kept (a flag removed from the list must not fail an older settings file); only true turns one on. */
-const experimentsSchema = z.record(z.string(), z.boolean()).catch({}).default({});
 export class Workbench {
   readonly canonical: string;
   readonly local: string;
@@ -364,11 +362,10 @@ export class Workbench {
     return this.indexedItems.filter(item => (!ids || ids.has(item.id)) && (includeArchived || !['archived', 'rejected'].includes(item.status)));
   }
   /**
-   * Search for the betterSearch experiment: best matches first (descriptions count too), a typo-tolerant fallback on titles and
+   * Ranked search: best matches first (descriptions count too), a typo-tolerant fallback on titles and
    * tags when nothing matches exactly (`close`), and `total` so a capped list can say how much it left out.
    */
   rankedSearch(query: string, options: { archived?: boolean; limit?: number } = {}) {
-    if (!experimentOn(this.settings(), 'betterSearch')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Ranked search is an experimental feature; turn on "Steadier, ranked search" in Settings.');
     if (this.dirty) this.refresh();
     const shown = (item: Item) => options.archived || !['archived', 'rejected'].includes(item.status);
     let items: Item[], close = false;
@@ -530,7 +527,7 @@ export class Workbench {
       if (trial.deletedAt) return trial;
       const deleted = { ...trial, deletedAt: now() };
       writeJson(path.join(this.canonical, 'experiments', `${id}.json`), deleted);
-      // A human judgement of this experiment (trialLoop) goes with it, so it no longer counts as approval evidence.
+      // A human judgement of this experiment goes with it, so it no longer counts as approval evidence.
       for (const review of this.trials().filter(t => t.outputReference === `review-of:${id}`)) writeJson(path.join(this.canonical, 'experiments', `${review.id}.json`), { ...review, deletedAt: deleted.deletedAt });
       this.record('trial_deleted', 'Experiment deleted from the trial lists; historical evidence retained', trial.itemId, trial.revision);
       return deleted;
@@ -552,12 +549,11 @@ export class Workbench {
     });
   }
   /**
-   * trialLoop: the user's own verdict on an agent experiment of the current revision. It is stored as a separate, completed manual
+   * The user's own verdict on an agent experiment of the current revision. It is stored as a separate, completed manual
    * trial (`outputReference: review-of:<agent trial>`), so the agent assessment stays untouched and the two remain distinct; it counts
    * as approval evidence like any manual trial. A newer verdict on the same experiment replaces the older one, which is kept as deleted.
    */
   judgeTrial(input: unknown) {
-    if (!experimentOn(this.settings(), 'trialLoop')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Turn on "Improve and re-test from experiments" in Settings to mark experiments as passed or failed.');
     const data = z.object({ id: idSchema, judgement: z.enum(['pass', 'fail']), note: z.string().trim().max(2000).default('') }).parse(input);
     return this.mutate(() => {
       const reviewed = this.trials().find(t => t.id === data.id); invariant(reviewed, 'TRIAL_NOT_FOUND', 'Experiment not found.');
@@ -615,8 +611,9 @@ export class Workbench {
   }
   settings(): Settings {
     const file = path.join(this.local, 'settings.json');
-    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), experiments: experimentsSchema }).parse(fs.existsSync(file) ? readJson(file) : {});
-    return { ...stored, experiments: { ...stored.experiments, ...environmentExperiments() } };
+    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(fs.existsSync(file) ? readJson(file) : {});
+    // Settings files from 0.22.0 may still hold an `experiments` map; those features are permanent now, so the key is ignored and dropped on the next save.
+    return stored;
   }
   /** Every collection in sidebar order, subfolders after their parent. Custom names come from workbench.json; the rest from the items filed in them. */
   collections(items = this.listItems()) {
@@ -770,16 +767,8 @@ export class Workbench {
     });
   }
   saveSettings(input: unknown) {
-    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), experiments: experimentsSchema }).parse(input);
-    // Flags turned on only by KILN_EXPERIMENTS are not written back; the file keeps what Settings chose.
-    const file = path.join(this.local, 'settings.json'), stored = fs.existsSync(file) ? readJson(file) as { experiments?: unknown } : {};
-    writeJson(file, { ...value, experiments: experimentsSchema.parse(stored.experiments) }); return this.settings();
-  }
-  /** Turns one experimental feature on or off on this machine; see experiments.ts. */
-  setExperiment(input: unknown) {
-    const { id, enabled } = z.object({ id: z.enum(experimentIds as [ExperimentId, ...ExperimentId[]]), enabled: z.boolean() }).parse(input);
-    const file = path.join(this.local, 'settings.json'), stored = fs.existsSync(file) ? readJson(file) as Record<string, unknown> : {};
-    writeJson(file, { ...stored, experiments: { ...experimentsSchema.parse(stored.experiments), [id]: enabled } }); return this.settings();
+    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(input);
+    writeJson(path.join(this.local, 'settings.json'), value); return this.settings();
   }
   invalidateGit() { this.gitCache = undefined; }
   /** A library can publish approvals only when it has the standard layout, is a Git repository, and has a GitHub remote. */

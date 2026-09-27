@@ -2,7 +2,7 @@ import type { AgentJob } from './service';
 import type { Item, Revision, RunProviderId } from '../protocol/schema';
 
 /**
- * chatHistory experiment: conversations about an item kept across closing the chat, switching items and restarting, and the
+ * Conversations about an item kept across closing the chat, switching items and restarting, and the
  * library changes a turn made. Pure functions over agent jobs and revision history, shared by the agent service and the desktop chat.
  */
 

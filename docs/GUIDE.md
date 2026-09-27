@@ -19,7 +19,7 @@ This guide covers everything the [README](../README.md) summarises. Together the
 - [Config files](#config-files)
 - [Standard repositories](#standard-repositories)
 - [Command-line interface](#command-line-interface)
-- [Experimental features](#experimental-features)
+- [Features added in 0.22.0](#features-added-in-0220)
 - [Updating the installed app](#updating-the-installed-app)
 - [Panels and performance logs](#panels-and-performance-logs)
 - [The problems behind the workflow](#the-problems-behind-the-workflow)
@@ -49,7 +49,7 @@ What ships today:
 | Git and GitHub | Create or open a Kiln repository, inspect changes, checkpoint, synchronize and resolve conflicts. GitHub access uses the official `gh` CLI. |
 | CLI | Script collections, items, experiments, approvals, installation and library operations through structured JSON results and the same domain code as the desktop. |
 | Desktop preferences | Choose theme and agent defaults, resize panels, configure quick search and startup behavior, inspect local performance logs, and, on Windows, prepare/restart into a newer installer. |
-| Experimental features | Try upcoming changes one at a time from Settings: updating installed copies, keeping outside edits, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications, ranked search, docked chat with history, keyboard navigation and undo, and installing into project folders. All start off. |
+| Features added in 0.22.0 | Updating installed copies, keeping outside edits, a code editor, background GitHub sync, improve-and-re-test from experiments, run notifications and a run queue, ranked search, chat history, keyboard navigation and undo, and installing into project folders. Always on. |
 
 ## Installing
 
@@ -339,9 +339,9 @@ Lists return `total` and `nextOffset`; pass `--offset <nextOffset>` for another 
 
 Other typed operations accept `--input request.json`. Results include `schemaVersion`, `ok`, and `data`; errors use structured stderr and a nonzero exit status. Unknown, misplaced, repeated and valueless options fail before storage is opened. `--library` and `--local` can isolate storage. `KILN_LIBRARY` and `KILN_LOCAL` override defaults; `KILN_DESKTOP_DATA` isolates desktop preferences for tests.
 
-## Experimental features
+## Features added in 0.22.0
 
-**Settings → Experimental features** has one switch for each change that is still being tried out. They are all off until you turn them on, apply straight away without a restart, and only affect this machine (they are kept in the machine-private settings, never in the library). Turn a switch off to go back to how Kiln worked before. When a change has proved itself it becomes the normal behaviour in a later release and its switch goes away. Setting `KILN_EXPERIMENTS` to `all`, or to a comma-separated list of names such as `codeEditor,autoSync`, turns switches on for one run without saving them.
+Kiln 0.22.0 shipped these ten changes behind switches in Settings. They are now part of Kiln and always on; the switches are gone, and a switch saved by 0.22.0 is ignored. Some of them are still moving into the redesigned screens, so a few controls described below may sit elsewhere for now.
 
 ### Update installed copies
 

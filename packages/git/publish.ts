@@ -77,7 +77,7 @@ export class Publisher {
   /** Waited for before every push; the router uses it so a background fetch and a push never update the same refs at once. */
   beforePush: () => Promise<void> = () => Promise.resolve();
   /**
-   * autoSync: publishes organisation of items already on GitHub (see organise.ts). The files are worked out again when the job
+   * Background sync: publishes organisation of items already on GitHub (see organise.ts). The files are worked out again when the job
    * runs, so while one is still queued every further change joins it and a burst of moves makes one commit.
    */
   organise(installIds: string[] = []) {

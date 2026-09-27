@@ -6,19 +6,16 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Workbench } from '../packages/domain/workbench';
 import { Router } from '../packages/domain/router';
-import { WorkbenchError } from '../packages/domain/errors';
 import { closeMatches, editDistance } from '../packages/domain/fuzzy';
 import { SearchIndex } from '../packages/storage/search';
 import { rankItems } from '../apps/desktop/src/library-sort';
 import type { Item } from '../packages/protocol/schema';
 
-function workbench(on = true) {
+function workbench() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-better-search-'));
   const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
-  if (on) wb.setExperiment({ id: 'betterSearch', enabled: true });
   return { root, wb, close() { wb.close(); fs.rmSync(root, { recursive: true, force: true }); } };
 }
-const unsupported = (error: unknown) => error instanceof WorkbenchError && error.code === 'CAPABILITY_UNSUPPORTED';
 /** Items whose body mentions the word far more often come first in the library's own order, so only ranking can put the title hit first. */
 function library(wb: Workbench) {
   const body = wb.create({ title: 'Weekly notes', kind: 'prompt', content: 'Deploy on Friday. Deploy the deploy script. Deploy notes.' });
@@ -78,16 +75,12 @@ test('ranked search limits results but reports the total, and hides archived ite
   } finally { f.close(); }
 });
 
-test('with the flag off, ranked search refuses and items.list is exactly as before', async () => {
-  const f = workbench(false);
+test('ranked search does not change items.list', async () => {
+  const f = workbench();
   try {
     const { body, titled } = library(f.wb);
     const router = new Router(f.wb, { composer: null });
-    assert.throws(() => f.wb.rankedSearch('deploy'), unsupported);
-    await assert.rejects(async () => router.call('items.search', { query: 'deploy' }), unsupported);
-    assert.deepEqual((await router.call('items.list', { query: 'deploy' }) as Item[]).map(i => i.id), [body.id, titled.id]);
-    f.wb.setExperiment({ id: 'betterSearch', enabled: true });
-    assert.deepEqual((await router.call('items.list', { query: 'deploy' }) as Item[]).map(i => i.id), [body.id, titled.id], 'the flag never changes items.list');
+    assert.deepEqual((await router.call('items.list', { query: 'deploy' }) as Item[]).map(i => i.id), [body.id, titled.id], 'items.list keeps the library order');
     assert.deepEqual(((await router.call('items.search', { query: 'deploy', limit: 1 })) as { items: Item[]; total: number }).total, 2);
   } finally { f.close(); }
 });
@@ -127,7 +120,7 @@ test('a workbench reopened on an old index file searches normally', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-better-search-'));
   const open = () => new Workbench(path.join(root, 'library'), path.join(root, 'private'));
   try {
-    const wb = open(); wb.setExperiment({ id: 'betterSearch', enabled: true });
+    const wb = open();
     const { titled } = library(wb);
     const file = path.join(wb.local, 'search.sqlite'); wb.close();
     const db = new DatabaseSync(file); db.exec('DROP TABLE IF EXISTS entries; CREATE VIRTUAL TABLE items USING fts5(id UNINDEXED,title,tags,collection,content);'); db.close();

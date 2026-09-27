@@ -1,6 +1,5 @@
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import { targetSkillsFolder, skillLocation, skillLocationLabel, locationFolder, type SkillLocation } from '../providers/skill-locations';
-import { experimentOn } from '../protocol/experiments';
 import { readInstalledCopy } from './keep';
 import { scanAgents } from '../domain/agents-import';
 import { agentFolder } from '../domain/agent-format';
@@ -224,7 +223,7 @@ export class DeploymentService {
     const result: Installation[] = [];
     const items = (Array.isArray(itemId) ? itemId.map(id => this.wb.getItem(id)) : itemId ? [this.wb.getItem(itemId)] : this.wb.listItems()).filter(item => ['skill', 'agent'].includes(item.kind));
     const receipts = this.receipts(), targets = this.wb.targets();
-    const updates = experimentOn(this.wb.settings(), 'installUpdates'), approvals = updates ? this.wb.approvals() : [];
+    const approvals = this.wb.approvals();
     for (const item of items) {
       let revision: Revision | undefined; try { revision = this.wb.getRevision(item.id); } catch { continue; }
       const name = this.folderName(item, revision); if (!name) continue;
@@ -246,7 +245,7 @@ export class DeploymentService {
         const owned = last?.status === 'applied' && last.itemId === item.id ? last : undefined;
         const current = this.currentState(destination);
         const state: Installation['state'] = owned ? (current === owned.hash ? 'installed' : 'drifted') : 'external';
-        const outdated = updates && owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
+        const outdated = owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
         result.push({ itemId: item.id, targetId: target.id, provider: target.provider, location: revision.kind === 'skill' ? location : undefined, scope: target.scope, destination, state, linked, matches: current !== null && current === rendered, receiptId: owned?.id ?? null, ...(outdated ? { outdated: true as const } : {}) });
       }
     }
@@ -551,7 +550,7 @@ export class DeploymentService {
       return { id: journal.id, status: 'partial: files changed; manual inspection required' };
     }));
   }
-  // Experimental: installUpdates ("Update installed copies") and keepOutsideEdits ("Keep changes made outside Kiln").
+  // Update installed copies, and keep changes made outside Kiln.
   /** The revision an update installs: the current one when it is approved on this machine, else the newest local approval. */
   approvedRevision(itemId: string, approvals = this.wb.approvals()): Revision | null {
     const item = this.wb.getItem(itemId), local = approvals.filter(a => a.itemId === itemId && a.trust === 'local');
@@ -579,7 +578,6 @@ export class DeploymentService {
    */
   updateInstalls(input: unknown) {
     const data = z.object({ itemId: idSchema, targetId: idSchema.optional(), approve: z.boolean().default(false), expect: hashSchema.optional() }).parse(input);
-    invariant(experimentOn(this.wb.settings(), 'installUpdates'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Update installed copies” in Settings → Experimental features first.');
     const item = this.wb.getItem(data.itemId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before updating its installs.');
     invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agents have installed copies to update.');
@@ -617,7 +615,6 @@ export class DeploymentService {
    */
   keepCopy(input: unknown) {
     const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
-    invariant(experimentOn(this.wb.settings(), 'keepOutsideEdits'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Keep changes made outside Kiln” in Settings → Experimental features first.');
     const item = this.wb.getItem(data.itemId), target = this.target(data.targetId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before keeping changes into it.');
     invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agents have installed copies.');
@@ -640,7 +637,6 @@ export class DeploymentService {
    */
   approveKept(input: unknown) {
     const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
-    invariant(experimentOn(this.wb.settings(), 'keepOutsideEdits'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Keep changes made outside Kiln” in Settings → Experimental features first.');
     const item = this.wb.getItem(data.itemId), target = this.target(data.targetId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item first.');
     invariant(item.revision === data.expect, 'REVISION_CONFLICT', 'This item changed since the changes were kept. Review the new revision before approving it.');
@@ -655,7 +651,7 @@ export class DeploymentService {
     if (target.scope === 'personal') this.wb.setInstall(item.id, item.kind === 'skill' && target.skillFolder ? 'codex-native' : target.provider, true);
     return { itemId: item.id, revision: revision.hash, destination, method: unchanged ? 'unchanged' as const : 'adopted' as const, approved, receipt };
   }
-  // Experimental: projectInstalls ("Install into project folders").
+  // Install into project folders.
   /**
    * Read-only preview of installing an item's current revision into `target`, which need not be enrolled yet: the destination the
    * plan would use and what is there now. `current` is the state hash that install must still find, so a change in between refuses.

@@ -5,12 +5,12 @@ import { runNotice, type RunFinished } from '../../packages/agent/run-notice';
 const shown = new Set<Notification>();
 
 /**
- * runNotifications: a desktop notification when an agent run ends while Kiln is not in front (hidden in the tray, minimised or
+ * A desktop notification when an agent run ends while Kiln is not in front (hidden in the tray, minimised or
  * behind another window). In front, the in-app toast is enough. Clicking it brings Kiln back and opens the run's result.
  */
-export async function notifyRunFinished(event: RunFinished, options: { window: () => BrowserWindow | undefined; enabled: () => Promise<boolean>; open: (event: RunFinished) => Promise<void>; log: (event: string, fields?: Record<string, unknown>) => void }) {
+export async function notifyRunFinished(event: RunFinished, options: { window: () => BrowserWindow | undefined; open: (event: RunFinished) => Promise<void>; log: (event: string, fields?: Record<string, unknown>) => void }) {
   const notice = runNotice(event);
-  if (!notice || !(await options.enabled())) return;
+  if (!notice) return;
   const window = options.window();
   if (!window || window.isDestroyed() || (window.isVisible() && !window.isMinimized() && window.isFocused())) return;
   if (!Notification.isSupported()) return;

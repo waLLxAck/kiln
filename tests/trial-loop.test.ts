@@ -8,14 +8,12 @@ import type { RunInput } from '../packages/agent/codex';
 import { TRIAL_LOOP_TIMEOUT_MS } from '../packages/agent/trial-loop';
 import { Workbench } from '../packages/domain/workbench';
 
-delete process.env.KILN_EXPERIMENTS;
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-trial-loop-'));
   const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
   return { wb, close: () => { wb.close(); fs.rmSync(root, { recursive: true, force: true }); } };
 }
 const wait = async (service: AgentService) => { for (let i = 0; i < 300 && service.running; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(service.running, 0); };
-const trialLoop = (wb: Workbench, enabled: boolean) => wb.setExperiment({ id: 'trialLoop', enabled });
 
 test('Claude Code experiments are labelled as Claude Code in the activity log, Codex ones as Codex', async () => {
   const { wb, close } = fixture();
@@ -33,7 +31,7 @@ test('Claude Code experiments are labelled as Claude Code in the activity log, C
   } finally { close(); }
 });
 
-test('experiments and skill drafts get 15 minutes on both providers with trialLoop on, and the runner defaults with it off', async () => {
+test('experiments and skill drafts get 15 minutes on both providers', async () => {
   const { wb, close } = fixture();
   try {
     const seen: { kind: string; timeout: number | undefined }[] = [];
@@ -45,15 +43,12 @@ test('experiments and skill drafts get 15 minutes on both providers with trialLo
     const item = wb.create({ title: 'Timeouts', kind: 'prompt', content: 'Do it.', files: {} });
     const run = async (k: 'trial' | 'derive', provider: 'codex' | 'claude') => { kind = `${k}:${provider}`; service.start({ id: item.id, kind: k, provider }); await wait(service); };
     for (const provider of ['codex', 'claude'] as const) { await run('trial', provider); await run('derive', provider); }
-    assert.ok(seen.every(s => s.timeout === undefined), 'flag off: no timeout is passed, so Codex keeps 3 and Claude Code 5 minutes');
-    seen.length = 0; trialLoop(wb, true);
-    for (const provider of ['codex', 'claude'] as const) { await run('trial', provider); await run('derive', provider); }
     assert.deepEqual(seen.map(s => s.timeout), [TRIAL_LOOP_TIMEOUT_MS, TRIAL_LOOP_TIMEOUT_MS, TRIAL_LOOP_TIMEOUT_MS, TRIAL_LOOP_TIMEOUT_MS]);
     assert.equal(TRIAL_LOOP_TIMEOUT_MS, 15 * 60_000);
   } finally { close(); }
 });
 
-test('item chat context lists recent experiments only with trialLoop on, newest five and trimmed', async () => {
+test('item chat context lists recent experiments, newest five and trimmed', async () => {
   const { wb, close } = fixture();
   try {
     let n = 0, context = '', prompt = '';
@@ -65,10 +60,6 @@ test('item chat context lists recent experiments only with trialLoop on, newest 
     const item = wb.create({ title: 'Context', kind: 'prompt', content: 'Summarise the diff.', files: {} });
     for (let i = 0; i < 7; i++) { service.start({ id: item.id, kind: 'trial', provider: 'claude' }); await wait(service); }
     service.chat({ itemId: item.id, message: 'Improve it' }); await wait(service);
-    assert.doesNotMatch(context, /Experiments on this item|OUTPUT-/, 'flag off: context.md is as before');
-    assert.doesNotMatch(prompt, /recent experiments/);
-    trialLoop(wb, true);
-    service.chat({ itemId: item.id, message: 'Improve it', newSession: true }); await wait(service);
     assert.match(context, /## Experiments on this item \(newest 5 of 7\)/);
     assert.match(prompt, /recent experiments/);
     for (const k of [7, 6, 5, 4, 3]) assert.match(context, new RegExp(`OUTPUT-${k} `));
@@ -79,15 +70,13 @@ test('item chat context lists recent experiments only with trialLoop on, newest 
   } finally { close(); }
 });
 
-test('a human judgement is recorded beside the agent assessment, never over it, and only with trialLoop on', async () => {
+test('a human judgement is recorded beside the agent assessment, never over it', async () => {
   const { wb, close } = fixture();
   try {
     const item = wb.create({ title: 'Judge', kind: 'prompt', content: 'Explain the change.', files: {} });
     const service = new AgentService(wb, () => {}, async () => ({ output: 'Explained.', judgement: 'uncertain', note: 'Probably fine' }), async () => []);
     service.start({ id: item.id, kind: 'trial', provider: 'claude' }); await wait(service);
     const agentTrial = wb.trials()[0];
-    assert.throws(() => wb.judgeTrial({ id: agentTrial.id, judgement: 'pass' }), /CAPABILITY_UNSUPPORTED|Turn on/);
-    trialLoop(wb, true);
     const first = wb.judgeTrial({ id: agentTrial.id, judgement: 'fail' });
     const review = wb.judgeTrial({ id: agentTrial.id, judgement: 'pass' });
     const trials = wb.trials();

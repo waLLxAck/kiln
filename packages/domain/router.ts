@@ -20,8 +20,7 @@ import { HomeFiles } from '../home/service';
 import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
 
-import { BackgroundFetch, pullFetched, requireAutoSync } from '../git/sync';
-import { experimentOn } from '../protocol/experiments';
+import { BackgroundFetch, pullFetched } from '../git/sync';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 /** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
@@ -32,14 +31,14 @@ const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.remov
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
-  /** Background fetch for the autoSync experiment; idle unless the desktop app asks for it. */
+  /** Background fetch with GitHub; idle unless the desktop app asks for it. */
   readonly fetcher: BackgroundFetch;
   private organiseTimer?: ReturnType<typeof setTimeout>;
   /** Items whose desired installs changed since the last organisation job was queued. */
   private installsChanged = new Set<string>();
   readonly home: HomeFiles;
   readonly fleet: FleetService;
-  /** Install into any project folder, enrolling it on first use (projectInstalls). */
+  /** Install into any project folder, enrolling it on first use. */
   readonly projects: ProjectInstalls;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
@@ -83,8 +82,8 @@ export class Router {
     if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
     return result;
   }
-  private autoSyncReady() { return experimentOn(this.wb.settings(), 'autoSync') && this.wb.repositoryState().ready; }
-  /** autoSync: organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
+  private autoSyncReady() { return this.wb.repositoryState().ready; }
+  /** Organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
   private organiseSoon() {
     clearTimeout(this.organiseTimer);
     this.organiseTimer = setTimeout(() => this.flushOrganisation(), Number(process.env.KILN_ORGANISE_DELAY_MS) || 1500);
@@ -202,7 +201,7 @@ export class Router {
       case 'git.resolve': return resolveItemConflict(this.wb, args);
       case 'git.finishMerge': return finishMerge(this.wb);
       case 'git.checkpoint': return checkpoint(this.wb.root, this.wb.canonical, z.object({ message: z.string().trim().min(1).max(300) }).parse(args).message);
-      case 'sync.status': requireAutoSync(this.wb); return this.fetcher.status();
+      case 'sync.status': return this.fetcher.status();
       case 'sync.fetch': return this.fetcher.fetch(z.object({ maxAgeMs: z.number().int().min(0).default(0) }).parse(args).maxAgeMs);
       case 'sync.pull': return this.pull();
       case 'git.sync': return sync(this.wb.root, this.wb.canonical, z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args).action);

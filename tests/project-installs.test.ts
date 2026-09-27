@@ -9,12 +9,11 @@ import { WorkbenchError } from '../packages/domain/errors';
 import { mergeProjects, projectKey, type KnownProject, type ProjectPreview } from '../packages/deployment/projects';
 import type { Installation, Target } from '../packages/protocol/schema';
 
-// Experimental projectInstalls ("Install into project folders").
+// Install into project folders.
 const skill = (body: string) => `---\nname: careful-review\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\n${body}\n`;
-function fixture(on = true) {
+function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-project-installs-'));
   const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
-  if (on) wb.setExperiment({ id: 'projectInstalls', enabled: true });
   const router = new Router(wb, { composer: null });
   const project = path.join(root, 'Web app'); fs.mkdirSync(project);
   const call = <T = any>(method: string, args: unknown = {}) => router.call(method, args) as T;
@@ -46,17 +45,6 @@ test('known projects merge the same folder by resolved path, case-insensitive on
   assert.deepEqual(windows.map(p => [p.root, p.sources.join('+')]), [['C:\\Work\\App', 'experiments+config'], ['D:\\Other', 'installs']]);
   assert.equal(projectKey('C:\\Work\\', 'win32'), projectKey('c:\\work', 'win32'));
   assert.notEqual(projectKey('/Work', 'linux'), projectKey('/work', 'linux'));
-});
-
-test('with the flag off every project-install operation refuses and nothing is enrolled', () => {
-  const f = fixture(false);
-  try {
-    const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('One.') });
-    for (const [method, args] of [['projects.known', {}], ['projects.preview', { itemId: item.id, root: f.project, location: 'claude' }], ['projects.install', { itemId: item.id, root: f.project, location: 'claude', confirm: true, expect: { state: 'absent', current: null } }], ['projects.forget', { root: f.project, confirm: true }]] as const)
-      assert.throws(() => f.call(method, args), hasCode('CAPABILITY_UNSUPPORTED'), method);
-    assert.equal(projectTargets(f.wb).length, 0);
-    assert.equal(fs.existsSync(path.join(f.project, '.claude')), false);
-  } finally { f.close(); }
 });
 
 test('installing into a project writes each location, enrols the folder once per client with a receipt, approves a draft, and stays out of installs.json', () => {
@@ -137,7 +125,6 @@ test('the library is recognised through a link on its path (such as a linked hom
     for (const [opened, chosen] of [['link', 'real'], ['real', 'link']]) {
       const wb = new Workbench(path.join(base, opened, 'home', `library-${opened}`), path.join(base, `private-${opened}`));
       try {
-        wb.setExperiment({ id: 'projectInstalls', enabled: true });
         const router = new Router(wb, { composer: null }), item = wb.create({ kind: 'skill', title: 'Careful review', content: skill('One.') });
         const library = path.join(base, chosen, 'home', `library-${opened}`);
         assert.throws(() => router.call('projects.preview', { itemId: item.id, root: library, location: 'agents' }), hasCode('INVALID_TARGET'), `library opened via ${opened}, chosen via ${chosen}`);
@@ -150,7 +137,6 @@ test('the library is recognised through a link on its path (such as a linked hom
 test('project copies take part in Update installs, and agent definitions go to the client folder in the project', () => {
   const f = fixture();
   try {
-    f.wb.setExperiment({ id: 'installUpdates', enabled: true });
     const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('One.') });
     f.install(item.id, 'claude');
     f.wb.update({ id: item.id, expect: f.wb.getItem(item.id).revision, summary: 'Two', value: { ...f.wb.authoring(item.id), content: skill('Two.') } }); approve(f.wb, item.id);

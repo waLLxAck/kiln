@@ -12,7 +12,7 @@ let wb = new Workbench(workerData.root, workerData.local);
 let router = new Router(wb, routerOptions);
 const newAgentService = (workbench: Workbench) => {
   const service = new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
-  // runNotifications: main decides whether to show a desktop notification; the event is sent for every finished run.
+  // main.ts shows a desktop notification only while Kiln is not in front; the event is sent for every finished run.
   service.onFinished = job => parentPort!.postMessage({ agentFinished: runFinished(job, id => { try { return workbench.getItem(id).title; } catch { return undefined; } }) });
   return service;
 };
@@ -42,7 +42,7 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'trials.delete') data = agent.deleteTrial(request.args[1]);
       else if (request.method === 'rpc') data = await router.call(...request.args as [string, unknown]);
       else {
-        const allowed = ['settings', 'saveSettings', 'setExperiment', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
+        const allowed = ['settings', 'saveSettings', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
         if (!allowed.includes(request.method)) throw new Error('Unsupported worker operation');
         data = await (wb as any)[request.method](...request.args);
       }

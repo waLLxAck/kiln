@@ -19,7 +19,6 @@ import { ItemRail } from './ItemRail';
 import { DeployDialog } from './dialogs';
 import { buildHistory } from './history-model';
 import { changedCopiesLabel, primaryAction, splitFrontMatter, type PrimaryAction } from './item-page';
-import { experimentOn } from './ExperimentalFeatures';
 import { CodeEditor } from './CodeEditor';
 import { itemLanguage } from './code-language';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
@@ -58,9 +57,6 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
   const [deployRevision, setDeployRevision] = useState<string | null>(null);
-  const editor = useRef<HTMLTextAreaElement>(null);
-  // Experimental code editor (codeEditor): CodeMirror in place of the plain textarea.
-  const codeEditor = experimentOn(snapshot.settings, 'codeEditor');
   useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setFieldsChanged(false); setFilePreview(null); setView('content'); }, [item.id]);
   // After the reset above, which runs when the page mounts; each request opens the tests once, not again when the item is reopened later.
   useEffect(() => { if (showTests?.id === item.id && showTests.at !== shownTests) { shownTests = showTests.at; setView('tests'); } }, [showTests, item.id]);
@@ -94,7 +90,9 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
 
   const openItem = () => void perform(() => api('desktop.openItem', { id: item.id }));
   const setMeta = (change: Record<string, unknown>, message?: string) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...change }); await refresh(); }, message);
-  const startEdit = () => { setView('content'); if (!editing) { setDraft(revision.content); setBase(revision.hash); setFieldsChanged(false); setEditing(true); } setTimeout(() => editor.current?.focus(), 0); };
+  // CodeMirror loads on first use, so focus it once it is on screen (tried for about a second).
+  const focusEditor = (tries = 20) => { const content = document.querySelector<HTMLElement>('.item-code .cm-content'); if (content) content.focus(); else if (tries > 0) setTimeout(() => focusEditor(tries - 1), 50); };
+  const startEdit = () => { setView('content'); if (!editing) { setDraft(revision.content); setBase(revision.hash); setFieldsChanged(false); setEditing(true); } requestAnimationFrame(() => focusEditor()); };
   const discard = () => { localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(false); setFieldsChanged(false); setDraft(revision.content); setBase(revision.hash); };
   // The grid has its own run bar (and Run options… for the full dialog), so Test only opens it.
   const test = () => setView('tests');
@@ -210,7 +208,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
                 <Field label="Source"><input name="source" defaultValue={item.source} /></Field>
                 <Field label="Licence"><input name="licence" defaultValue={item.licence} /></Field>
               </div>
-              <div className="item-doc editing"><div className="item-doc-bar"><span className="item-doc-name">{mainFile(detail)}</span><span className="muted small">Text autosaves privately on this machine.</span></div>{codeEditor ? <CodeEditor className="item-code" value={draft} onChange={setDraft} language={itemLanguage(item)} ariaLabel="Content" /> : <textarea ref={editor} aria-label="Content" className="item-textarea" value={draft} spellCheck={false} rows={Math.max(12, draft.split('\n').length + 2)} onChange={e => setDraft(e.target.value)} />}</div>
+              <div className="item-doc editing"><div className="item-doc-bar"><span className="item-doc-name">{mainFile(detail)}</span><span className="muted small">Text autosaves privately on this machine.</span></div><CodeEditor className="item-code" value={draft} onChange={setDraft} language={itemLanguage(item)} ariaLabel="Content" /></div>
             </form>
             : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom} />}
             {!editing && <p className="item-foot">Revision <code>{shortHash(revision.hash)}</code> · {date(revision.createdAt)} by {revision.author}{item.deletedAt ? '' : ' · Click the text to edit it. Saving makes a new draft revision; installs keep the approved one until you approve again.'}</p>}

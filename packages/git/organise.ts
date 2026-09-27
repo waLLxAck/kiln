@@ -6,7 +6,7 @@ import { itemSchema } from '../protocol/schema';
 import { localPaths } from './sync';
 
 /**
- * What an organisation commit (autoSync experiment) may carry: moves, order and favourites of items whose approved revision is
+ * What an organisation commit (background sync) may carry: moves, order and favourites of items whose approved revision is
  * already on GitHub, the collection list, and desired installs of published items. Everything else stays local: an item.json
  * is only taken when nothing but these fields differs from the committed one, so draft content can never ride along.
  */

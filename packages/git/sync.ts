@@ -3,13 +3,12 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import type { Workbench } from '../domain/workbench';
 import { invariant, WorkbenchError } from '../domain/errors';
-import { experimentOn } from '../protocol/experiments';
 import { atomicWrite, now, withLock } from '../storage/files';
 import { gitStatus } from './service';
 
 /**
- * Background sync with GitHub (the autoSync experiment): a fetch that never waits in the backend queue, the overlap check that
- * lets Pull and Merge run beside drafts, and the fast-forward itself. Nothing here runs unless the experiment is on.
+ * Background sync with GitHub: a fetch that never waits in the backend queue, the overlap check that
+ * lets Pull and Merge run beside drafts, and the fast-forward itself.
  */
 const base = ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0'];
 function git(root: string, args: string[]) {
@@ -17,9 +16,6 @@ function git(root: string, args: string[]) {
 }
 const stderrOf = (error: unknown) => String((error as { stderr?: string }).stderr || (error instanceof Error ? error.message : error)).trim();
 
-export function requireAutoSync(wb: Workbench) {
-  invariant(experimentOn(wb.settings(), 'autoSync'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Background sync with GitHub” in Settings → Experimental features first.');
-}
 
 /** When the desktop app fetches: shortly after start, then every few minutes. KILN_SYNC_INTERVAL_MS shortens both, for tests. */
 export function syncTiming(value = process.env.KILN_SYNC_INTERVAL_MS) {
@@ -58,7 +54,6 @@ export class BackgroundFetch {
   }
   /** Fetches unless the last attempt is younger than `maxAgeMs`. Joins a fetch already running instead of starting a second one. */
   async fetch(maxAgeMs = 0): Promise<SyncStatus> {
-    requireAutoSync(this.wb);
     if (this.running) { await this.running; return this.status(); }
     if (this.checkedAt && Date.now() - Date.parse(this.checkedAt) < maxAgeMs) return this.status();
     if (this.busy() || !this.wb.repositoryState().ready) return this.status();
@@ -172,7 +167,6 @@ export type PullResult = { status: 'pulled'; count: number } | { status: 'curren
  * the pull is refused (naming the items) when GitHub changed something that also changed here.
  */
 export function pullFetched(wb: Workbench): PullResult {
-  requireAutoSync(wb);
   const result = withLock(wb.canonical, (): PullResult => {
     try {
       invariant(gitStatus(wb.root).attached, 'NOT_A_REPOSITORY', 'Attach a Git repository first.');

@@ -4,12 +4,11 @@ import { z } from 'zod';
 import type { Workbench } from '../domain/workbench';
 import type { CopyPreview, DeploymentService } from './service';
 import { invariant } from '../domain/errors';
-import { experimentOn } from '../protocol/experiments';
 import { idSchema, hashSchema, type ProviderId, type Target } from '../protocol/schema';
 import { noLinks } from '../storage/files';
 import { skillLocation, type SkillLocation } from '../providers/skill-locations';
 
-// Experimental: projectInstalls ("Install into project folders").
+// Install into project folders.
 
 /** Where a project gets a skill: the shared Agents folder, Claude's, or Copilot's `.github/skills`. */
 export type ProjectLocation = 'agents' | 'claude' | 'copilot';
@@ -58,7 +57,6 @@ export type ProjectPreview = CopyPreview & { root: string; name: string; locatio
  */
 export class ProjectInstalls {
   constructor(private wb: Workbench, private deployments: DeploymentService, private savedProjects: () => string[], private install: (args: unknown) => { destination: string; method: string }) {}
-  private on() { invariant(experimentOn(this.wb.settings(), 'projectInstalls'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Install into project folders” in Settings → Experimental features first.'); }
   private targetsAt(root: string) { const key = projectKey(root); return this.wb.targets().filter(t => t.scope === 'project' && projectKey(t.root) === key); }
   /** Latest applied receipts for copies in this folder's targets that are still on disk. */
   private managedCopies(root: string) {
@@ -68,7 +66,6 @@ export class ProjectInstalls {
       .filter(r => r.status === 'applied' && ids.has(r.targetId) && fs.lstatSync(r.destination, { throwIfNoEntry: false }));
   }
   known(input: unknown = {}): KnownProject[] {
-    this.on();
     const { recent } = recentSchema.parse(input ?? {}), receipts = this.deployments.receipts();
     const targets = this.wb.targets().filter(t => t.scope === 'project');
     const merged = mergeProjects([
@@ -104,7 +101,6 @@ export class ProjectInstalls {
     return { data, root, name, location, provider, existing, target };
   }
   preview(input: unknown): ProjectPreview {
-    this.on();
     const { data, root, name, location, provider, existing, target } = this.place(input);
     return { ...this.deployments.inspectCopy(data.itemId, target), root, name, location, provider, enrolled: Boolean(existing) };
   }
@@ -113,7 +109,6 @@ export class ProjectInstalls {
    * A differing or edited folder needs `replace`, which sets it aside under Kiln's private data first (never deleted).
    */
   apply(input: unknown) {
-    this.on();
     const extra = z.object({ replace: z.boolean().default(false), confirm: z.literal(true), expect: z.object({ state: z.string(), current: hashSchema.nullable() }) }).passthrough().parse(input);
     const { data, root, name, provider, existing, target } = this.place(input);
     const now = this.deployments.inspectCopy(data.itemId, target);
@@ -126,7 +121,6 @@ export class ProjectInstalls {
   }
   /** Stops installing into a folder: removes its enrolled targets, only once no copy Kiln installed there is left. The folder is untouched. */
   forget(input: unknown) {
-    this.on();
     const { root } = z.object({ root: z.string().min(1).max(4096), confirm: z.literal(true) }).parse(input);
     const targets = this.targetsAt(root);
     invariant(targets.length, 'TARGET_NOT_ENROLLED', 'Kiln does not install into this folder, so there is nothing to forget.');

@@ -9,7 +9,7 @@ export class Backend {
   private agentProcesses = new Set<number>();
   private failure?: Error;
   private closing = false;
-  /** runNotifications: called once for every agent run that ends, with what the worker knows about it. */
+  /** Called once for every agent run that ends, with what the worker knows about it. */
   onAgentFinished?: (event: RunFinished) => void;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void; method: string; since: number; warned: boolean }>();
   /** `cli` tells the agent service where Kiln's own CLI can be run from, so a chat agent can change the library through it. */

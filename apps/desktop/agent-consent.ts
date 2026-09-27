@@ -23,11 +23,11 @@ export function agentConsentDetail(platform: NodeJS.Platform = process.platform)
 
 /** Consent is machine-private and versioned so materially changed conditions can be shown again. */
 export class AgentConsent {
-  /** chatHistory experiment: a chat message was accepted since Kiln started, which covers later chat messages until it quits. Never written to disk. */
+  /** A chat message was accepted since Kiln started, which covers later chat messages until it quits. Never written to disk. */
   private chatAccepted = false;
   constructor(private file: string) {}
   reset() { fs.rmSync(this.file, { force: true }); this.chatAccepted = false; }
-  /** `chatSession` marks a chat message while the chatHistory experiment is on: one acceptance then covers chat for the rest of this app session. */
+  /** `chatSession` marks a chat message: one acceptance then covers chat for the rest of this app session. */
   async require(ask: () => Promise<{ response: number; checkboxChecked?: boolean }>, { chatSession = false }: { chatSession?: boolean } = {}) {
     try { if ((readJson(this.file) as { version?: number }).version === 1) return; } catch { /* Not accepted yet. */ }
     if (chatSession && this.chatAccepted) return;

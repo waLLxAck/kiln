@@ -3,7 +3,6 @@ import { CircleArrowUp, Save } from 'lucide-react';
 import type { Installation, Item, Snapshot } from '../../../packages/protocol/schema';
 import { api, shortHash } from './api';
 import { InlineError, Modal } from './components';
-import { experimentOn } from './ExperimentalFeatures';
 
 // Experimental: installUpdates ("Update installed copies") and keepOutsideEdits ("Keep changes made outside Kiln").
 type Copy = { label: string; destination: string; targetId: string };
@@ -27,11 +26,11 @@ export async function updateInstalls(item: Item, approve: boolean) {
   return updateMessage(item.title, await api<UpdateResult>('skills.update', { itemId: item.id, approve, expect: item.revision }));
 }
 /**
- * Detail header primary action while installUpdates is on and Kiln manages at least one copy: "Approve & update installs" for a
+ * Item header primary action while Kiln manages at least one copy: "Approve & update installs" for a
  * draft, "Update installs (N)" when approved copies are behind. Null means the header keeps its usual button.
  */
 export function installUpdatesButton({ settings, item, approved, copies, onAction }: { settings: Settings; item: Item; approved: boolean; copies: Installation[]; onAction: (name: string) => void }) {
-  if (!experimentOn(settings, 'installUpdates') || item.deletedAt || !copies.some(c => c.state === 'installed')) return null;
+  if (item.deletedAt || !copies.some(c => c.state === 'installed')) return null;
   const behind = copies.filter(c => c.outdated).length;
   if (!approved) return <button className="button primary" title="Approve this revision, then update every copy Kiln installed. Copies edited outside Kiln are left alone." onClick={() => onAction('approve-update-installs')}><CircleArrowUp size={15} />Approve & update installs</button>;
   if (behind) return <button className="button primary" title="Install the approved revision over copies Kiln installed earlier. Copies edited outside Kiln are left alone." onClick={() => onAction('update-installs')}><CircleArrowUp size={15} />Update installs ({behind})</button>;
@@ -47,18 +46,16 @@ export function KeepButton({ item, targetId, disabled, onKept, onError }: { item
 }
 /**
  * After keeping: the draft is saved, and the next step is offered. Approve & install approves it and records the folder as installed
- * without rewriting it; with installUpdates on too, the other copies Kiln installed are updated to it in the same step.
+ * without rewriting it, and the other copies Kiln installed are updated to it in the same step.
  */
 export function KeptDialog({ item, targetId, result, settings, onDone }: { item: Item; targetId: string; result: KeepResult; settings: Settings; onDone: (message: string) => void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const both = experimentOn(settings, 'installUpdates');
   const later = `${item.title}: kept the ${result.label} copy as a new draft (${shortHash(result.revision)}). Approve it when you are ready.`;
   const approve = async () => {
     setBusy(true); setError('');
     try {
       await api('deploy.approveKept', { itemId: item.id, targetId, expect: result.revision });
       const lead = `${item.title}: approved revision ${shortHash(result.revision)}; the ${result.label} copy is now the installed version, left exactly as it was.`;
-      if (!both) { onDone(`${lead} New agent sessions pick up the change.`); return; }
       onDone(`${lead} ${updateMessage('', await api<UpdateResult>('skills.update', { itemId: item.id }), true)}`);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
   };
@@ -66,8 +63,8 @@ export function KeptDialog({ item, targetId, result, settings, onDone }: { item:
     <code className="path-text">{result.destination}</code>
     <p>The {result.label} copy is now a new draft revision of “{item.title}”, noted as <b>{result.summary}</b>. The folder was not changed.</p>
     {result.ignored.length > 0 && <p className="notice warning">Not kept, as when importing: {result.ignored.join(', ')}.{!result.exact && ' Because the folder holds files Kiln does not keep, it will still read as edited; reinstalling later replaces it.'}</p>}
-    {result.exact && <p>{both ? 'Approve & update installs approves this draft, records this folder as installed without rewriting it, and updates the other copies Kiln installed. Copies edited outside Kiln are left alone.' : 'Approve & install approves this draft and records this folder as installed without rewriting it.'}</p>}
+    {result.exact && <p>{'Approve & update installs approves this draft, records this folder as installed without rewriting it, and updates the other copies Kiln installed. Copies edited outside Kiln are left alone.'}</p>}
     <InlineError error={error} />
-    <div className="modal-actions"><button className="button" onClick={() => onDone(later)}>Not now</button>{result.exact && <button className="button primary" disabled={busy} onClick={() => void approve()}>{both ? 'Approve & update installs' : 'Approve & install'}</button>}</div>
+    <div className="modal-actions"><button className="button" onClick={() => onDone(later)}>Not now</button>{result.exact && <button className="button primary" disabled={busy} onClick={() => void approve()}>{'Approve & update installs'}</button>}</div>
   </Modal>;
 }
