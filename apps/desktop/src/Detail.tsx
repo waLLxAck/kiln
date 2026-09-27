@@ -150,7 +150,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
     if (name === 'analyze') analyse(); else if (name === 'edit') startEdit(); else if (name === 'ask') onAsk?.(); else if (name === 'open') openItem(); else if (name === 'history') setView('history'); else onAction(name, trial);
   };
 
-  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : 'draft';
+  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : item.status === 'testing' ? 'testing' : 'draft';
   const publishNote = currentApproved
     ? publishJob?.status === 'failed' ? <span className="item-state-note bad">GitHub sync failed</span> : publishJob && publishJob.status !== 'done' ? <span className="item-state-note">Saving to GitHub…</span> : <span className="item-state-note ok">{snapshot.git.ahead && !publishJob ? 'Push pending' : 'On GitHub'}</span>
     : !item.deletedAt && !shelved && lastApproved ? <span className="item-state-note">approved {shortHash(lastApproved.revision)} is live</span> : null;

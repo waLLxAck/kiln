@@ -60,7 +60,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const trials = [...detail.trials].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const made = isSource ? snapshot.items.filter(i => i.origin?.itemId === item.id && !i.deletedAt).length : 0;
   const origin = item.origin ? snapshot.items.find(i => i.id === item.origin!.itemId) : undefined;
-  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : 'draft';
+  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : item.status === 'testing' ? 'testing' : 'draft';
 
   const meta = (change: Record<string, unknown>, message?: string) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...change }); await refresh(); }, message);
   const move = (collection: string) => void perform(async () => { await api('items.move', { ids: [item.id], collection }); await refresh(); }, collection ? `Moved to “${collection}”` : 'Moved out of its collection');
