@@ -116,9 +116,9 @@ export function CaptureComposer({ request, provider, providers, jobs, items, onS
     : kind === 'files' ? `Files: 25 MB in total. Images, PDFs and any other type.` : '';
 
   return <div className="capture">
-    <div ref={box} className={`capture-composer quick-capture ${expanded ? 'open' : ''} ${dragging ? 'drag' : ''}`} onDragOver={event => { event.preventDefault(); event.stopPropagation(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={drop} onPaste={paste}>
+    <div ref={box} className={`capture-composer ${expanded ? 'open' : ''} ${dragging ? 'drag' : ''}`} onDragOver={event => { event.preventDefault(); event.stopPropagation(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={drop} onPaste={paste}>
       <div className="capture-input">
-        <span className={`capture-icon ${kind}`} aria-hidden="true">{detectedIcon[kind]}</span>
+        <span className={`capture-icon k-${kind}`} aria-hidden="true">{detectedIcon[kind]}</span>
         <textarea ref={field} aria-label="Capture" rows={expanded && kind === 'text' ? Math.min(8, Math.max(3, text.split('\n').length)) : 1} disabled={locked} value={text} onChange={event => setText(event.target.value)} onFocus={() => setFocused(true)}
           placeholder={dragging ? 'Drop to capture' : attachments.length ? 'Add a note about these files (optional)' : 'Paste, drop or type anything to keep it…'}
           onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && primary) { event.preventDefault(); void submit(primary.analyze); } if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (empty) setFocused(false); field.current?.blur(); } }} />

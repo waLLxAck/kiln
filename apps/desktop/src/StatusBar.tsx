@@ -6,7 +6,7 @@ import { providerName } from './components';
 import { UpdateAction } from './Updates';
 
 /** "owner/name" from a GitHub remote URL, for display. */
-export const repoName = (remote: string) => remote.replace(/^(https:\/\/github\.com\/|git@github\.com:)/, '').replace(/\.git$/, '') || 'GitHub remote';
+export const repoName = (remote: string) => !/github\.com[/:]/.test(remote) && remote ? remote.split(/[\\/]/).filter(Boolean).at(-1)!.replace(/\.git$/, '') : remote.replace(/^(https:\/\/github\.com\/|git@github\.com:)/, '').replace(/\.git$/, '') || 'GitHub remote';
 /** "4 s", "2 min", "1 h 5 min": how long a run has taken. */
 export const elapsed = (from: string, to = Date.now()) => { const s = Math.max(0, Math.round((to - new Date(from).getTime()) / 1000)); return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min`; };
 const kindLabel: Record<AgentJob['kind'], string> = { capture: 'Analysis', distill: 'Analysis', trial: 'Experiment', derive: 'Skill draft', chat: 'Chat' };
