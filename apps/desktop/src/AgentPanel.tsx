@@ -59,7 +59,7 @@ function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
   const start = (provider: RunProviderId, context: string, workspace?: string, revision?: string) => { setBusy(true); setError(''); void api('agent.start', { id: itemId, kind, context, provider, workspace, ...(revision ? { revision } : {}) }).then(() => { agentStarted(kind); onClose(); }).catch(e => { setError(String(e)); setBusy(false); }); };
   return { busy, error, start };
 }
-export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail }) {
+export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions, knownProjects = false }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail; /** projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -67,7 +67,7 @@ export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace 
   return <Modal title="Run an experiment" subtitle="Test this revision against a project or an isolated example. The output and agent assessment are saved together." onClose={onClose}>
     <ProviderSelect providers={providers} value={provider} onChange={setProvider} />
     {revisions && <RevisionSelect detail={revisions} value={revision} onChange={setRevision} disabled={busy} />}
-    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} />
+    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} known={knownProjects} />
     <p className="muted small">Experiments inspect files read-only. Tasks that require edits or unavailable tools are reported as uncertain.</p>
     <Field label="What should it try? (optional)"><textarea rows={4} value={context} onChange={e => setContext(e.target.value)} placeholder="Add an example input or the situation to test." /></Field>
     {error && <p role="alert" className="error-box">{error}</p>}

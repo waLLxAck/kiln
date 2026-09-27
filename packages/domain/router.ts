@@ -17,6 +17,7 @@ import { applyInfrastructure, defaultParent, infrastructurePlan, initialiseRepos
 import { importLocalSkills, scanLocalSkills } from './skills-import';
 import { applyMigration, migrationPlan } from '../git/migration';
 import { HomeFiles } from '../home/service';
+import { ProjectInstalls } from '../deployment/projects';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles };
@@ -24,6 +25,8 @@ export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
   readonly home: HomeFiles;
+  /** Experimental projectInstalls: install into any project folder, enrolling it on first use. */
+  readonly projects: ProjectInstalls;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
@@ -32,6 +35,7 @@ export class Router {
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
+    this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
   }
   /** Saves the revision at once, then fills in a generated note in the background when the user left "What changed?" empty. */
   private updateItem(args: unknown) {
@@ -104,6 +108,10 @@ export class Router {
       case 'skills.update': return this.published(this.deployments.updateInstalls(args));
       case 'deploy.keepCopy': return this.deployments.keepCopy(args);
       case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
+      case 'projects.known': return this.projects.known(args);
+      case 'projects.preview': return this.projects.preview(args);
+      case 'projects.install': return this.projects.apply(args);
+      case 'projects.forget': return this.projects.forget(args);
       case 'targets.list': return this.wb.targets();
       case 'targets.remove': return this.wb.removeTarget(args);
       case 'items.reorder': return this.wb.reorderItems(args);
