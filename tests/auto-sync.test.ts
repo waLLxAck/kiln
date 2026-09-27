@@ -41,7 +41,7 @@ async function publish(side: Side, title: string, name: string, collection = 'Pe
 async function edit(side: Side, item: Item, extra: string) {
   return side.router.call('items.update', { id: item.id, expect: side.wb.getItem(item.id).revision, summary: 'Draft', value: { ...side.wb.authoring(item.id), content: skill(side.wb.getRevision(item.id).content.match(/name: (\S+)/)![1], extra) } }) as Item;
 }
-async function catchUp(side: Side) { await side.router.fetcher.fetch(); return side.router.call('sync.pull') as PullResult; }
+async function catchUp(side: Side) { await side.router.fetcher.fetch(); return await side.router.call('sync.pull') as PullResult; }
 /** Every byte and modification time under an item folder, to prove a draft was not touched. */
 function folderState(dir: string) {
   const state: Record<string, string> = {};

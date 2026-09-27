@@ -7,14 +7,19 @@ import { execFileSync } from 'node:child_process';
 import { Workbench } from '../packages/domain/workbench';
 import { Router } from '../packages/domain/router';
 import { initialiseRepository } from '../packages/git/standard';
+import { GitQueue } from '../packages/git/queue';
+import type { PullResult } from '../packages/git/sync';
 import { buildReport, cellFor, summarise, targetLocations } from '../packages/fleet/model';
 import { machineReportSchema, type Approval, type FleetView, type Item, type MachineReport, type Target } from '../packages/protocol/schema';
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\nRead the diff. Verify claims.\n`;
 const approveArgs = (item: { id: string; revision: string }) => ({ id: item.id, revision: item.revision, reviewer: 'Human', scope: 'Test', note: 'Reviewed', waivedChecks: 'Fixture' });
 
+// Organisation commits (installs.json after an install) go out only when a test flushes them: on a timer they would land at a
+// load-dependent moment in the middle of a test and change what GitHub has. The Git queue test below covers them racing reports.
+process.env.KILN_ORGANISE_DELAY_MS = '3600000';
 /** Two machines sharing one bare "GitHub": A created the library, B cloned it. Each has its own private data and home folder. */
-function fleet() {
+function fleet(fetchEveryMs = 0) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln fleet '));
   const origin = path.join(root, 'origin.git'); execFileSync('git', ['init', '--bare', '--initial-branch=main', origin], { windowsHide: true });
   const created = initialiseRepository({ parent: path.join(root, 'a'), name: 'library' }); assert.ok(created.committed, created.message);
@@ -23,7 +28,7 @@ function fleet() {
   const machine = (name: string, library: string) => {
     const home = path.join(root, name, 'home'); fs.mkdirSync(home, { recursive: true });
     const wb = new Workbench(library, path.join(root, name, 'private'));
-    const router = new Router(wb, { composer: null, fleet: { appVersion: '9.9.9', fetchEveryMs: 0 } });
+    const router = new Router(wb, { composer: null, fleet: { appVersion: '9.9.9', fetchEveryMs } });
     const git = (...args: string[]) => execFileSync('git', ['-C', library, ...args], { encoding: 'utf8', windowsHide: true }).trim();
     return { home, library, wb, router, git, view: (fetch = true) => router.call('fleet.view', { fetch }) as Promise<FleetView> };
   };
@@ -95,7 +100,7 @@ test('machines report through GitHub, mark each other remotely, and the owner ke
 
     // On B, "Install everything marked for this machine" installs it.
     assert.deepEqual((await b.view(false)).wanted, { [item.id]: ['claude'] });
-    const synced = b.router.call('skills.sync') as { itemId: string; location?: string; result: string }[];
+    const synced = await b.router.call('skills.sync') as { itemId: string; location?: string; result: string }[];
     assert.deepEqual(synced.map(r => [r.location, r.result]), [['claude', 'installed approved revision']]);
     assert.equal(fs.readFileSync(path.join(b.home, '.claude', 'skills', 'careful-review', 'SKILL.md'), 'utf8'), skill('careful-review'));
     assert.equal(b.wb.approvals().length, 1, 'sync never creates approvals');
@@ -124,7 +129,7 @@ test('sync on the owner fetches first, so a mark pushed from elsewhere after its
     assert.deepEqual(f.onGitHub(idB).wanted, { [item.id]: ['agents'] });
     assert.deepEqual((await b.view(false)).wanted, {}, 'B has not fetched since the mark');
 
-    const synced = b.router.call('skills.sync') as { location?: string; result: string }[];
+    const synced = await b.router.call('skills.sync') as { location?: string; result: string }[];
     assert.deepEqual(synced.map(r => [r.location, r.result]), [['agents', 'installed approved revision']]);
     assert.ok(fs.existsSync(path.join(b.home, '.agents', 'skills', 'careful-review', 'SKILL.md')));
   } finally { f.close(); }
@@ -156,7 +161,7 @@ test('when this checkout and GitHub have both moved, reports and marks wait for 
     assert.equal(b.git('rev-list', '--count', '@{u}..HEAD'), '1', 'nothing extra was committed locally');
     // After the merge, both go out, and B keeps A's request.
     b.git('-c', 'pull.rebase=false', 'pull', '-q', '--no-edit');
-    b.router.call('git.sync', { action: 'fetch' }); await b.router.fleet.idle();
+    await b.router.call('git.sync', { action: 'fetch' }); await b.router.fleet.idle();
     assert.equal(b.router.fleet.publishState().state, 'shared');
     assert.deepEqual(f.onGitHub(idA).wanted, { [item.id]: ['agents'] });
     assert.deepEqual(f.onGitHub(idB).wanted, { [item.id]: ['claude'] });
@@ -207,4 +212,86 @@ test('location keys and cells: project names, duplicate folders, agent clients, 
   assert.equal(cellFor(agentItem, agentItem.revision, copied, location('agents')).state, 'unavailable', 'a Claude agent does not go in the Agents folder');
   assert.equal(cellFor(agentItem, agentItem.revision, copied, location('project:api (2):claude')).state, 'off');
   assert.deepEqual(summarise([skillItem, agentItem], approvals, copied), { copies: 1, installed: 0, changed: 0, outdated: 1, external: 0, marked: 1 });
+});
+
+test('the Git queue runs one job at a time, in the order asked, and carries on after a failure', async () => {
+  const queue = new GitQueue(); let active = 0, most = 0; const order: number[] = [];
+  // Later jobs are quicker, so any overlap would finish them first.
+  const job = (n: number, fail = false) => queue.run(async () => {
+    active++; most = Math.max(most, active);
+    await new Promise(resolve => setTimeout(resolve, 20 - n * 4));
+    order.push(n); active--;
+    if (fail) throw new Error('push rejected');
+    return n;
+  });
+  const results = await Promise.allSettled([job(1), job(2, true), job(3), queue.run(() => 4)]);
+  assert.deepEqual(results.map(r => r.status === 'fulfilled' ? r.value : 'failed'), [1, 'failed', 3, 4]);
+  assert.deepEqual(order, [1, 2, 3]); assert.equal(most, 1);
+  await queue.idle(); assert.equal(queue.pending, 0);
+});
+
+test('a report, an organisation commit, an approval and a background fetch and pull at once: all reach GitHub, one Git job at a time', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    const moved = a.wb.create({ title: 'Moved skill', kind: 'skill', content: skill('moved-skill') });
+    a.router.approve(approveArgs(moved)); await a.router.publisher.idle();
+    // Another machine reports, so GitHub is ahead of this checkout: an approval pushed without catching up first would be rejected.
+    const b = f.clone();
+    b.wb.enroll({ name: 'Claude', root: b.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    b.router.call('fleet.report'); await b.router.fleet.idle();
+    const idB = (await b.view(false)).self.id;
+
+    let active = 0, most = 0;
+    const run = a.router.gitQueue.run.bind(a.router.gitQueue);
+    a.router.gitQueue.run = <T,>(task: () => T | Promise<T>) => run(async () => { active++; most = Math.max(most, active); try { return await task(); } finally { active--; } });
+    a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    const fresh = a.wb.create({ title: 'Fresh skill', kind: 'skill', content: skill('fresh-skill') });
+    // All at once, none awaited: the background fetch and pull, an approval, a move of a published item, and a machine report.
+    const fetched = a.router.call('sync.fetch', { maxAgeMs: 0 }) as Promise<unknown>;
+    const pulled = a.router.call('sync.pull') as Promise<PullResult>;
+    a.router.approve(approveArgs(fresh));
+    a.router.call('items.move', { ids: [moved.id], collection: 'Reviews' }); assert.ok(a.router.flushOrganisation());
+    a.router.call('fleet.report');
+    await fetched;
+    assert.deepEqual(await pulled, { status: 'pulled', count: 1 });
+    await a.router.publisher.idle(); await a.router.fleet.idle(); await a.router.gitQueue.idle();
+
+    assert.equal(most, 1, 'no two Git jobs overlapped');
+    for (const job of a.router.publisher.list()) assert.equal(job.status, 'done', `${job.title}: ${job.error ?? ''}`);
+    assert.equal(a.router.fleet.publishState().state, 'shared');
+    assert.equal(execFileSync('git', ['-C', f.origin, 'rev-parse', 'main'], { encoding: 'utf8' }).trim(), a.git('rev-parse', 'HEAD'), 'GitHub has everything, and nothing waits here');
+    const onGitHub = (file: string) => JSON.parse(execFileSync('git', ['-C', f.origin, 'show', `main:workbench/${file}`], { encoding: 'utf8' }));
+    assert.equal(onGitHub(`items/${fresh.id}/item.json`).status, 'approved', 'the approval');
+    assert.equal(onGitHub(`items/${moved.id}/item.json`).collection, 'Reviews', 'the organisation commit');
+    assert.deepEqual(f.onGitHub((await a.view(false)).self.id).locations.map(l => l.key), ['agents'], 'this machine’s report');
+    assert.deepEqual(f.onGitHub(idB).locations.map(l => l.key), ['claude'], 'the other machine’s report is kept');
+    assert.equal(a.git('status', '--porcelain', '--', 'workbench/machines'), '');
+  } finally { f.close(); }
+});
+
+test('a machine report rides a recent background fetch, and fetches again when GitHub has moved since', async () => {
+  const f = fleet(60_000);
+  try {
+    const { a } = f;
+    a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    await a.router.call('sync.fetch', { maxAgeMs: 0 });
+    const checked = a.router.fetcher.status().checkedAt; assert.ok(checked);
+    a.router.call('fleet.report'); await a.router.fleet.idle();
+    assert.equal(a.router.fleet.publishState().state, 'shared');
+    await a.view();
+    assert.equal(a.router.fetcher.status().checkedAt, checked, 'neither the report nor Machines fetched again');
+
+    // Another machine approves something; A's fetch no longer has it, so A's next push is rejected and rebuilt after a fetch.
+    const b = f.clone();
+    const theirs = b.wb.create({ title: 'From the laptop', kind: 'skill', content: skill('from-the-laptop') });
+    b.router.approve(approveArgs(theirs)); await b.router.publisher.idle();
+    a.wb.enroll({ name: 'Claude', root: a.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    a.router.call('fleet.report'); await a.router.fleet.idle();
+    assert.equal(a.router.fleet.publishState().state, 'shared');
+    assert.notEqual(a.router.fetcher.status().checkedAt, checked, 'fetched after the rejection');
+    const self = (await a.view(false)).self.id;
+    assert.deepEqual(f.onGitHub(self).locations.map(l => l.key), ['agents', 'claude']);
+    assert.ok(execFileSync('git', ['-C', f.origin, 'show', `main:workbench/items/${theirs.id}/item.json`], { encoding: 'utf8' }), 'the laptop’s approval is still on GitHub');
+  } finally { f.close(); }
 });

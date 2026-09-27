@@ -21,6 +21,7 @@ import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
 
 import { BackgroundFetch, pullFetched } from '../git/sync';
+import { GitQueue } from '../git/queue';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 /** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
@@ -31,7 +32,12 @@ const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.remov
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
-  /** Background fetch with GitHub; idle unless the desktop app asks for it. */
+  /**
+   * Every Git job that touches refs or the network, one at a time: approval and organisation commits and pushes, background
+   * fetches, pulls and merges, machine reports, and the Settings buttons. See packages/git/queue.ts.
+   */
+  readonly gitQueue = new GitQueue();
+  /** Background fetch with GitHub; idle unless the desktop app asks for it. Machine reports ride it instead of fetching again. */
   readonly fetcher: BackgroundFetch;
   private organiseTimer?: ReturnType<typeof setTimeout>;
   /** Items whose desired installs changed since the last organisation job was queued. */
@@ -44,12 +50,11 @@ export class Router {
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
     this.deployments = new DeploymentService(wb);
-    this.publisher = new Publisher(wb, options.log, options.composer);
-    this.fetcher = new BackgroundFetch(wb, () => this.publisher.busy);
-    this.publisher.beforePush = () => this.fetcher.idle();
+    this.publisher = new Publisher(wb, options.log, options.composer, this.gitQueue);
+    this.fetcher = new BackgroundFetch(wb, this.gitQueue);
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
-    this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log });
+    this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
     this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
   }
@@ -73,13 +78,18 @@ export class Router {
     const watch = organisingMethods.has(method) && this.autoSyncReady();
     const before = watch ? this.wb.installs() : null;
     const result = this.route(method, args);
-    if (before) {
-      const after = this.wb.installs();
-      for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
-      this.organiseSoon();
-    }
-    if (reportTriggers.has(method)) this.fleet.changed();
-    if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
+    const settled = () => {
+      if (before) {
+        const after = this.wb.installs();
+        for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
+        this.organiseSoon();
+      }
+      if (reportTriggers.has(method)) this.fleet.changed();
+      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
+    };
+    // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
+    if (result instanceof Promise) return result.then(value => { settled(); return value; });
+    settled();
     return result;
   }
   private autoSyncReady() { return this.wb.repositoryState().ready; }
@@ -197,14 +207,14 @@ export class Router {
       case 'git.inventory': return inventory(z.object({ root: z.string().min(1) }).parse(args).root);
       case 'git.diff': return gitDiff(this.wb.root);
       case 'git.conflicts': return conflicts(this.wb);
-      case 'git.merge': return mergeFetched(this.wb);
+      case 'git.merge': return this.gitQueue.run(() => mergeFetched(this.wb));
       case 'git.resolve': return resolveItemConflict(this.wb, args);
-      case 'git.finishMerge': return finishMerge(this.wb);
+      case 'git.finishMerge': return this.gitQueue.run(() => finishMerge(this.wb));
       case 'git.checkpoint': return checkpoint(this.wb.root, this.wb.canonical, z.object({ message: z.string().trim().min(1).max(300) }).parse(args).message);
       case 'sync.status': return this.fetcher.status();
       case 'sync.fetch': return this.fetcher.fetch(z.object({ maxAgeMs: z.number().int().min(0).default(0) }).parse(args).maxAgeMs);
-      case 'sync.pull': return this.pull();
-      case 'git.sync': return sync(this.wb.root, this.wb.canonical, z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args).action);
+      case 'sync.pull': return this.gitQueue.run(() => this.pull());
+      case 'git.sync': { const { action } = z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args); return this.gitQueue.run(() => sync(this.wb.root, this.wb.canonical, action)); }
       default: throw new WorkbenchError('CAPABILITY_UNSUPPORTED', `Unsupported operation: ${method}`);
     }
   }

@@ -11,6 +11,7 @@ import { applyInfrastructure, infrastructurePlan, standardStatus } from './stand
 import type { PublishAction, PublishJob } from '../protocol/schema';
 import { organisationPlan } from './organise';
 import { mergeInProgress } from './sync';
+import { GitQueue } from './queue';
 export type { PublishAction, PublishJob, PublishStatus } from '../protocol/schema';
 export type ComposeInput = { action: PublishAction; title: string; kind: string; summary: string; diff: string; revision: string; model: string; effort: string; folder: string; signal: AbortSignal };
 export type Composer = (input: ComposeInput) => Promise<string>;
@@ -56,7 +57,8 @@ export class Publisher {
   private active = 0;
   private controllers = new Map<string, AbortController>();
   private readonly folder: string;
-  constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer) {
+  /** `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there. */
+  constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer, private queue = new GitQueue()) {
     this.folder = path.join(wb.local, 'publish'); fs.mkdirSync(path.join(this.folder, 'jobs'), { recursive: true });
     for (const job of readRecords(path.join(this.folder, 'jobs'), value => value as PublishJob)) {
       if (!['done', 'failed'].includes(job.status)) { job.status = 'failed'; job.error = 'Kiln closed before this reached GitHub. Retry to push it.'; job.finishedAt = now(); this.save(job); }
@@ -74,8 +76,6 @@ export class Publisher {
     catch (error) { job.status = 'failed'; job.error = error instanceof Error ? error.message : String(error); job.finishedAt = now(); this.save(job); return job; }
     this.save(job); this.schedule(job); return job;
   }
-  /** Waited for before every push; the router uses it so a background fetch and a push never update the same refs at once. */
-  beforePush: () => Promise<void> = () => Promise.resolve();
   /**
    * Background sync: publishes organisation of items already on GitHub (see organise.ts). The files are worked out again when the job
    * runs, so while one is still queued every further change joins it and a burst of moves makes one commit.
@@ -93,7 +93,7 @@ export class Publisher {
   private pendingInstalls(): string[] {
     try { const value = readJson(path.join(this.folder, 'organise-installs.json')); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []; } catch { return []; }
   }
-  private async publishOrganisation(job: PublishJob) {
+  private publishOrganisation(job: PublishJob) {
     job.status = 'committing'; this.save(job);
     invariant(!mergeInProgress(this.wb.root), 'GIT_CONFLICT', 'Finish the merge from GitHub first, then retry.');
     const installIds = this.pendingInstalls(), plan = organisationPlan(this.wb, installIds);
@@ -106,7 +106,7 @@ export class Publisher {
     writeJson(path.join(this.folder, 'organise-installs.json'), later);
     this.wb.invalidateGit();
     job.status = 'pushing'; this.save(job);
-    await this.beforePush(); push(this.wb.root); this.wb.invalidateGit();
+    push(this.wb.root); this.wb.invalidateGit();
     job.status = 'done';
     // Pushing sends every commit, so earlier organisation jobs that failed have now reached GitHub too.
     for (const old of this.jobs.values()) if (old.action === 'organise' && old.status === 'failed' && old.id !== job.id) { old.status = 'done'; old.error = undefined; this.save(old); }
@@ -166,7 +166,7 @@ export class Publisher {
     const controller = new AbortController(); this.controllers.set(job.id, controller);
     const started = Date.now();
     try {
-      if (job.action === 'organise') { await this.publishOrganisation(job); return; }
+      if (job.action === 'organise') { await this.queue.run(() => this.publishOrganisation(job)); return; }
       job.status = 'composing'; this.save(job);
       const revision = this.wb.getRevision(job.itemId, job.revision), settings = this.wb.settings();
       const base = { action: job.action, title: revision.title, kind: revision.kind, summary: revision.summary, diff: revision.content.slice(0, 20000), revision: job.revision };
@@ -179,31 +179,35 @@ export class Publisher {
         }
       }
       job.status = 'committing'; this.save(job);
-      const snapshotFile = path.join(this.folder, 'snapshots', `${job.id}.json`);
-      if (!fs.existsSync(snapshotFile)) this.snapshot(job);
-      if (job.action === 'approve') invariant(this.wb.approvals().some(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approval was withdrawn before publishing.');
-      const snapshot = readJson(snapshotFile) as { files: Record<string, string>; replace: string[]; install?: { path: string; providers: string[] } };
-      // Merge this item's captured intent into the latest published manifest, so queued items cannot erase each other.
-      if (snapshot.install) {
-        const installs = committedJson(this.wb.root, snapshot.install.path) as Record<string, unknown>;
-        if (snapshot.install.providers.length) installs[job.itemId] = snapshot.install.providers; else delete installs[job.itemId];
-        snapshot.files[snapshot.install.path] = Buffer.from(JSON.stringify(installs, null, 2) + '\n').toString('base64');
-      }
-      try { job.commit = commitSnapshot(this.wb.root, this.wb.canonical, snapshot.files, snapshot.replace, job.message).commit; }
-      catch (error) {
-        // A retry after a successful commit but failed push has nothing new to commit; push what is there.
-        if (!(error instanceof WorkbenchError && error.code === 'NOTHING_TO_COMMIT')) throw error;
-        job.commit = gitStatus(this.wb.root).commit;
-      }
-      this.wb.invalidateGit();
-      job.status = 'pushing'; this.save(job);
-      await this.beforePush(); push(this.wb.root); this.wb.invalidateGit();
-      job.status = 'done';
+      await this.queue.run(() => this.commitAndPush(job));
     } catch (error) {
       job.status = 'failed'; job.error = error instanceof Error ? error.message : String(error); this.wb.invalidateGit();
     } finally {
       job.finishedAt = now(); this.controllers.delete(job.id); this.save(job);
       this.log('publish.finished', { jobId: job.id, action: job.action, status: job.status, composer: job.composer, durationMs: Date.now() - started });
     }
+  }
+  /** The approval's commit and push, run in the job's turn in the Git queue. */
+  private commitAndPush(job: PublishJob) {
+    const snapshotFile = path.join(this.folder, 'snapshots', `${job.id}.json`);
+    if (!fs.existsSync(snapshotFile)) this.snapshot(job);
+    if (job.action === 'approve') invariant(this.wb.approvals().some(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approval was withdrawn before publishing.');
+    const snapshot = readJson(snapshotFile) as { files: Record<string, string>; replace: string[]; install?: { path: string; providers: string[] } };
+    // Merge this item's captured intent into the latest published manifest, so queued items cannot erase each other.
+    if (snapshot.install) {
+      const installs = committedJson(this.wb.root, snapshot.install.path) as Record<string, unknown>;
+      if (snapshot.install.providers.length) installs[job.itemId] = snapshot.install.providers; else delete installs[job.itemId];
+      snapshot.files[snapshot.install.path] = Buffer.from(JSON.stringify(installs, null, 2) + '\n').toString('base64');
+    }
+    try { job.commit = commitSnapshot(this.wb.root, this.wb.canonical, snapshot.files, snapshot.replace, job.message).commit; }
+    catch (error) {
+      // A retry after a successful commit but failed push has nothing new to commit; push what is there.
+      if (!(error instanceof WorkbenchError && error.code === 'NOTHING_TO_COMMIT')) throw error;
+      job.commit = gitStatus(this.wb.root).commit;
+    }
+    this.wb.invalidateGit();
+    job.status = 'pushing'; this.save(job);
+    push(this.wb.root); this.wb.invalidateGit();
+    job.status = 'done';
   }
 }
