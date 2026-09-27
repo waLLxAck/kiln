@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AgentService, type AgentJob } from '../packages/agent/service';
-import { changeCandidates, chatSessions, chatTurns, mentionedIds, mergeTurns, turnChange } from '../packages/agent/chat-history';
+import { chatSessions, chatTurns, mergeTurns } from '../packages/agent/chat-history';
 import { AgentConsent } from '../apps/desktop/agent-consent';
 import { Workbench } from '../packages/domain/workbench';
 
@@ -44,7 +44,6 @@ test('a Claude chat shows its shell commands as steps', async () => {
     const shown = service.chat({ itemId: item.id, message: 'Edit it again', conversationId: randomUUID() }); await wait(service);
     const job = service.list().find(j => j.id === shown.id)!;
     assert.equal(job.steps.find(s => s.id === 'tool-1')!.text, `Bash kiln items update ${item.id} --file draft.md`);
-    assert.deepEqual(mentionedIds(job), [item.id]);
   } finally { close(); }
 });
 
@@ -57,33 +56,6 @@ test('conversations group by id, newest first, named by their first message; mer
   const merged = mergeTurns([running], turns);
   assert.equal(merged.length, turns.length); assert.equal(merged[0].status, 'running');
   assert.deepEqual(merged.map(t => t.startedAt), [...merged.map(t => t.startedAt)].sort());
-});
-
-test('turnChange finds the revisions saved during a turn, what they replaced, and whether Undo already restored it', async () => {
-  const { wb, close } = fixture();
-  try {
-    const item = wb.create({ title: 'Target', kind: 'prompt', content: 'Version one' }), untouched = wb.create({ title: 'Other', kind: 'prompt', content: 'Same' });
-    await new Promise(resolve => setTimeout(resolve, 5));
-    const startedAt = new Date().toISOString();
-    await new Promise(resolve => setTimeout(resolve, 5));
-    const first = wb.update({ id: item.id, expect: item.revision, summary: 'Agent tightened it', value: { ...wb.authoring(item.id), content: 'Version two' } });
-    const second = wb.update({ id: item.id, expect: first.revision, summary: 'Agent added an example', value: { ...wb.authoring(item.id), content: 'Version three' } });
-    const made = wb.createFrom({ id: item.id, revision: second.revision, item: { title: 'Made from it', kind: 'prompt', description: '', content: 'New', files: {}, tags: [], collection: '', source: '', licence: 'Unknown' }, author: 'CLI' });
-    await new Promise(resolve => setTimeout(resolve, 5));
-    const job = turn({ itemId: item.id, revision: item.revision, startedAt, finishedAt: new Date().toISOString(), steps: [{ id: 's', at: startedAt, kind: 'command', text: `kiln items update ${item.id}` }] });
-    assert.deepEqual(changeCandidates(job, wb.snapshot().items).map(i => i.id).sort(), [item.id, made.id].sort(), 'the untouched item is not checked');
-    assert.equal(changeCandidates({ ...job, finishedAt: undefined }, wb.snapshot().items).length, 0);
-    const change = turnChange(job, wb.detail(item.id))!;
-    assert.deepEqual({ before: change.before, after: change.after, current: change.current, notes: change.notes, undone: change.undone }, { before: item.revision, after: second.revision, current: second.revision, notes: ['Agent tightened it', 'Agent added an example'], undone: false });
-    assert.equal(turnChange(job, wb.detail(made.id))!.before, null, 'a created item has nothing before it');
-    assert.equal(turnChange(job, wb.detail(untouched.id)), null);
-    // Undo change is the ordinary restore; revisions are content-addressed, so the item points at its earlier revision again.
-    await new Promise(resolve => setTimeout(resolve, 5));
-    const restored = wb.restore({ id: item.id, expect: second.revision, revision: item.revision });
-    const after = turnChange(job, wb.detail(item.id))!;
-    assert.equal(after.undone, true); assert.equal(after.current, restored.revision); assert.equal(after.after, second.revision);
-    assert.equal(wb.getRevision(item.id).content, 'Version one');
-  } finally { close(); }
 });
 
 test('chat consent covers the rest of the app session only for chat messages marked as a chat session', async () => {

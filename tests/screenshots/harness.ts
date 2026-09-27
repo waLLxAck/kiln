@@ -37,6 +37,7 @@ export async function openDemoApp(options: { viewport?: { width: number; height:
       case 'agent.start': return agent.start(args);
       case 'agent.chat': return agent.chat(args);
       case 'agent.jobs': return agent.list();
+      case 'agent.chatHistory': return agent.chatHistory(args);
       case 'agent.models': return [];
       case 'agent.cancel': return agent.cancel(args.id);
       case 'trials.delete': return agent.deleteTrial(args);
