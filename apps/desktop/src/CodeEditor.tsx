@@ -1,0 +1,22 @@
+import { lazy, Suspense } from 'react';
+import type { CodeLanguage } from './code-language';
+
+/** A problem shown under the editor and marked on its line (1-based) when it has one. */
+export type EditorDiagnostic = { message: string; line?: number };
+export type CodeEditorProps = {
+  value: string; onChange?: (value: string) => void; language?: CodeLanguage; ariaLabel: string; readOnly?: boolean;
+  /** Ctrl/Cmd+S inside the editor. Without it the key goes on to the surrounding view. */ onSave?: () => void;
+  diagnostics?: EditorDiagnostic[]; /** Heading for the diagnostics list. */ diagnosticsTitle?: string; className?: string;
+};
+// CodeMirror is loaded only when an editor is first shown, so the app starts without it while the experiment is off.
+const View = lazy(() => import('./CodeMirrorView'));
+
+/**
+ * The experimental code editor (`codeEditor` flag): CodeMirror with line numbers, find and replace (Ctrl/Cmd+F, Ctrl/Cmd+H),
+ * undo history, bracket matching and highlighting for Markdown with frontmatter, JSON, YAML, TOML and shell files.
+ */
+export function CodeEditor(props: CodeEditorProps) {
+  return <div className={`code-editor ${props.className ?? ''}`}>
+    <Suspense fallback={<pre className="code-editor-loading" aria-busy="true" aria-label={props.ariaLabel}>{props.value}</pre>}><View {...props} /></Suspense>
+  </div>;
+}

@@ -38,6 +38,7 @@ import { HomeFilesView } from './HomeFiles';
 import { UpdateAction, UpdatesPanel } from './Updates';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
+import { useCodeEditorFlag } from './code-editor-state';
 
 type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string } | null;
 const navItems = [{ id: 'library', label: 'Library', icon: Layers3 }, { id: 'experiments', label: 'Experiments', icon: FlaskConical }, { id: 'home', label: 'Config files', icon: FileCog }, { id: 'machines', label: 'Machines', icon: Monitor }, { id: 'activity', label: 'Activity', icon: Activity }];
@@ -156,6 +157,7 @@ export default function App() {
   const [origins, setOrigins] = useState<Record<string, string>>({});
   const sharedTitles = snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '';
   useEffect(() => { if (!sharedTitles) { setOrigins({}); return; } let active = true; void api<Record<string, string>>('items.origins', { ids: sharedTitles.split(',') }).then(result => { if (active) setOrigins(result); }).catch(() => {}); return () => { active = false; }; }, [sharedTitles]);
+  useCodeEditorFlag(experimentOn(snapshot?.settings, 'codeEditor'));
   // Installation state for every skill: drives the toggles in the header and the small marks on list cards.
   useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
   useEffect(() => {
