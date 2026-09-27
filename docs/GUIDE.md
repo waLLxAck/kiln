@@ -158,14 +158,16 @@ Unreadable sources and unsupported files are reported instead of guessed. Mixed 
 
 ## Sources
 
-A source is the material an analysis read: a pasted chat, a page, files, or a video. It is not a prompt, so it has no Copy, Test, Approve or Create skill. The **Sources** tab lists them with how many items were made from each. A source's page has:
+A source is the material an analysis read: a pasted chat, a page, files, or a video. It is not a prompt, so it has no Copy, Test, Approve or Create skill. The **Sources** tab lists them with how many items were made from each. A source's page is built around what was made from it:
 
-- **Overview**: the analysis runs (model, effort, tokens, steps, summary, takeaway, what was skipped), a short list of what was made, and the original material.
-- **Made**: every item made from it, grouped by kind, each with the collection it is filed in now. **Show in library** filters the library to them with the **Source** filter.
-- **Original**: the material and its attached files, editable like any item.
-- **History**: its revisions.
+- **Header**: the kind (Source · YouTube, page, text or files), the title, the channel, duration and published date for a video, when it was captured, and **Open on YouTube** / **Open original** / **Show stored file**.
+- **Summary**: the latest analysis's summary and takeaway. Under the actions, one muted line names the provider, model, effort, tokens, how long it took and when, with **Run files** when the run happened on this machine. **Analysis details** (or **All n analyses**) opens every run: its steps, session, counts and what was skipped. A run in progress shows its live card with Cancel and, when it fails, Retry.
+- **Actions**: **Analyze again** runs a new analysis; new entries are added beside the earlier ones. **Ask about this source** opens the agent chat about it. **Show transcript** (videos) opens the transcript beside the page, or above it in a narrow window; each timestamp opens the video at that point, skipped parts are greyed, and a small kind icon marks where an entry was made (click it to jump to the entry).
+- **Timeline** (videos): the length of the video with minute ticks, chapter marks and a marker for each entry at its minute, coloured by kind. Parts the analysis says it skipped are shaded when its note gives times (for example "2:05 to 3:10"). Hover a marker to see the entry and highlight its row; click it to scroll there.
+- **Made from this**: every item made from it, grouped by minute under the chapter it falls in (or by kind for sources without minutes), each with its description and the collection it is filed in now (click to open the collection). **Open** opens the entry, **Keep** stars it into Favourites, and **Archive** moves it to Archive with an Undo. Archived entries collapse into **Archived (n)** with **Restore**. **Show in library** filters the library to them with the **Source** filter.
+- **Original material**: the material as raw text or a preview, its images and attached files (Preview, Enlarge, Open), provenance and tags. **Edit** opens the editor.
 
-**Analyze again** runs a new analysis; new entries are added beside the earlier ones. Every entry shows **From "<source>"** under its title, which opens the source. The link is kept on the entry, so moving entries, renaming collections or deleting a collection never breaks it. **+ Filter → Source** shows what one source produced across collections.
+Every entry shows **From "<source>"** under its title, which opens the source. The link is kept on the entry, so moving entries, renaming collections or deleting a collection never breaks it. **+ Filter → Source** shows what one source produced across collections.
 
 The run's steps and CLI session stay on the machine that ran it. A summary of each completed analysis (provider, model, effort, tokens, summary, takeaway, skipped notes, counts and the items it created) is kept in the library under `workbench/analyses/`, so it shows on other machines and in exports. Chatting about a source, or about an entry made from one, gives the agent the source material (a video's transcript) and the list of sibling entries.
 
@@ -175,7 +177,7 @@ Material analysed before sources existed is filed as a source the next time the 
 
 Paste a bare YouTube link into Add to library and the button becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` the same way the shell `yt` helper does (auto-captions, English first, `~/cookies.txt` when present; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, and only the insights that change what you would do.
 
-Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description shown under its title. Prompts are stored bare so Copy yields only the prompt. The video's source page shows the summary, takeaway, entry counts and everything made from it. `yt-dlp` must be on PATH.
+Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description shown under its title. Prompts are stored bare so Copy yields only the prompt. The video's source page shows the summary and takeaway, a timeline of the video with each entry at the minute it came from and the skipped parts shaded, the entries grouped by minute to keep or archive, and the transcript with links to each minute (see [Sources](#sources)). `yt-dlp` must be on PATH.
 
 Distillation keeps a private copy of the CLI transcript in its run folder. It is never attached to the library item, included in a normal library export, or newly published to GitHub. The public video captions remain attached as `transcript.md`.
 
