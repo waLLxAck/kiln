@@ -11,6 +11,8 @@ test('one import area accumulates selection, drop and paste into one item', asyn
     const page = await app.firstWindow();
     await expect(page.getByRole('button', { name: 'Import file', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Capture Ctrl N', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New capture' });
+    await expect(dialog).toBeVisible();
     const picker = page.getByLabel('Select files');
     await picker.setInputFiles([
       { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('first') },
@@ -33,10 +35,11 @@ test('one import area accumulates selection, drop and paste into one item', asyn
     const lightbox = page.getByRole('dialog', { name: 'Preview of photo.png' });
     await expect(lightbox).toBeVisible(); await expect(lightbox.locator('img')).toHaveAttribute('alt', 'photo.png');
     await page.keyboard.press('Escape');
-    await expect(lightbox).toHaveCount(0); await expect(page.locator('.capture-file')).toHaveCount(6);
+    // Esc closes only the preview; the capture dialog stays open with everything in it.
+    await expect(lightbox).toHaveCount(0); await expect(dialog).toBeVisible(); await expect(page.locator('.capture-file')).toHaveCount(6);
     await expect(page.getByLabel('Capture', { exact: true })).toHaveValue('https://example.com/reference');
     await page.getByRole('button', { name: /^Save 6 files/ }).click();
-    await expect(page.locator('.capture-file')).toHaveCount(0);
+    await expect(dialog).toBeHidden(); await expect(page.locator('.capture-file')).toHaveCount(0);
     const snapshot = await page.evaluate(() => (window as any).kiln.call('snapshot'));
     expect(snapshot.items).toHaveLength(1);
     const detail = await page.evaluate(id => (window as any).kiln.call('items.read', { id }), snapshot.items[0].id);

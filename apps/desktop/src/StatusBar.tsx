@@ -11,13 +11,13 @@ export const repoName = (remote: string) => !/github\.com[/:]/.test(remote) && r
 export const elapsed = (from: string, to = Date.now()) => { const s = Math.max(0, Math.round((to - new Date(from).getTime()) / 1000)); return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min`; };
 const kindLabel: Record<AgentJob['kind'], string> = { capture: 'Analysis', distill: 'Analysis', trial: 'Experiment', derive: 'Skill draft', chat: 'Chat' };
 
-type Props = { snapshot: Snapshot; jobs: AgentJob[]; agentError: string; busy: boolean; update: UpdateStatus | null; updating: boolean; onUpdate: (restart: boolean) => void; onSettings: () => void; onOpenJob: (job: AgentJob) => void };
+type Props = { snapshot: Snapshot; jobs: AgentJob[]; agentError: string; busy: boolean; update: UpdateStatus | null; updating: boolean; onUpdate: (restart: boolean) => void; onSettings: () => void; onOpenJob: (job: AgentJob) => void; /** A finished analysis filed its entries here. */ onOpenCollection?: (name: string) => void };
 
 /**
  * The thin bar along the bottom of the window: where the repository stands with GitHub, the agent runs (with a list of them),
  * and the version with its update action.
  */
-export function StatusBar({ snapshot, jobs, agentError, busy, update, updating, onUpdate, onSettings, onOpenJob }: Props) {
+export function StatusBar({ snapshot, jobs, agentError, busy, update, updating, onUpdate, onSettings, onOpenJob, onOpenCollection }: Props) {
   const [open, setOpen] = useState(false), [now, setNow] = useState(Date.now());
   const pop = useRef<HTMLDivElement>(null);
   const running = jobs.filter(j => j.status === 'running');
@@ -42,11 +42,19 @@ export function StatusBar({ snapshot, jobs, agentError, busy, update, updating, 
       </button>
       {open && <div className="runs-pop" role="dialog" aria-label="Agent runs">
         <div className="runs-head"><span>Agent runs</span><span className="muted small">{running.length} of 2 running</span><button type="button" className="icon-button" aria-label="Close agent runs" onClick={() => setOpen(false)}><X size={14} /></button></div>
-        {listed.length ? listed.map(job => <button type="button" key={job.id} className={`run-row ${job.status}`} onClick={() => { setOpen(false); onOpenJob(job); }}>
-          <span className="run-icon">{job.status === 'running' ? <Loader2 size={14} className="spin" /> : job.status === 'completed' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}</span>
-          <span className="run-text"><b>{title(job)}</b><span className="muted">{kindLabel[job.kind]} · {providerName[job.provider]} · {job.status === 'running' ? job.phase : job.status === 'completed' ? 'done' : job.status}</span></span>
-          <span className="run-time">{job.status === 'running' ? elapsed(job.startedAt, now) : job.finishedAt ? elapsed(job.startedAt, new Date(job.finishedAt).getTime()) : ''}</span>
-        </button>) : <p className="muted small runs-empty">No runs yet. Capture with analysis, Test or Create skill starts one.</p>}
+        {listed.length ? listed.map(job => {
+          // A finished capture names where its results went: the collection its entries were filed in, or the item itself.
+          const made = job.createdItemIds?.length ?? 0, analysis = job.kind === 'distill' || job.kind === 'capture';
+          const go = analysis && job.status === 'completed' ? job.collection && made && onOpenCollection ? { label: 'Open collection', run: () => onOpenCollection(job.collection!) } : { label: 'Open', run: () => onOpenJob(job) } : null;
+          return <div key={job.id} className={`run-line ${go ? 'has-action' : ''}`}>
+            <button type="button" className={`run-row ${job.status}`} onClick={() => { setOpen(false); onOpenJob(job); }}>
+              <span className="run-icon">{job.status === 'running' ? <Loader2 size={14} className="spin" /> : job.status === 'completed' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}</span>
+              <span className="run-text"><b>{title(job)}</b><span className="muted">{kindLabel[job.kind]} · {providerName[job.provider]} · {job.status === 'running' ? job.phase : job.status === 'completed' ? analysis ? `done · ${made} entr${made === 1 ? 'y' : 'ies'}` : 'done' : job.status}</span></span>
+              <span className="run-time">{job.status === 'running' ? elapsed(job.startedAt, now) : job.finishedAt ? elapsed(job.startedAt, new Date(job.finishedAt).getTime()) : ''}</span>
+            </button>
+            {go && <button type="button" className="text-button run-go" onClick={() => { setOpen(false); go.run(); }}>{go.label}</button>}
+          </div>;
+        }) : <p className="muted small runs-empty">No runs yet. Capture with analysis, Test or Create skill starts one.</p>}
       </div>}
     </div>
     {agentError && <span className="status-item bad" role="alert" title={agentError}><AlertTriangle size={12} />Agent updates disconnected. Retrying…</span>}

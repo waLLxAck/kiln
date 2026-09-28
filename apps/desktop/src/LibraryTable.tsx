@@ -1,9 +1,11 @@
-import { Fragment, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type UIEvent } from 'react';
+import { Fragment, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type UIEvent } from 'react';
 import { ChevronDown, ChevronRight, Copy, Download, FlaskConical, Star, Tags, X } from 'lucide-react';
 import type { Approval, Installation, Item, Trial } from '../../../packages/protocol/schema';
 import { ContextMenu, KindIcon, type MenuEntry } from './components';
 import { date } from './api';
-import { InstalledCell, StatusCell, TableHead, TestCell, type Location } from './Library';
+import { InstalledCell, StatusCell, TestCell, type Location } from './Library';
+import { LibraryHead, useColumnOrder } from './LibraryHead';
+import { gridTracks, visibleColumns, type ColumnKey } from './library-columns';
 import { installable } from './library-filters';
 import { site, type GroupKey, type Sort, type SortKey } from './library-sort';
 import { SwipeToArchive } from './Swipe';
@@ -25,11 +27,14 @@ type Props = {
 
 /**
  * The library as a table, one line per item. Click opens an item; Ctrl-click and Shift-click pick rows, arrows move between them
- * and Enter opens the focused one. Hovering a row shows Copy, Test and Install; swiping it sideways archives it.
+ * and Enter opens the focused one. Hovering a row shows Copy, Test and Install; swiping it sideways archives it. Columns can be
+ * dragged into another order (LibraryHead.tsx); the Title cell holds only the title, with the description as the row's tooltip.
  */
 export function LibraryTable({ groups, group, collectionShown, row, locations, installations, approvals, selected, picked, sort, onSort, onClick, onMenu, onFocusRow, onOpen, onSelectAll, onShortcut, canSwipe, onArchive, onCopy, onTest, installEntries, scroll, empty, hint }: Props) {
   const [folded, setFolded] = useState<string[]>([]);
   const [install, setInstall] = useState<{ x: number; y: number; item: Item } | null>(null);
+  const [order, setOrder] = useColumnOrder();
+  const shown = visibleColumns(order, collectionShown), tracks = gridTracks(shown);
   const table = useRef<HTMLDivElement>(null);
   const many = picked.length > 1;
   // Rows in the order shown, skipping folded groups: what the arrows walk through.
@@ -52,8 +57,8 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
     {item.kind !== 'source' && !item.deletedAt && <button type="button" className="row-action" title="Run an experiment" onClick={() => onTest(item)}><FlaskConical size={13} />Test</button>}
     {installable(item) && !item.deletedAt && <button type="button" className="row-action" aria-haspopup="menu" title="Install into a skill folder" onClick={event => { const box = event.currentTarget.getBoundingClientRect(); setInstall({ x: box.right - 240, y: box.bottom + 4, item }); }}><Download size={13} />Install<ChevronDown size={11} /></button>}
   </span>;
-  return <div className="lib-table" ref={table} role="table" aria-label="Library items" aria-rowcount={visible.length}>
-    <TableHead collectionShown={collectionShown} sort={sort} onSort={onSort} />
+  return <div className="lib-table" ref={table} role="table" aria-label="Library items" aria-rowcount={visible.length} style={{ '--lib-cols': tracks.full, '--lib-cols-mid': tracks.mid, '--lib-cols-narrow': tracks.narrow } as CSSProperties}>
+    <LibraryHead order={order} shown={shown} collectionShown={collectionShown} sort={sort} onSort={onSort} onOrder={setOrder} />
     <div className="item-list" ref={scroll.ref} onScroll={scroll.onScroll} onKeyDown={keyDown}>
       {groups.map(g => { const shut = group !== 'none' && folded.includes(g.key); return <Fragment key={g.key || 'all'}>
         {group !== 'none' && <button type="button" className="lib-group" aria-expanded={!shut} onClick={() => setFolded(current => shut ? current.filter(k => k !== g.key) : [...current, g.key])}>
@@ -61,17 +66,20 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
           {shut && <span className="faint ellipsis lib-group-hint">{g.items.slice(0, 3).map(i => i.title).join(', ')}{g.items.length > 3 ? '…' : ''}</span>}
         </button>}
         {!shut && g.items.map(item => { const { published, trial, place, from, made } = row(item), isPicked = many && picked.includes(item.id);
-          const subtitle = [from ? `from ${from.label}` : '', item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '))].filter(Boolean).join(' · ');
+          // The description is left out of the row to save space; it stays discoverable as the row's tooltip.
+          const about = item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '));
+          const cells: Record<ColumnKey, ReactNode> = {
+            title: <span className="lib-title"><span className={`item-kind ${item.kind}`} title={item.kind}><KindIcon kind={item.kind} size={14} /></span><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} />{from && <span className="lib-from" title={`From ${from.full}`}>from {from.label}</span>}</span>,
+            collection: <span className="muted" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>,
+            status: <StatusCell item={item} approvals={approvals} published={published} made={made} />,
+            installed: <InstalledCell item={item} locations={locations} installations={installations} />,
+            test: <TestCell item={item} trial={trial} place={place} />,
+            updatedAt: <span className="muted" title={`Updated ${date(item.updatedAt)} · added ${date(item.createdAt)}`}>{date(item.updatedAt)}</span>,
+          };
           return <SwipeToArchive key={item.id} enabled={!many && canSwipe(item)} label="Archive" onArchive={() => onArchive(item)}>
-            <div role="row" data-id={item.id} tabIndex={item.id === focusable ? 0 : -1} aria-selected={item.id === selected || isPicked} className={`item-card lib-row ${collectionShown ? 'no-collection' : ''} ${selected === item.id ? 'selected' : ''} ${isPicked ? 'picked' : ''} ${install?.item.id === item.id ? 'menu-open' : ''}`}
+            <div role="row" data-id={item.id} tabIndex={item.id === focusable ? 0 : -1} aria-selected={item.id === selected || isPicked} title={about || undefined} className={`item-card lib-row ${selected === item.id ? 'selected' : ''} ${isPicked ? 'picked' : ''} ${install?.item.id === item.id ? 'menu-open' : ''}`}
               onClick={event => onClick(event, item)} onContextMenu={event => onMenu(event, item)}>
-              <span className={`item-kind ${item.kind}`} role="cell" title={item.kind}><KindIcon kind={item.kind} size={14} /></span>
-              <span className="lib-title" role="cell"><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} /><span className="lib-sub" title={from ? `From ${from.full}` : subtitle || undefined}>{subtitle}</span></span>
-              {!collectionShown && <span className="lib-cell col-collection muted" role="cell" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>}
-              <span className="lib-cell col-status" role="cell"><StatusCell item={item} approvals={approvals} published={published} made={made} /></span>
-              <span className="lib-cell col-installed" role="cell"><InstalledCell item={item} locations={locations} installations={installations} /></span>
-              <span className="lib-cell col-test" role="cell"><TestCell item={item} trial={trial} place={place} /></span>
-              <span className="lib-cell col-updatedAt muted" role="cell" title={`Updated ${date(item.updatedAt)} · added ${date(item.createdAt)}`}>{date(item.updatedAt)}</span>
+              {shown.map(key => <span key={key} className={`lib-cell col-${key}`} role="cell">{cells[key]}</span>)}
               {actions(item)}
             </div>
           </SwipeToArchive>; })}

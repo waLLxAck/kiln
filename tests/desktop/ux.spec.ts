@@ -39,10 +39,13 @@ test('formatted reading, primary actions, simple status and save without analysi
     await page.keyboard.press('Escape');
     await page.locator('.item-card').filter({ hasText: 'Resource example' }).click();
     await expect(page.locator('.detail-actions > .primary')).toHaveText('Open link');
-    // Capture goes back to the list and focuses the composer; Save as draft keeps the text without an agent.
+    // Capture opens as a dialog over the open item; Save as draft keeps the text without an agent and shows it in the list.
     await page.getByRole('button', { name: /^Capture/ }).click();
+    await expect(page.getByRole('dialog', { name: 'New capture' })).toBeVisible();
+    await expect(page.locator('.detail-actions > .primary')).toHaveText('Open link');
     await page.getByRole('textbox', { name: 'Capture' }).fill('A snippet saved without AI');
     await page.getByRole('button', { name: /^Save as draft/ }).click();
+    await expect(page.getByRole('dialog', { name: 'New capture' })).toBeHidden();
     await expect(page.locator('.item-card.selected')).toContainText('A snippet saved without AI');
     expect(await page.evaluate(() => (window as any).kiln.call('agent.jobs'))).toEqual([]);
     await page.screenshot({ path: 'artifacts/ux-0.15.0-reading.png' });

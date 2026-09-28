@@ -11,9 +11,13 @@ test('collection totals match active rows and quick capture starts with one fiel
     await page.evaluate(async()=>{const api=(window as any).kiln.call;const item=await api('items.create',{title:'Archived fixture',kind:'prompt',content:'Example',collection:'Installation tests'});await api('items.meta',{id:item.id,expect:item.revision,status:'archived'});});
     await page.getByRole('button',{name:'Refresh library',exact:true}).click();
     const collection=page.getByRole('button',{name:/Installation tests/});await expect(collection.locator('small')).toHaveText('0');await collection.click();await expect(page.locator('.item-card')).toHaveCount(0);
-    await page.getByRole('button',{name:'Capture Ctrl N',exact:true}).click();await expect(page.getByLabel('Capture',{exact:true})).toBeFocused();await expect(page.getByRole('button',{name:/^Analyze with/})).toHaveCount(0);
+    await page.getByRole('button',{name:'Capture Ctrl N',exact:true}).click();await expect(page.getByRole('dialog',{name:'New capture'})).toBeVisible();await expect(page.getByLabel('Capture',{exact:true})).toBeFocused();await expect(page.getByRole('button',{name:/^Analyze with/})).toHaveCount(0);
     await page.getByLabel('Capture',{exact:true}).fill('A short prompt');await expect(page.getByRole('button',{name:/^Analyze with/})).toBeEnabled();
     await page.screenshot({path:'artifacts/quick-capture.png',animations:'disabled'});
+    // Capture opens over the view it was asked from: closing it shows the same collection, and the text waits for next time.
+    await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'New capture'})).toBeHidden();
+    await expect(page.locator('.list-heading h2')).toContainText('Installation tests');
+    await page.keyboard.press('Control+n');await expect(page.getByLabel('Capture',{exact:true})).toHaveValue('A short prompt');
   } finally {await app.close();}
 });
 test('live signed-in Codex: screenshot capture and automatic experiment result', async()=>{
