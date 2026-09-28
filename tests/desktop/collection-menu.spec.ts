@@ -106,7 +106,7 @@ test('subfolders nest in the sidebar; deleting with Keep items lifts items up on
     await page.locator('.item-card', { hasText: 'Top prompt' }).click({ button: 'right' });
     await page.getByRole('menu').getByRole('menuitem', { name: /^Move to collection/ }).click();
     await dialog.getByRole('button', { name: 'Move to Work/Ideas' }).click();
-    await expect(page.locator('.toast')).toContainText('Moved 1 item to “Work/Ideas”');
+    await expect(page.locator('.toast')).toContainText('Moved “Top prompt” to “Work/Ideas”');
     await expect(sidebar.getByRole('button', { name: /^Ideas/ }).locator('small')).toHaveText('1');
 
     // Deleting the top collection and keeping the items: subfolders move to the top level, nothing is trashed.
