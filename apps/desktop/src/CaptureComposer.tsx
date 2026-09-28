@@ -8,8 +8,9 @@ import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { ContextMenu, KindIcon, Lightbox, providerName } from './components';
 import type { Item, Provider, RunProviderId } from '../../../packages/protocol/schema';
 import { elapsed } from './StatusBar';
+import './capture.css';
 
-/** Something to put in the composer from outside it: a paste or drop on the window, or the Capture button (nothing to add, just focus). */
+/** Something to put in the composer from outside it: a paste or drop on the window, or the Capture button (nothing to add, just open). */
 export type CaptureSeed = { text?: string; files?: File[] };
 export type CaptureRequest = { id: number; seed?: CaptureSeed };
 const isImage = (file: File) => file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(file.name);
@@ -36,44 +37,54 @@ const detectedIcon: Record<Detected, ReactNode> = { empty: <Plus size={16} />, v
 type Props = { request?: CaptureRequest; provider: RunProviderId; providers: Provider[]; jobs: AgentJob[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void };
 
 /**
- * Capture at the top of the library: one line until focused or pasted into. It reads what it was given and offers the matching
- * action; Save only keeps the material without running an agent. Analyses in progress and just finished show underneath.
+ * Capture as a dialog over whatever is on screen. It opens from the Capture button, Ctrl+N, the palette, or a paste or drop on
+ * the window (`request`, with what was pasted or dropped as its seed). It reads what it was given and offers the matching
+ * action; Save only keeps the material without running an agent. Recent and running analyses show under the input.
+ * The dialog stays mounted while closed, so a half-written capture or a save in flight survives closing it.
  */
-export function CaptureComposer({ request, provider, providers, jobs, items, onSaved, onOpenItem, onOpenCollection }: Props) {
+export function CaptureDialog({ request, provider, providers, jobs, items, onSaved, onOpenItem, onOpenCollection }: Props) {
+  const [open, setOpen] = useState(false);
   const [text, setText] = useState(''), [attachments, setAttachments] = useState<File[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState(''), [preview, setPreview] = useState<File | null>(null);
-  const [focused, setFocused] = useState(false), [dragging, setDragging] = useState(false), [agent, setAgent] = useState<RunProviderId>(provider), [saveOnly, setSaveOnly] = useState(false);
+  const [dragging, setDragging] = useState(false), [agent, setAgent] = useState<RunProviderId>(provider), [saveOnly, setSaveOnly] = useState(false);
   const [agentMenu, setAgentMenu] = useState<{ x: number; y: number } | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
-  const picker = useRef<HTMLInputElement>(null), field = useRef<HTMLTextAreaElement>(null), box = useRef<HTMLDivElement>(null), agentButton = useRef<HTMLButtonElement>(null);
-  const saving = useRef(false), savedItem = useRef<string | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null), picker = useRef<HTMLInputElement>(null), field = useRef<HTMLTextAreaElement>(null), agentButton = useRef<HTMLButtonElement>(null);
+  const saving = useRef(false), savedItem = useRef<string | null>(null), escapeTaken = useRef(false), closedByUs = useRef(false);
   useEffect(() => setAgent(provider), [provider]);
   const add = (files: File[]) => { if (!saving.current && !savedItem.current) setAttachments(current => [...current, ...files]); };
   const append = (value: string) => { if (value) setText(current => current ? current + '\n' + value : value); };
-  // Paste, drop, the Capture button and Ctrl+N all arrive here from the window.
+  // Paste, drop, the Capture button, Ctrl+N and the palette all arrive here from the window.
   useEffect(() => {
     if (!request) return;
     if (request.seed && !saving.current && !savedItem.current) { add(request.seed.files ?? []); append(request.seed.text ?? ''); }
+    setOpen(true);
     requestAnimationFrame(() => field.current?.focus());
   }, [request?.id]);
-  useEffect(() => { const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node) && !(event.target as Element)?.closest?.('.context-menu, .lightbox')) setFocused(false); }; window.addEventListener('mousedown', away); return () => window.removeEventListener('mousedown', away); }, []);
+  // Synced on every render, not only when `open` changes: the browser can close the dialog itself (a repeated Esc), and a quick
+  // close and reopen may batch into no change of `open` at all.
+  useEffect(() => { const d = dialog.current!; if (open && !d.open) { d.showModal(); field.current?.focus(); } else if (!open && d.open) { closedByUs.current = true; d.close(); } });
+  // Esc on the agent menu or an image preview closes only that. Both stop the key before it reaches the dialog, but not the
+  // dialog's own cancel, so note here (registered before them) whether the key was theirs.
+  useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key === 'Escape') escapeTaken.current = Boolean(document.querySelector('.capture-dialog .context-menu, .lightbox')); }; window.addEventListener('keydown', key, true); return () => window.removeEventListener('keydown', key, true); }, []);
+  const close = () => { setOpen(false); setDragging(false); };
   const paste = (event: ClipboardEvent) => {
     if (saving.current || savedItem.current) { event.preventDefault(); return; }
     const files = Array.from(event.clipboardData.files);
-    if (files.length || !(event.target instanceof HTMLTextAreaElement)) { event.preventDefault(); event.stopPropagation(); add(files); append(event.clipboardData.getData('text/plain')); }
-    setFocused(true);
+    if (files.length || !(event.target instanceof HTMLTextAreaElement)) { event.preventDefault(); event.stopPropagation(); add(files); append(event.clipboardData.getData('text/plain')); field.current?.focus(); }
   };
   const drop = (event: DragEvent) => {
     event.preventDefault(); event.stopPropagation(); setDragging(false); if (saving.current || savedItem.current) return;
     add(Array.from(event.dataTransfer.files));
     append(event.dataTransfer.getData('text/plain') || event.dataTransfer.getData('text/uri-list').split('\n').filter(line => !line.startsWith('#')).join('\n'));
-    setFocused(true);
+    field.current?.focus();
   };
   const reset = () => { setText(''); setAttachments([]); setError(''); savedItem.current = null; setSavedId(null); };
+  const done = (id: string, analyzing: boolean) => { reset(); close(); onSaved(id, analyzing); };
   const submit = async (analyze: boolean) => {
     if (saving.current || (!text.trim() && !attachments.length)) return;
     if (savedItem.current) {
       saving.current = true; setBusy(true); setError('');
-      try { await api('agent.start', { id: savedItem.current, kind: 'distill', provider: agent }); agentStarted('distill'); const id = savedItem.current; reset(); onSaved(id, true); }
+      try { await api('agent.start', { id: savedItem.current, kind: 'distill', provider: agent }); agentStarted('distill'); done(savedItem.current, true); }
       catch (error) { setError(`Source saved, but analysis could not start: ${error instanceof Error ? error.message : String(error)}`); }
       finally { saving.current = false; setBusy(false); }
       return;
@@ -94,12 +105,11 @@ export function CaptureComposer({ request, provider, providers, jobs, items, onS
       const result = await api<{ item: Item; job?: { kind: AgentKind }; error?: string }>('agent.capture', { text, files, provider: agent, analyze });
       if (result.error) { savedItem.current = result.item.id; setSavedId(result.item.id); setError(`Source saved, but analysis could not start: ${result.error}`); return; }
       if (result.job) agentStarted(result.job.kind);
-      reset(); setFocused(false); field.current?.blur(); onSaved(result.item.id, Boolean(result.job));
+      done(result.item.id, Boolean(result.job));
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); } finally { saving.current = false; setBusy(false); }
   };
 
   const kind = detect(text, attachments), empty = kind === 'empty', locked = busy || Boolean(savedId);
-  const expanded = focused || !empty || Boolean(error) || dragging;
   const agentName = providerName[agent];
   // One primary action per kind of material; Save only turns every one into a plain save.
   const primary: { label: string; analyze: boolean; icon: ReactNode } | null = savedId ? { label: 'Retry analysis', analyze: true, icon: <Sparkles size={15} /> }
@@ -115,51 +125,57 @@ export function CaptureComposer({ request, provider, providers, jobs, items, onS
     : kind === 'link' ? (saveOnly ? 'Keeps the link. Analyze it later from the item.' : `Analyze page keeps the link as a source and asks ${agentName} for what is reusable in it.`)
     : kind === 'files' ? `Files: 25 MB in total. Images, PDFs and any other type.` : '';
 
-  return <div className="capture">
-    <div ref={box} className={`capture-composer ${expanded ? 'open' : ''} ${dragging ? 'drag' : ''}`} onDragOver={event => { event.preventDefault(); event.stopPropagation(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={drop} onPaste={paste}>
+  return <dialog ref={dialog} className="modal capture-dialog" aria-label="New capture"
+    onCancel={event => { event.preventDefault(); if (escapeTaken.current) { escapeTaken.current = false; return; } close(); }}
+    // Only closes the browser did itself need to reach the state; the close event of our own close() can arrive after a reopen.
+    onClose={() => { if (closedByUs.current) closedByUs.current = false; else setOpen(false); }}
+    // A click on the backdrop lands on the dialog itself; so does one on its padding, which must not close it.
+    onClick={event => { if (event.target !== dialog.current) return; const box = dialog.current.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) close(); }}
+    onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={drop} onPaste={paste}>
+    <div className="modal-head capture-head"><div><h2>Capture</h2><p>A YouTube link, a web page, a prompt you liked, or files.</p></div><button type="button" className="icon-button" aria-label="Close capture" title="Close (Esc). What you typed stays for next time." onClick={close}><X size={20} /></button></div>
+    <div className={`capture-composer open ${dragging ? 'drag' : ''}`}>
       <div className="capture-input">
         <span className={`capture-icon k-${kind}`} aria-hidden="true">{detectedIcon[kind]}</span>
-        <textarea ref={field} aria-label="Capture" rows={expanded && kind === 'text' ? Math.min(8, Math.max(3, text.split('\n').length)) : 1} disabled={locked} value={text} onChange={event => setText(event.target.value)} onFocus={() => setFocused(true)}
+        <textarea ref={field} aria-label="Capture" rows={1} className={kind === 'text' || kind === 'empty' ? 'roomy' : ''} disabled={locked} value={text} onChange={event => setText(event.target.value)}
           placeholder={dragging ? 'Drop to capture' : attachments.length ? 'Add a note about these files (optional)' : 'Paste, drop or type anything to keep it…'}
-          onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && primary) { event.preventDefault(); void submit(primary.analyze); } if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (empty) setFocused(false); field.current?.blur(); } }} />
+          onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && primary) { event.preventDefault(); void submit(primary.analyze); } }} />
         {detectedLabel[kind] && <span className="capture-detected"><span className="capture-detected-dot" />{detectedLabel[kind]}</span>}
-        {!expanded && <kbd className="capture-kbd">Ctrl N</kbd>}
-        {expanded && <button type="button" className="icon-button" aria-label="Add files" title="Add files" disabled={locked} onClick={() => picker.current?.click()}><Upload size={15} /></button>}
-        {(!empty || savedId) && <button type="button" className="icon-button" aria-label="Clear capture" title={savedId ? 'Done: the source stays in the library' : 'Clear'} disabled={busy} onClick={reset}><X size={15} /></button>}
+        <button type="button" className="icon-button" aria-label="Add files" title="Add files" disabled={locked} onClick={() => picker.current?.click()}><Upload size={15} /></button>
+        {(!empty || savedId) && <button type="button" className="icon-button" aria-label="Clear capture" title={savedId ? 'Done: the source stays in the library' : 'Clear'} disabled={busy} onClick={() => { reset(); field.current?.focus(); }}><X size={15} /></button>}
       </div>
-      <input ref={picker} aria-label="Select files" type="file" multiple hidden disabled={locked} onChange={event => { add(Array.from(event.target.files ?? [])); event.target.value = ''; setFocused(true); }} />
+      <input ref={picker} aria-label="Select files" type="file" multiple hidden disabled={locked} onChange={event => { add(Array.from(event.target.files ?? [])); event.target.value = ''; field.current?.focus(); }} />
       {dragging && <div className="capture-dropzone"><Upload size={17} />Drop files, images or a link to capture them</div>}
-      {expanded && !dragging && <>
+      {!dragging && <>
         {attachments.length > 0 && <div className="capture-files">{attachments.map((file, index) => <span className={`capture-file ${isImage(file) ? 'has-thumb' : ''}`} key={index}>{isImage(file) ? <Thumbnail file={file} onOpen={() => setPreview(file)} /> : <File size={14} />}<span className="capture-file-name">{file.name}</span><span className="faint">{size(file.size)}</span><button type="button" disabled={locked} aria-label={`Remove file ${index + 1}`} onClick={() => setAttachments(current => current.filter((_, i) => i !== index))}><X size={12} /></button></span>)}</div>}
         {kind === 'text' && <div className="capture-info"><span className="muted">{text.length.toLocaleString()} characters</span>{variables.length > 0 && <><span className="capture-sep" /><span className="muted">Variables</span>{variables.map(v => <span key={v} className="capture-var">{`{{${v}}}`}</span>)}</>}<span className="capture-sep" /><span className="muted">Saved as</span><span className="capture-guess"><KindIcon kind="prompt" size={13} />a draft prompt</span></div>}
         {note && <p className="capture-note">{note}</p>}
         {error && <p role="alert" className="error-box capture-error"><AlertTriangle size={14} />{error}</p>}
-        <div className="capture-bar">
-          <button ref={agentButton} type="button" className="capture-chip" disabled={saveOnly || busy} aria-haspopup="menu" title="Agent that analyzes the material" onClick={() => { const r = agentButton.current!.getBoundingClientRect(); setAgentMenu({ x: r.left, y: r.bottom + 4 }); }}><Bot size={13} /><span className="faint">Agent:</span> {agentName}</button>
-          <button type="button" className={`capture-chip toggle ${saveOnly ? 'on' : ''}`} role="switch" aria-checked={saveOnly} disabled={Boolean(savedId)} onClick={() => setSaveOnly(value => !value)} title="Keep the material without running an agent or fetching captions"><span className="capture-switch" />Save only</button>
-          <span className="capture-grow" />
-          {empty && !savedId ? <span className="faint small">A YouTube link, a web page, a prompt you liked, or files.</span> : <>
-            {secondary && <button type="button" className="button" disabled={busy} onClick={() => void submit(secondary.analyze)}>{secondary.label}</button>}
-            {primary && <button type="button" className="button primary" disabled={busy} onClick={() => void submit(primary.analyze)}>{busy ? <><Loader2 className="spin" size={15} />Saving…</> : <>{primary.icon}{primary.label}<kbd>Ctrl ↵</kbd></>}</button>}
-          </>}
-        </div>
       </>}
+      <div className="capture-bar">
+        <button ref={agentButton} type="button" className="capture-chip" disabled={saveOnly || busy} aria-haspopup="menu" title="Agent that analyzes the material" onClick={() => { const r = agentButton.current!.getBoundingClientRect(); setAgentMenu({ x: r.left, y: r.bottom + 4 }); }}><Bot size={13} /><span className="faint">Agent:</span> {agentName}</button>
+        <button type="button" className={`capture-chip toggle ${saveOnly ? 'on' : ''}`} role="switch" aria-checked={saveOnly} disabled={Boolean(savedId)} onClick={() => setSaveOnly(value => !value)} title="Keep the material without running an agent or fetching captions"><span className="capture-switch" />Save only</button>
+        <span className="capture-grow" />
+        {empty && !savedId ? <span className="faint small">Ctrl V pastes · drop files anywhere</span> : <>
+          {secondary && <button type="button" className="button" disabled={busy} onClick={() => void submit(secondary.analyze)}>{secondary.label}</button>}
+          {primary && <button type="button" className="button primary" disabled={busy} onClick={() => void submit(primary.analyze)}>{busy ? <><Loader2 className="spin" size={15} />Saving…</> : <>{primary.icon}{primary.label}<kbd>Ctrl ↵</kbd></>}</button>}
+        </>}
+      </div>
       {agentMenu && <ContextMenu x={agentMenu.x} y={agentMenu.y} onClose={() => setAgentMenu(null)} entries={providers.filter(p => p.id !== 'copilot').map(p => ({ label: `${p.label}${p.available ? '' : ' · not detected'}`, checked: agent === p.id, onSelect: () => setAgent(p.id as RunProviderId) }))} />}
       {preview && <ImageLightbox file={preview} onClose={() => setPreview(null)} />}
     </div>
-    <RecentCaptures jobs={jobs} items={items} onOpenItem={onOpenItem} onOpenCollection={onOpenCollection} />
-  </div>;
+    {open && <RecentCaptures jobs={jobs} items={items} onOpenItem={id => { close(); onOpenItem(id); }} onOpenCollection={name => { close(); onOpenCollection(name); }} />}
+  </dialog>;
 }
 
 /** Analyses running now, and those that finished in the last half hour, newest first. Hidden when there are none. */
 function RecentCaptures({ jobs, items, onOpenItem, onOpenCollection }: { jobs: AgentJob[]; items: Item[]; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void }) {
   const [now, setNow] = useState(Date.now()), [dismissed, setDismissed] = useState<string[]>([]);
-  const recent = jobs.filter(j => j.kind === 'distill' && !dismissed.includes(j.id) && (j.status === 'running' || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
+  const recent = jobs.filter(j => (j.kind === 'distill' || j.kind === 'capture') && !dismissed.includes(j.id) && (j.status === 'running' || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
   const running = recent.some(j => j.status === 'running');
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), running ? 1000 : 30_000); return () => clearInterval(timer); }, [running]);
   if (!recent.length) return null;
   return <section className="capture-recent" aria-label="Recent captures">
-    <div className="capture-recent-head"><h3>Recent captures</h3>{running && <span className="muted small"><Loader2 size={12} className="spin" /> working</span>}</div>
+    <div className="capture-recent-head"><h3>Recent captures</h3>{running && <span className="muted small"><Loader2 size={12} className="spin" /> working · also in the status bar</span>}</div>
     <div className="capture-strip">{recent.map(job => {
       const item = items.find(i => i.id === job.itemId), made = job.createdItemIds?.length ?? 0, done = job.status === 'completed';
       const icon = item?.tags.includes('youtube') ? <Clapperboard size={14} /> : item?.kind === 'link' || /^https?:\/\//.test(item?.source ?? '') ? <Globe size={14} /> : item?.kind === 'file' || item?.kind === 'image' ? <Paperclip size={14} /> : <FileText size={14} />;

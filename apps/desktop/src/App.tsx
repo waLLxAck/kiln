@@ -20,7 +20,7 @@ import { MachinesView } from './Machines';
 import { arrangeItems, defaultSort, groupItems, ItemBar, locationName, locationsFor, moveInOrder, nextSort, type Location } from './Library';
 import { BulkBar, LibraryTable } from './LibraryTable';
 import { QueryBar } from './QueryBar';
-import { CaptureComposer, type CaptureRequest, type CaptureSeed } from './CaptureComposer';
+import { CaptureDialog, type CaptureRequest, type CaptureSeed } from './CaptureComposer';
 import { Rail, tools, UNFILED } from './Rail';
 import { repoName, StatusBar } from './StatusBar';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
@@ -46,7 +46,7 @@ const sectionLabel: Record<string, string> = { library: 'Library', settings: 'Se
 
 export default function App() {
   const sidebar = usePanelWidth('kiln-sidebar-width', 250, 180, 360);
-  // Paste, drop, the Capture button and Ctrl+N all hand their material to the composer at the top of the library.
+  // Paste, drop, the Capture button, Ctrl+N and the palette all open the capture dialog with their material.
   const [capture, setCapture] = useState<CaptureRequest>(); const captureCount = useRef(0);
   const [jobs,setJobs] = useState<AgentJob[]>([]);
   const [agentSyncError, setAgentSyncError] = useState('');
@@ -119,8 +119,8 @@ export default function App() {
     const start = () => void poll(); window.addEventListener('kiln:agent-started',start); window.addEventListener('kiln:agent-refresh',start);
     return () => { active = false; clearInterval(timer); window.removeEventListener('kiln:agent-started',start); window.removeEventListener('kiln:agent-refresh',start); };
   },[refresh,snapshot?.root]);
-  /** Opens the composer, switching to the library list first, and hands it whatever was pasted or dropped. */
-  const startCapture = (seed?: CaptureSeed) => { setSection('library'); setOpen(false); setCapture({ id: ++captureCount.current, seed }); };
+  /** Opens the capture dialog over whatever is on screen and hands it whatever was pasted or dropped. */
+  const startCapture = (seed?: CaptureSeed) => setCapture({ id: ++captureCount.current, seed });
   const startCaptureRef = useRef(startCapture); startCaptureRef.current = startCapture;
   useEffect(() => {
     const paste = (event: ClipboardEvent) => { if ((event.target as Element)?.closest?.('input,textarea,[contenteditable],.modal')) return; const files = Array.from(event.clipboardData?.files ?? []); const text = event.clipboardData?.getData('text/plain') ?? ''; if (files.length || text) { event.preventDefault(); startCaptureRef.current({ files, text }); } };
@@ -217,7 +217,7 @@ export default function App() {
     'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
   });
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
-  const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows under Capture.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
+  const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows in the status bar.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
   const copyItem = async (item: Item) => {
     const data = await api<ItemDetail>('items.read', { id: item.id });
     if (variablesIn(data.revision.content).length) { select(item.id); setDetail(data); setDialog({ name: 'variables' }); return; }
@@ -420,7 +420,6 @@ export default function App() {
   const listKeys = (event: KeyboardEvent, id: string) => { const target = bulkItems.length > 1 ? bulkItems : shown.filter(i => i.id === id); const hit = target.length > 0 && !menu && shortcutEntry(menuEntries(target), event.nativeEvent); if (hit) { if (id !== selected && bulkItems.length < 2) select(id); hit.onSelect?.(); } return Boolean(hit); };
   const libraryPage = <section className="library-page">
     <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
-    {section === 'library' && <CaptureComposer request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />}
     <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} saved={savedViews}
       sort={order} onSort={setSort} group={group} onGroup={setGroup} canReorder={bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
@@ -486,7 +485,8 @@ export default function App() {
         </div>
       </main>
     </div>
-    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenJob={job => openTrialItem(job.itemId)} />
+    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenJob={job => openTrialItem(job.itemId)} onOpenCollection={openCollection} />
+    <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />
     {undo ? <UndoToast key={undo.item.id} title={undo.item.title} onUndo={undoArchive} onExpire={() => setUndo(null)} /> : message && <div className="toast" role="status"><Check size={17} />{message}</div>}
     {menu && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries(menu.items)} onClose={() => setMenu(null)} />}
     {collectionMenu && <ContextMenu x={collectionMenu.x} y={collectionMenu.y} entries={collectionEntries(collectionMenu.name)} onClose={() => setCollectionMenu(null)} />}

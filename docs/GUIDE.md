@@ -166,16 +166,16 @@ For a source, the page shows the source in place of the content and keeps the sa
 
 ## Capture
 
-The composer at the top of the library ("Paste, drop or type anything to keep it…") takes text, links and files. Click it, press **Ctrl+N** or **Capture**, or paste or drop anything onto the window from any section: Kiln switches to the library and puts it in the composer. The upload button beside the field picks files. Kiln reads what it was given and offers one main action, run with **Ctrl+Enter**:
+Capture is a dialog that opens over whatever you are looking at: press **Capture** in the top bar or **Ctrl+N**, choose **Capture…** in [quick search](#quick-search), or paste or drop anything onto the window outside a text field. What you pasted or dropped is already in it. The field ("Paste, drop or type anything to keep it…") takes text, links and files; the upload button beside it picks files, and pasting or dropping onto the dialog adds more. Kiln reads what it was given and offers one main action, run with **Ctrl+Enter**:
 
 - **A bare YouTube link**: **Distill video** (see [Distilling a YouTube video](#distilling-a-youtube-video)), or **Save link only**.
 - **Another link**: **Analyze page**, or **Save link**.
 - **Text**: **Save as draft**, or **Analyze with** your agent. `{{variables}}` in the text are listed.
 - **Files**: each file shows with its size (images with a preview); **Save N files**, or **Analyze with** your agent. Files: 25 MB in total.
 
-**Agent** picks Claude Code or Codex for this capture (the default comes from Settings). **Save only** turns every action into a plain save: the original text and attachments are kept at once without calling an agent or fetching captions. A saved item is highlighted in the list.
+**Agent** picks Claude Code or Codex for this capture (the default comes from Settings). **Save only** turns every action into a plain save: the original text and attachments are kept at once without calling an agent or fetching captions. Saving closes the dialog; a saved item is highlighted in the library list. **Esc**, the × or a click outside closes the dialog without saving, and what you typed or added is still there the next time you open it.
 
-Analyzing keeps your original material as a **source** and asks the agent to create reusable prompts, insights, techniques, tools and resources in a collection, each linked back to that source. **Recent captures** under the composer shows analyses running now and those finished in the last half hour, with their step and time, then **Open collection** or **Open** when done. A saved-only item can be analysed later with **⋯ → Analyze as a source**.
+Analyzing keeps your original material as a **source** and asks the agent to create reusable prompts, insights, techniques, tools and resources in a collection, each linked back to that source. **Recent captures** under the field shows analyses running now and those finished in the last half hour, with their step and time, then **Open collection** or **Open** when done. The same runs are in the status bar's agent runs list wherever you are, where a finished analysis offers **Open collection** (or **Open**) too. A saved-only item can be analysed later with **⋯ → Analyze as a source**.
 
 See [Sources](#sources) for how the material and everything made from it stay connected.
 
@@ -200,7 +200,7 @@ Material analysed before sources existed is filed as a source the next time the 
 
 ## Distilling a YouTube video
 
-Paste a bare YouTube link into the capture composer and its main action becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` the same way the shell `yt` helper does (auto-captions, English first, `~/cookies.txt` when present; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, and only the insights that change what you would do.
+Paste a bare YouTube link into Capture and its main action becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` the same way the shell `yt` helper does (auto-captions, English first, `~/cookies.txt` when present; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, and only the insights that change what you would do.
 
 Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description (listed under it on the source page, and the row's tooltip in the library). Prompts are stored bare so Copy yields only the prompt. The video's source page shows the summary and takeaway, a timeline of the video with each entry at the minute it came from and the skipped parts shaded, the entries grouped by minute to keep or archive, and the transcript with links to each minute (see [Sources](#sources)). `yt-dlp` must be on PATH.
 
