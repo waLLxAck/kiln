@@ -33,7 +33,9 @@ test('formatted reading, primary actions, simple status and save without analysi
     await expect(page.locator('.markdown-content pre code')).toContainText('const answer = 42');
     expect(await page.evaluate(() => (window as any).unsafe)).toBeUndefined();
     await page.getByRole('button', { name: 'More', exact: true }).click();
-    await expect(page.getByRole('menuitem', { name: /^Approve/ })).toBeVisible();
+    // The menu holds only what the page doesn't show: Approve is in the rail, not repeated here.
+    await expect(page.getByRole('menuitem', { name: 'Copy item ID' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Approve/ })).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menu')).toHaveCount(0);
     await page.keyboard.press('Escape');

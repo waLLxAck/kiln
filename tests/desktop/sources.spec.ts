@@ -35,7 +35,7 @@ test('a source has its own page: no copy or test, its analysis, what was made fr
     // The item page's header carries the title; the source page below it doesn't repeat it.
     await expect(detail.getByRole('heading', { name: 'Design chat', level: 1 })).toBeVisible();
     await expect(sourcePage.getByRole('heading', { name: 'Design chat' })).toHaveCount(0);
-    await expect(sourcePage).toContainText('Source · text');
+    await expect(sourcePage.locator('.source-byline')).toHaveText('Text');
     await expect(sourcePage.locator('.source-callout')).toContainText('This exchange explores homepage designs.');
     await expect(sourcePage.locator('.source-callout')).toContainText('Ground claims in the code.');
     await expect(sourcePage.getByRole('button', { name: 'Analyze again' })).toBeVisible();
@@ -46,19 +46,27 @@ test('a source has its own page: no copy or test, its analysis, what was made fr
     for (const name of ['Copy', 'Test']) await expect(detail.getByRole('button', { name, exact: true })).toHaveCount(0);
     const line = sourcePage.locator('.source-analysis');
     await expect(line).toContainText('Codex · gpt-test · medium effort · 42k in · 1,704 out · 1m 5s');
+    // The details replace the one-line summary rather than repeating it.
     await line.getByRole('button', { name: 'Analysis details' }).click();
+    await expect(line).not.toContainText('gpt-test');
     const record = sourcePage.getByRole('region', { name: 'Recorded analysis' });
     await expect(record).toContainText('This exchange explores homepage designs.');
     await expect(record).toContainText('42k in · 1,704 out');
     await expect(sourcePage.getByRole('heading', { name: 'Original material' })).toBeVisible();
     await expect(sourcePage.locator('.content-preview')).toContainText('We compared three homepage designs.');
+    // Each fact once: provenance is in the rail, and no internal item id is shown anywhere on the page.
+    await expect(sourcePage.locator('dl')).toHaveCount(0);
+    await expect(detail).not.toContainText(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/);
+    await expect(detail.getByRole('button', { name: /made from it/ })).toHaveCount(0);
     await page.screenshot({ path: 'test-results/source-overview.png' });
 
     // What was made from it, grouped by kind, wherever it is filed.
     const made = sourcePage.getByRole('region', { name: 'Made from this source' });
     await expect(made.locator('.source-group-title')).toHaveText(['Prompts1', 'Techniques1']);
     const ground = made.locator('.source-entry', { hasText: 'Ground the copy' });
+    // An entry names its collection only when it is filed away from the source's own.
     await expect(ground).toContainText('Writing');
+    await expect(made.locator('.source-entry', { hasText: 'Compare designs side by side' }).locator('.source-entry-collection')).toHaveCount(0);
     // Keep stars an entry; Archive moves it to Archive with an undo, and Restore brings it back.
     await ground.getByRole('button', { name: 'Keep' }).click();
     await expect(ground.getByRole('button', { name: 'Kept' })).toHaveAttribute('aria-pressed', 'true');
@@ -88,7 +96,7 @@ test('a source has its own page: no copy or test, its analysis, what was made fr
     await page.locator('.item-card', { hasText: 'Ground the copy' }).click();
     await detail.getByRole('button', { name: 'From “Design chat”' }).click();
     await expect(detail.getByRole('heading', { name: 'Design chat', level: 1 })).toBeVisible();
-    await expect(sourcePage).toContainText('Source · text');
+    await expect(sourcePage.locator('.source-byline')).toHaveText('Text');
 
     await page.keyboard.press('Escape');
     // The sort pill names the order. Across the library the source mixes in; inside its collection it leads, whatever the order.
@@ -134,8 +142,8 @@ test('a video source is a timeline: entries at their minutes, skipped parts shad
     await expect(page.locator('.item-card')).toHaveCount(1);
     await page.locator('.item-card', { hasText: 'Test like a kid' }).click();
     const sourcePage = page.getByRole('region', { name: 'Source', exact: true });
-    await expect(sourcePage).toContainText('Source · YouTube');
-    await expect(sourcePage.locator('.source-byline')).toHaveText(/^Source · YouTube\s*·\s*Pixel & Pine\s*·\s*18:24\s*·\s*Published 2026-06-12\s*·\s*Captured /);
+    // The eyebrow says Source and the rail says when it was captured, so the byline doesn't.
+    await expect(sourcePage.locator('.source-byline')).toHaveText(/^YouTube\s*·\s*Pixel & Pine\s*·\s*18:24\s*·\s*Published 2026-06-12$/);
     await expect(page.getByRole('button', { name: 'Open original', exact: true })).toBeVisible();
     await expect(sourcePage.getByRole('button', { name: 'Ask about this video' })).toBeVisible();
 
@@ -153,7 +161,10 @@ test('a video source is a timeline: entries at their minutes, skipped parts shad
     await timeline.getByRole('button', { name: '11:05 · You stop seeing your own app' }).click();
     await expect(made.locator('.source-entry', { hasText: 'You stop seeing your own app' })).toBeInViewport();
 
-    // The toggle in the page's head (the transcript file under Original material has a link that opens it too).
+    // The transcript has one toggle, in the page's head; its file is listed under Files without a second one.
+    await expect(page.getByRole('button', { name: 'Show transcript' })).toHaveCount(1);
+    await expect(page.getByRole('region', { name: 'Files' })).toContainText('transcript.md');
+    await expect(page.getByRole('region', { name: 'Files' }).getByRole('button', { name: 'Preview' })).toHaveCount(0);
     await sourcePage.locator('.source-head').getByRole('button', { name: 'Show transcript' }).click();
     const transcript = sourcePage.getByRole('complementary', { name: 'Transcript' });
     await expect(transcript.locator('.source-ts')).toHaveText(['0:00', '2:05', '4:00']);

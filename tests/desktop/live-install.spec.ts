@@ -40,8 +40,8 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     await page.getByRole('button', { name: 'Capture item', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Kiln installation check' })).toBeVisible();
     fixtureId = await page.evaluate(async () => (await window.kiln.call<{ items: { id: string; title: string; status: string }[] }>('snapshot')).items.filter(i => i.title === 'Kiln installation check' && i.status === 'captured').at(-1)!.id);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     for (const [index, environment] of ['Personal Codex', 'Personal Claude Code'].entries()) {

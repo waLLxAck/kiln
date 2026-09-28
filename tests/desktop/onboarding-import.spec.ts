@@ -108,7 +108,8 @@ test('the import list skips folders that only hold skills, and two different ski
     await expect(rows).toHaveCount(2);
     await expect(rows.locator('.lib-from')).toHaveText([/from ~\/.(claude\/skills\/synced\/0c6f2e1a|codex\/skills\/.system)\/skill-creator/, /from ~\/.(claude\/skills\/synced\/0c6f2e1a|codex\/skills\/.system)\/skill-creator/]);
     await rows.filter({ hasText: '.system' }).click();
-    await expect(page.getByRole('article', { name: 'Selected item' }).locator('.detail-source')).toHaveText('from ~/.codex/skills/.system/skill-creator');
+    // Two items share the title, so the rail's Provenance says where this one came from.
+    await expect(page.getByRole('article', { name: 'Selected item' }).getByRole('region', { name: 'Provenance' })).toContainText('~/.codex/skills/.system/skill-creator');
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
