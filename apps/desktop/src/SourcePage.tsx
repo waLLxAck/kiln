@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArrowRight, ChevronDown, ChevronRight, CircleSlash, ExternalLink, Folder, Layers3, Loader2, MessageSquare, Pencil, PlayCircle, RotateCcw, ScanSearch, ScrollText, Sparkles, Star, X, ZoomIn } from 'lucide-react';
+import { Archive, ArrowRight, ChevronDown, ChevronRight, CircleSlash, Folder, Layers3, Loader2, MessageSquare, Pencil, RotateCcw, ScanSearch, ScrollText, Sparkles, Star, X, ZoomIn } from 'lucide-react';
 import type { AgentJob } from '../../../packages/agent/service';
 import { timestamp, youtubeId } from '../../../packages/agent/video-link';
-import { isTextFile } from '../../../packages/domain/text';
 import type { Analysis, Item, ItemDetail, Provider, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { AgentPanel, AnalysisRecord } from './AgentPanel';
 import { api, date } from './api';
@@ -46,12 +45,11 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [formatted, setFormatted] = useState(false);
-  const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
   const [undo, setUndo] = useState<{ item: Item; previous: Item['status'] } | null>(null);
   const rows = useRef<Record<string, HTMLElement | null>>({});
   const timer = useRef<number>(0);
-  useEffect(() => { setTranscriptOpen(false); setArchivedOpen(false); setHistoryOpen(false); setFilePreview(null); setHot(null); }, [item.id]);
+  useEffect(() => { setTranscriptOpen(false); setArchivedOpen(false); setHistoryOpen(false); setHot(null); }, [item.id]);
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const firstLine = revision.content.trim().split('\n')[0] ?? '';
@@ -60,7 +58,7 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
   // The attachment is already in memory with the revision; decode it once per revision, not per render.
   const video = useMemo(() => transcriptFile ? readTranscript(decode(transcriptFile)) : null, [revision.hash]);
   const files = Object.keys(revision.files).filter(name => name !== 'transcript.md' && name !== SESSION_FILE);
-  const sourceKind = videoId ? 'YouTube' : /^https?:\/\/\S+$/i.test(firstLine) ? 'page' : files.length ? 'files' : 'text';
+  const sourceKind = videoId ? 'YouTube' : /^https?:\/\/\S+$/i.test(firstLine) ? 'Web page' : files.length ? 'Files' : 'Text';
   const at = (seconds: number) => `https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(seconds)}s`;
   const openUrl = (url: string) => void perform(() => api('desktop.openContentUrl', { url }));
 
@@ -110,8 +108,8 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
   const keep = (entry: Item) => void perform(async () => { await api('items.meta', { id: entry.id, expect: entry.revision, favourite: !entry.favourite }); await refresh(); });
 
   const images = Object.entries(revision.files).filter(([name]) => imageFile(name));
-  const openFile = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
-  const byline = [`Source · ${sourceKind}`, video?.channel, video?.duration ? timestamp(video.duration) : '', video?.published ? `Published ${video.published}` : '', `Captured ${date(item.createdAt)}`].filter(Boolean);
+  // The eyebrow already says Source and the rail says when it was captured.
+  const byline = [sourceKind, video?.channel, video?.duration ? timestamp(video.duration) : '', video?.published ? `Published ${video.published}` : ''].filter(Boolean);
   const legendKinds = [...new Set(timed.map(e => e.item.kind))].sort((a, b) => (kindOrder.indexOf(a) + 1 || 99) - (kindOrder.indexOf(b) + 1 || 99));
   const pct = (seconds: number) => `${Math.min(100, (seconds / duration) * 100)}%`;
 
@@ -121,15 +119,15 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
       <span className={`item-kind ${e.kind}`}><KindIcon kind={e.kind} size={15} /></span>
       <div className="source-entry-text">
         <div className="source-entry-title">
-          <button type="button" className="source-entry-name" onClick={() => onSelect(e.id)}>{e.title}</button>
+          <button type="button" className="source-entry-name" title="Open it" onClick={() => onSelect(e.id)}>{e.title}</button>
           <span className="source-entry-kind">{kindName[e.kind] ?? e.kind}{entry.at !== null && archivedRow ? ` · ${timestamp(entry.at)}` : ''}</span>
         </div>
         {!archivedRow && e.description && <p>{e.description}</p>}
-        {!archivedRow && <button type="button" className="source-entry-collection" title={`Filed in “${collectionName(e.collection)}”`} onClick={() => e.collection ? onCollection(e.collection) : undefined} disabled={!e.collection}><Folder size={12} />{collectionName(e.collection)}</button>}
+        {/* Only where it differs: most entries sit in the source's own collection, which the header names. */}
+        {!archivedRow && e.collection !== item.collection && <button type="button" className="source-entry-collection" title={`Filed in “${collectionName(e.collection)}”`} onClick={() => e.collection ? onCollection(e.collection) : undefined} disabled={!e.collection}><Folder size={12} />{collectionName(e.collection)}</button>}
       </div>
       <div className="source-entry-actions">
         {archivedRow ? <button className="button small" onClick={() => void setStatus(e, 'captured')} disabled={deleted}><RotateCcw size={13} />Restore</button> : <>
-          <button className="button small" onClick={() => onSelect(e.id)}>Open</button>
           <button className={`button small ${e.favourite ? 'on' : ''}`} aria-pressed={e.favourite} onClick={() => keep(e)} disabled={deleted} title={e.favourite ? 'Kept in Favourites. Click to unstar.' : 'Keep it: stars it so it shows in Favourites'}><Star size={13} fill={e.favourite ? 'currentColor' : 'none'} />{e.favourite ? 'Kept' : 'Keep'}</button>
           <button className="button small" onClick={() => archive(e)} disabled={deleted} title="Move to Archive. It keeps its link to this source."><Archive size={13} />Archive</button>
         </>}
@@ -156,14 +154,14 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
 
         {(latest || runCount > 0) && <div className="source-analysis">
           {running ? <span className="source-analysis-line"><Loader2 size={12} className="spin" />{providerName[running.provider]} · {running.phase}</span>
-            : latest && <span className="source-analysis-line" title={latest.usage ? `Input ${latest.usage.input.toLocaleString()} (cached ${latest.usage.cached.toLocaleString()}) · output ${latest.usage.output.toLocaleString()}` : undefined}>
+            : latest && !historyOpen && <span className="source-analysis-line" title={latest.usage ? `Input ${latest.usage.input.toLocaleString()} (cached ${latest.usage.cached.toLocaleString()}) · output ${latest.usage.output.toLocaleString()}` : undefined}>
               {[providerName[latest.provider], latest.model || 'CLI default model', latest.effort ? `${latest.effort} effort` : '', latest.usage ? `${tokens(latest.usage.input)} in · ${tokens(latest.usage.output)} out` : '', took(latest), date(latest.finishedAt)].filter(Boolean).join(' · ')}
               {localJob && <> · <button className="source-link" onClick={() => void perform(() => api('desktop.openAgentJob', { id: localJob.id }))}>Run files</button></>}
             </span>}
-          {runCount > 0 && <button type="button" className="source-link" aria-expanded={historyOpen} onClick={() => setHistoryOpen(open => !open)}>{historyOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{runCount === 1 ? 'Analysis details' : `All ${runCount} analyses`}</button>}
+          {runCount > 0 && <button type="button" className="source-link" aria-expanded={historyOpen} onClick={() => setHistoryOpen(open => !open)}>{historyOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{historyOpen ? 'Hide analysis details' : runCount === 1 ? 'Analysis details' : `All ${runCount} analyses`}</button>}
         </div>}
         {historyOpen && <div className="source-history">
-          <AgentPanel itemId={item.id} jobs={finished} kinds={['capture', 'derive', 'distill']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} />
+          <AgentPanel itemId={item.id} jobs={finished} kinds={['capture', 'derive', 'distill']} onOpen={onSelect} />
           {recorded.map(a => <AnalysisRecord key={a.id} analysis={a} />)}
         </div>}
       </header>
@@ -205,8 +203,7 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
             <span className="muted small">{made.length ? `${active.length} entr${active.length === 1 ? 'y' : 'ies'}${kept ? ` · ${kept} kept` : ''}${archived.length ? ` · ${archived.length} archived` : ''}` : ''}</span>
             <button className="button small" disabled={!made.length} onClick={() => onMadeFrom(item.id)} title="The library filtered to items made from this source, wherever they are filed"><Layers3 size={13} />Show in library</button>
           </div>
-          {!made.length && <p className="muted">Nothing made from it yet{detail.analyses.length ? '; entries that were trashed or deleted no longer count' : ''}. Analyze it to distill prompts, techniques, tools and insights.</p>}
-          {made.length > 0 && <p className="muted small">Each keeps a link back here, wherever it is filed; moving entries or deleting their collection does not break it.</p>}
+          {!made.length && <p className="muted">Nothing made from it yet. Analyze it to distill prompts, techniques, tools and insights.</p>}
           <ol className={`source-groups ${byMinute ? 'timed' : ''}`}>
             {groups.map(group => <li key={group.key} className={`source-group ${group.entries.some(e => e.item.id === hot) ? 'hot' : ''}`}>
               {byMinute && <div className="source-time">{group.at !== null && videoId ? <button type="button" title={`Open the video at ${timestamp(group.at)}`} onClick={() => openUrl(at(group.at!))}>{timestamp(group.at)}</button> : <span>–</span>}</div>}
@@ -225,24 +222,9 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
         </section>
 
         <section className="content-section source-original">
-          <div className="section-heading"><h3>Original material</h3><span className="source-grow" /><button className="text-button" aria-pressed={formatted} onClick={() => setFormatted(!formatted)}>{formatted ? 'Raw text' : 'Preview'}</button>{!deleted && <button className="text-button" onClick={() => onAction('edit')}><Pencil size={13} />Edit</button>}</div>
+          <div className="section-heading"><h3>Original material</h3><span className="source-grow" /><button className="text-button" aria-pressed={formatted} onClick={() => setFormatted(!formatted)}>{formatted ? 'Raw text' : 'Formatted'}</button>{!deleted && <button className="text-button" onClick={() => onAction('edit')}><Pencil size={13} />Edit</button>}</div>
           {images.length > 0 && <div className="asset-gallery">{images.map(([name, content]) => <button key={name} type="button" className="asset-button" title={`Enlarge ${name}`} onClick={() => setZoom({ name, src: imageSource(name, content) })}><img className="asset-preview" alt={name} src={imageSource(name, content)} /><span><ZoomIn size={13} />{name}</span></button>)}</div>}
           {formatted ? <Markdown>{revision.content}</Markdown> : <pre className="content-preview">{revision.content}</pre>}
-          {Object.keys(revision.files).length > 0 && <div className="source-files">
-            <h4>Attached files</h4>
-            {Object.entries(revision.files).map(([name, content]) => <div key={name} className="source-file">
-              <span className="source-file-name">{name}<small>{Math.round(content.length * .75).toLocaleString()} bytes</small></span>
-              <span className="wrap-actions">
-                {name === 'transcript.md' && video ? <button className="text-button" onClick={() => setTranscriptOpen(true)}><ScrollText size={13} />Show transcript</button>
-                  : isTextFile(name) && name !== SESSION_FILE && <button className="text-button" onClick={() => setFilePreview({ name, text: decode(content) })}>Preview</button>}
-                {imageFile(name) && <button className="text-button" onClick={() => setZoom({ name, src: imageSource(name, content) })}><ZoomIn size={13} />Enlarge</button>}
-                <button className="text-button" onClick={() => openFile(name)}><ExternalLink size={13} />Open</button>
-              </span>
-            </div>)}
-            {filePreview && <div><div className="section-heading"><h3>{filePreview.name}</h3><button className="text-button" onClick={() => setFilePreview(null)}>Close preview</button></div><pre className="prompt-preview">{filePreview.text}</pre></div>}
-          </div>}
-          <dl className="metadata-list source-provenance"><dt>Source</dt><dd>{item.source || 'Captured locally'}</dd><dt>Licence</dt><dd>{item.licence}</dd><dt>Captured</dt><dd>{date(item.createdAt)}</dd><dt>Item ID</dt><dd><code>{item.id}</code></dd></dl>
-          {item.tags.length > 0 && <div className="tags">{item.tags.map(tag => <span key={tag}>#{tag}</span>)}</div>}
         </section>
       </div>
 

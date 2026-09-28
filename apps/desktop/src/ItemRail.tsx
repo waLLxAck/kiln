@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowRight, Check, ChevronDown, ChevronRight, Circle, ExternalLink, FileDiff, FileInput, FlaskConical, History as HistoryIcon, Layers3, Plus, Rocket, Server, ShieldCheck, ShieldOff, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, ExternalLink, FileDiff, FlaskConical, History as HistoryIcon, Plus, Rocket, Server, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
 import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge } from './components';
@@ -41,12 +41,17 @@ export type RailProps = {
   sameTitle?: { label: string; full: string }; editing: boolean;
   perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>;
   onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void;
-  onSetup: () => void; onSelect: (id: string) => void; onCollection: (name: string) => void; onMadeFrom: (sourceId: string) => void; onMachines?: () => void;
+  onSetup: () => void; onMachines?: () => void;
   onOpenTests: () => void; onOpenHistory: () => void;
+  /** The header's primary button already approves this revision. */ approveInHeader?: boolean;
+  /** The header's primary button already opens the source URL. */ sourceInHeader?: boolean;
   /** Where each experiment ran, by trial id (trial-place.ts). */ places?: Map<string, string>;
 };
-/** The item page's right rail: status and approval, installs, tests, history, provenance and organisation. */
-export function ItemRail({ detail, snapshot, providers, installations, events, sameTitle, editing, perform, refresh, onAction, onToggleInstall, onSetup, onSelect, onCollection, onMadeFrom, onMachines, onOpenTests, onOpenHistory, places = new Map() }: RailProps) {
+/**
+ * The item page's right rail: approval, installs, tests, history, provenance and organisation. Each fact appears once on
+ * the page, so what the header shows (status badge, favourite star, collection, the source chip, Updated) isn't repeated here.
+ */
+export function ItemRail({ detail, snapshot, providers, installations, events, sameTitle, editing, perform, refresh, onAction, onToggleInstall, onSetup, onMachines, onOpenTests, onOpenHistory, approveInHeader = false, sourceInHeader = false, places = new Map() }: RailProps) {
   const { item, revision } = detail;
   const [tag, setTag] = useState('');
   const isSource = item.kind === 'source';
@@ -58,11 +63,12 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const copies = installations.filter(copy => copy.itemId === item.id);
   const receipts = snapshot.receipts.filter(r => r.itemId === item.id);
   const trials = [...detail.trials].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const made = isSource ? snapshot.items.filter(i => i.origin?.itemId === item.id && !i.deletedAt).length : 0;
-  const origin = item.origin ? snapshot.items.find(i => i.id === item.origin!.itemId) : undefined;
-  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : item.status === 'testing' ? 'testing' : 'draft';
+  const originGone = Boolean(item.origin && !snapshot.items.some(i => i.id === item.origin!.itemId));
+  const completed = detail.trials.filter(t => t.revision === item.revision && t.status === 'completed').length;
+  const copied = detail.observations.filter(o => o.kind === 'copied').length;
+  const licence = item.licence && item.licence !== 'Unknown' ? item.licence : '';
+  const url = /^https?:\/\//i.test(item.source);
 
-  const meta = (change: Record<string, unknown>, message?: string) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...change }); await refresh(); }, message);
   const move = (collection: string) => void perform(async () => { await api('items.move', { ids: [item.id], collection }); await refresh(); }, collection ? `Moved to “${collection}”` : 'Moved out of its collection');
   // Tags are part of the revision, so changing them saves a new draft the way the editor does.
   const retag = (tags: string[], summary: string) => void perform(async () => { await api('items.update', { id: item.id, expect: item.revision, summary, value: { ...revision, collection: item.collection, tags } }); await refresh(); }, 'Tags saved in a new draft revision');
@@ -92,59 +98,51 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const deployLabel = machinesEnabled ? 'Install into a project folder…' : 'Install a specific revision…';
 
   return <aside className="item-rail" aria-label="Item status and organisation">
-    <Section id="status" title={isSource ? 'Status' : 'Status & approval'} count={isSource && status === 'draft' ? undefined : <Badge status={status} />}
-      more={!isSource && approvals.length > 0 ? <div className="rail-more">{[...approvals].reverse().map(a => <div className="rail-approval" key={a.id}><b>{shortHash(a.revision)} · approved by {a.reviewer}</b><span>{a.scope}{a.note ? ` · ${a.note}` : ''}</span>{a.waivedChecks && <span>Checks waived: {a.waivedChecks}</span>}<small>{date(a.createdAt)}</small></div>)}</div> : undefined}
+    {/* A source has no approval; what was made from it is on the page itself. */}
+    {!isSource && <Section id="status" title="Approval"
+      more={approvals.length > 0 ? <div className="rail-more">{[...approvals].reverse().map(a => <div className="rail-approval" key={a.id}><b>{shortHash(a.revision)} · approved by {a.reviewer}</b><span>{a.scope}{a.note ? ` · ${a.note}` : ''}</span>{a.waivedChecks && <span>Checks waived: {a.waivedChecks}</span>}<small>{date(a.createdAt)}</small></div>)}</div> : undefined}
       moreLabel={`See all ${approvals.length} approval${approvals.length === 1 ? '' : 's'}`}>
-      {isSource ? <>
-        <Row label="Made from it"><button className="text-button" disabled={!made} onClick={() => onMadeFrom(item.id)}><Layers3 size={13} />{made} item{made === 1 ? '' : 's'}</button></Row>
-        <Row label="Updated">{date(item.updatedAt)}</Row>
-      </> : <>
-        <Row label="Approved revision">{lastApproved ? <code>{shortHash(lastApproved.revision)}</code> : <span className="muted">None yet</span>}</Row>
-        {!currentApproved && <Row label="Current draft"><code>{shortHash(item.revision)}</code></Row>}
-        {currentApproved && <Row label="Published"><PublishState compact job={publishJob} ahead={snapshot.git.ahead} onRetry={() => void perform(async () => { if (publishJob) await api('publish.retry', { id: publishJob.id }); await refresh(); })} /></Row>}
-        {!currentApproved && lastApproved && detail.revisions.some(r => r.hash === lastApproved.revision) && <p className="rail-callout">Draft <code>{shortHash(item.revision)}</code> exists only on this machine until you approve it. GitHub and installs keep <code>{shortHash(lastApproved.revision)}</code>.</p>}
-        <Row label="Evidence"><span className="muted">{detail.trials.filter(t => t.revision === item.revision && t.status === 'completed').length} completed test{detail.trials.filter(t => t.revision === item.revision && t.status === 'completed').length === 1 ? '' : 's'} · copied {detail.observations.filter(o => o.kind === 'copied').length}×</span></Row>
-        {!item.deletedAt && <div className="rail-actions">{currentApproved
-          ? <button className="rail-mini" title="Withdraw approval; installed copies stay in place." onClick={() => onAction('unapprove')}><ShieldOff size={12} />Unapprove</button>
-          : <button className="rail-mini accent" title="Approve this revision and publish it to GitHub." onClick={() => onAction('approve')}><ShieldCheck size={12} />Approve {shortHash(item.revision)}</button>}</div>}
-      </>}
-    </Section>
+      <Row label="Approved revision">{lastApproved ? <code title={currentApproved ? 'The current revision' : 'GitHub and installs keep this revision until you approve the draft.'}>{shortHash(lastApproved.revision)}</code> : <span className="muted">None yet</span>}</Row>
+      {!currentApproved && lastApproved && <Row label="Draft"><code title="Only on this machine until you approve it">{shortHash(item.revision)}</code></Row>}
+      {currentApproved && <Row label="Published"><PublishState compact job={publishJob} ahead={snapshot.git.ahead} onRetry={() => void perform(async () => { if (publishJob) await api('publish.retry', { id: publishJob.id }); await refresh(); })} /></Row>}
+      <Row label="Evidence"><span className="muted">{completed} completed test{completed === 1 ? '' : 's'} · copied {copied}×</span></Row>
+      {!item.deletedAt && !shelved && (currentApproved || !approveInHeader) && <div className="rail-actions">{currentApproved
+        ? <button className="rail-mini" title="Withdraw approval; installed copies stay in place." onClick={() => onAction('unapprove')}><ShieldOff size={12} />Unapprove</button>
+        : <button className="rail-mini accent" title="Approve this revision and publish it to GitHub." onClick={() => onAction('approve')}><ShieldCheck size={12} />Approve</button>}</div>}
+    </Section>}
 
     {installable && <Section id="installs" title="Installs" count={item.kind === 'instruction' ? receipts.length : `${installed} installed`} tone={drifted ? 'bad' : undefined}
       more={copies.length > 3 ? <>{copies.slice(3).map(copyRow)}</> : undefined} moreLabel={`See all ${copies.length} copies`}
       action={onMachines && machinesEnabled ? <button type="button" className="text-button" onClick={onMachines}><Server size={13} />Other machines…</button> : undefined}>
       {['skill', 'agent'].includes(item.kind) && <SkillToggles item={item} providers={providers} snapshot={snapshot} installations={installations} onToggle={onToggleInstall} onSetup={onSetup} />}
       {copies.slice(0, 3).map(copyRow)}
-      {item.kind === 'instruction' && <p className="rail-note">{receipts.length ? `${receipts.length} install receipt${receipts.length === 1 ? '' : 's'}; each is in History.` : 'Not installed anywhere yet.'}</p>}
+      {item.kind === 'instruction' && !receipts.length && <p className="rail-note">Not installed anywhere yet.</p>}
       <button className="rail-mini" disabled={!approvals.length} title={approvals.length ? (machinesEnabled ? 'Install an approved revision into a project folder or an earlier revision anywhere.' : 'Install an approved revision, including an earlier one, into a folder Kiln manages.') : 'Approve a revision first; only approved revisions are installed.'} onClick={() => onAction('deploy')}><Rocket size={12} />{deployLabel}</button>
-      <p className="rail-note">{machinesEnabled ? 'Install receipts are in History. Check live drift in Machines before treating an old receipt as current.' : 'Install receipts are in History. The toggles show what is in each folder now.'}</p>
     </Section>}
 
     {!isSource && <Section id="tests" title="Tests" count={trials.length} action={<button type="button" className="text-button" onClick={onOpenTests}><FlaskConical size={13} />Open tests</button>}>
       {trials.slice(0, 2).map(trialRow)}
-      {!trials.length && <p className="rail-note">Not tested yet. A test runs this revision on a real task.</p>}
+      {!trials.length && <p className="rail-note">Not tested yet.</p>}
     </Section>}
 
     <Section id="history" title="History" count={events.length} action={<button type="button" className="text-button" onClick={onOpenHistory}><HistoryIcon size={13} />Open history</button>}>
       {events.slice(0, 3).map(eventRow)}
     </Section>
 
+    {/* Where it came from; the item it was made from is the header's "From …" chip. */}
     <Section id="provenance" title="Provenance">
-      {origin && <div className="rail-prov"><FileInput size={14} /><span>{origin.kind === 'source' ? 'From' : 'Derived from'} “{origin.title}”{origin.kind !== 'source' && <> @ <code>{shortHash(item.origin!.revision)}</code></>}</span><button className="rail-mini accent" onClick={() => onSelect(origin.id)}>Open</button></div>}
-      {item.origin && !origin && <div className="rail-prov"><FileInput size={14} /><span>Made from an item no longer in the library (<code>{shortHash(item.origin.itemId)}</code>)</span></div>}
-      <Row label="Source" top>{/^https?:\/\//i.test(item.source) ? <button className="text-button rail-link" title={item.source} onClick={() => void perform(() => api('desktop.openContentUrl', { url: item.source }))}>{item.source.replace(/^https?:\/\/(www\.)?/, '')}<ExternalLink size={12} /></button> : <span className="rail-wrap" title={sameTitle?.full}>{sameTitle ? sameTitle.label : item.source || 'Captured locally'}</span>}</Row>
-      <Row label="Licence">{item.licence}</Row>
+      {originGone && <p className="rail-note">Made from an item no longer in the library.</p>}
+      {(item.source || sameTitle) && <Row label="Source">{url && !sourceInHeader ? <button className="text-button rail-link" title={item.source} onClick={() => void perform(() => api('desktop.openContentUrl', { url: item.source }))}>{item.source.replace(/^https?:\/\/(www\.)?/, '')}<ExternalLink size={12} /></button> : <span className="rail-wrap" title={sameTitle?.full ?? item.source}>{sameTitle ? sameTitle.label : item.source.replace(/^https?:\/\/(www\.)?/, '')}</span>}</Row>}
+      {licence && <Row label="Licence">{licence}</Row>}
       <Row label="Captured">{date(item.createdAt)}</Row>
-      <Row label="Item ID"><code className="rail-wrap">{item.id}</code></Row>
     </Section>
 
     <Section id="organisation" title="Organisation">
-      <Row label="Collection"><select className="rail-select" aria-label="Collection" value={item.collection} disabled={Boolean(item.deletedAt)} onChange={e => move(e.target.value)}><option value="">Unfiled</option>{[...new Set([...snapshot.collections, ...(item.collection ? [item.collection] : [])])].map(name => <option key={name} value={name}>{name.replaceAll('/', ' / ')}</option>)}</select>{item.collection && <button className="icon-button rail-icon" aria-label={`Open the “${item.collection}” collection`} title="Open this collection" onClick={() => onCollection(item.collection)}><ArrowRight size={13} /></button>}</Row>
+      <Row label="Collection"><select className="rail-select" aria-label="Collection" value={item.collection} disabled={Boolean(item.deletedAt)} onChange={e => move(e.target.value)}><option value="">Unfiled</option>{[...new Set([...snapshot.collections, ...(item.collection ? [item.collection] : [])])].map(name => <option key={name} value={name}>{name.replaceAll('/', ' / ')}</option>)}</select></Row>
       <Row label="Tags" top><div className="rail-tags" title={tagsLocked ? 'Finish editing first' : 'Tags are part of the revision: changing them saves a new draft.'}>
         {item.tags.map(t => <span className="rail-chip" key={t}>#{t}{!tagsLocked && <button aria-label={`Remove tag ${t}`} onClick={() => retag(item.tags.filter(x => x !== t), `Removed tag “${t}”`)}><X size={11} /></button>}</span>)}
         {!tagsLocked && <span className="rail-chip add"><Plus size={11} /><input aria-label="Add tag" value={tag} placeholder="tag" size={5} onChange={e => setTag(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } if (e.key === 'Escape') setTag(''); }} onBlur={() => { if (tag.trim()) addTag(); }} /></span>}
       </div></Row>
-      <Row label="Favourite"><button className={`rail-fav ${item.favourite ? 'on' : ''}`} aria-pressed={item.favourite} onClick={() => meta({ favourite: !item.favourite })}><Star size={14} fill={item.favourite ? 'currentColor' : 'none'} />{item.favourite ? 'In favourites' : 'Add'}</button></Row>
     </Section>
   </aside>;
 }

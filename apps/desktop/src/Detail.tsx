@@ -4,14 +4,13 @@ import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, History as HistoryIcon, Layers3, MessageSquare, MoreHorizontal, Pencil, Rocket, RotateCcw, ScanSearch, ShieldCheck, ShieldOff, Sparkles, Star, Trash2, TriangleAlert, ZoomIn } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, Hash, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
-import { api, date, shortHash, variablesIn } from './api';
+import { api, date, variablesIn } from './api';
 import { isTextFile } from '../../../packages/domain/text';
 import { Badge, ContextMenu, Field, KindIcon, Lightbox, imageFile, imageSource, statusHelp, type MenuEntry } from './components';
 import { personalTarget } from './Skills';
-import { machinesEnabled } from './features';
 import { ExperimentsGrid } from './Experiments';
 import { SourcePage } from './SourcePage';
 import { History } from './History';
@@ -34,6 +33,16 @@ function savedDraft(id: string): { content: string; base: string } | null {
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
 const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'source' ? 'Original material' : 'Content';
 
+/** Copies plain text during a click. The window denies the async clipboard permission, so this uses a selected textarea. */
+function copyText(text: string) {
+  const area = document.createElement('textarea');
+  area.value = text; area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0';
+  document.body.append(area); area.select();
+  const copied = document.execCommand('copy');
+  area.remove();
+  if (!copied) throw new Error('Could not copy to the clipboard.');
+}
+
 /** The last `showTests` request a page acted on. */
 let shownTests = 0;
 
@@ -54,8 +63,9 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
   const [deployRevision, setDeployRevision] = useState<string | null>(null);
+  const [addingFile, setAddingFile] = useState(false);
   const editor = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setFieldsChanged(false); setFilePreview(null); setView('content'); }, [item.id]);
+  useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setFieldsChanged(false); setFilePreview(null); setAddingFile(false); setView('content'); }, [item.id]);
   // After the reset above, which runs when the page mounts; each request opens the tests once, not again when the item is reopened later.
   useEffect(() => { if (showTests?.id === item.id && showTests.at !== shownTests) { shownTests = showTests.at; setView('tests'); } }, [showTests, item.id]);
   useEffect(() => { if (editing) localStorage.setItem(`kiln-draft:${item.id}`, JSON.stringify({ content: draft, base })); }, [draft, base, editing, item.id]);
@@ -73,13 +83,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const viewFor = (kind: AgentKind) => setView(kind === 'trial' ? 'tests' : 'content');
   useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) viewFor(kind); }; window.addEventListener('kiln:agent-started', jump); return () => window.removeEventListener('kiln:agent-started', jump); }, []);
   const currentApproved = detail.approvals.some(a => a.revision === item.revision && a.trust === 'local');
-  const lastApproved = detail.approvals.filter(a => a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const publishJob = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision);
   const locations = providers.filter(p => (item.kind === 'agent' ? p.id === item.agent?.provider : p.id !== 'copilot') && personalTarget(snapshot.targets, providers, p.id));
   const copies = installations.filter(copy => copy.itemId === item.id);
   const drifted = copies.filter(copy => copy.state === 'drifted');
-  const made = isSource ? snapshot.items.filter(i => i.origin?.itemId === item.id && !i.deletedAt) : [];
-  const origin = item.origin ? snapshot.items.find(i => i.id === item.origin!.itemId) : undefined, fromSource = origin?.kind === 'source' ? origin : undefined;
+  const origin = item.origin ? snapshot.items.find(i => i.id === item.origin!.itemId) : undefined;
   const places = useMemo(() => trialPlaces(jobs), [jobs]);
   const events = useMemo(() => buildHistory(detail, snapshot, installations, places), [detail, snapshot, installations, places]);
   const primary = primaryAction({ detail, installations, locations: locations.length });
@@ -118,32 +125,26 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const main = run[primary];
 
   const statusEntries = (statuses: Item['status'][]): MenuEntry[] => statuses.filter(status => status !== item.status).map(status => ({ label: `Move to ${statusLabel[status]}`, hint: statusHelp[status], onSelect: () => setMeta({ status }) }));
-  const views: MenuEntry[] = [
-    ...(!isSource ? [{ label: 'Open tests', icon: <FlaskConical />, onSelect: () => setView('tests') }] : []),
-    { label: 'Open history', icon: <HistoryIcon />, onSelect: () => setView('history') },
-  ];
+  // The ⋯ menu holds only what the page doesn't already show: Edit, Approve, Install into…, tests and history live in the
+  // document bar and the rail, and the source page has its own Analyze, Ask and Edit.
   const trash: MenuEntry = { label: 'Move to trash', icon: <Trash2 />, danger: true, hint: 'Restore it any time from Trash. Installed copies stay in place.', onSelect: () => setMeta({ deleted: true }, 'Moved to Trash. Restore it any time.') };
-  const ask: MenuEntry[] = onAsk ? [{ label: 'Ask the agent about it', icon: <MessageSquare />, onSelect: onAsk }] : [];
+  const copyId: MenuEntry = { label: 'Copy item ID', icon: <Hash />, hint: 'For support or scripts', onSelect: () => void perform(async () => copyText(item.id), 'Item ID copied') };
+  const opens = ['open-original', 'open-link', 'open-file'].includes(primary);
+  const openStored: MenuEntry[] = opens ? [] : [{ label: 'Open stored file or link', icon: <ExternalLink />, onSelect: openItem }];
+  const addFile: MenuEntry = { label: 'Add a file…', icon: <Paperclip />, hint: 'Bundle a file with it, in a new draft revision', onSelect: () => { setView('content'); setAddingFile(true); } };
   const entries: MenuEntry[] = item.deletedAt ? [
-    ...views, 'separator',
+    copyId, 'separator',
     { label: 'Delete permanently…', icon: <Trash2 />, danger: true, onSelect: () => onAction('purge') },
-  ] : isSource ? [
-    ...(primary !== 'analyze' ? [{ label: 'Analyze again', icon: <ScanSearch />, hint: 'Run the analysis again; new entries are added beside the earlier ones', onSelect: analyse }] : []),
-    { label: 'Edit the original', icon: <Pencil />, onSelect: startEdit },
-    { label: 'Show what was made from it', icon: <Layers3 />, hint: 'The library filtered to items made from this source, wherever they are filed.', disabled: !made.length, onSelect: () => onMadeFrom(item.id) },
-    { label: 'Open stored file or link', icon: <ExternalLink />, onSelect: openItem },
-    ...ask, ...views, 'separator',
+  ] : sourcePage ? [
+    ...openStored, addFile, copyId, 'separator',
     ...statusEntries(['captured', 'archived']), trash,
   ] : [
-    { label: 'Edit', icon: <Pencil />, onSelect: startEdit },
     ...(primary !== 'copy' ? [{ label: 'Copy', icon: <Copy />, onSelect: () => onAction('copy') }] : []),
-    ...(primary !== 'test' ? [{ label: 'Test', icon: <FlaskConical />, hint: 'Run this revision on a real task', onSelect: test }] : []),
-    { label: currentApproved ? 'Unapprove' : 'Approve', icon: currentApproved ? <ShieldOff /> : <ShieldCheck />, hint: currentApproved ? 'Withdraw approval; installed copies stay in place.' : 'Approve this revision and publish it to GitHub.', onSelect: () => onAction(currentApproved ? 'unapprove' : 'approve') },
     ...(['skill', 'agent'].includes(item.kind) && locations.length > 0 && !['approve-install', 'install'].includes(primary) ? [{ label: currentApproved ? 'Install in every location' : 'Approve & install', icon: <Download />, hint: 'Install the approved revision in every configured location.', onSelect: () => onAction('approve-install') }] : []),
-    ...(installable ? [{ label: machinesEnabled ? 'Install into a project folder…' : 'Install a specific revision…', icon: <Rocket />, disabled: !detail.approvals.length, onSelect: () => onAction('deploy') }] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
-    { label: 'Open stored file or link', icon: <ExternalLink />, onSelect: openItem },
+    ...(installable ? [] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
     ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: 'Ask your agent to distill it into prompts, techniques, tools and insights. It becomes a source that links to them.', onSelect: analyse }] : []),
-    ...ask, ...views, 'separator',
+    ...(onAsk ? [{ label: 'Ask the agent about it', icon: <MessageSquare />, onSelect: onAsk }] : []),
+    ...openStored, addFile, copyId, 'separator',
     ...statusEntries(['captured', 'testing', 'rejected', 'archived']), trash,
   ];
   const sourceAction = (name: string, trial?: Trial) => {
@@ -151,21 +152,22 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   };
 
   const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : item.status === 'testing' ? 'testing' : 'draft';
-  const publishNote = currentApproved
-    ? publishJob?.status === 'failed' ? <span className="item-state-note bad">GitHub sync failed</span> : publishJob && publishJob.status !== 'done' ? <span className="item-state-note">Saving to GitHub…</span> : <span className="item-state-note ok">{snapshot.git.ahead && !publishJob ? 'Push pending' : 'On GitHub'}</span>
-    : !item.deletedAt && !shelved && lastApproved ? <span className="item-state-note">approved {shortHash(lastApproved.revision)} is live</span> : null;
+  // The source page has its own Analyze button beside Ask and the transcript, so the header doesn't repeat it.
+  const showPrimary = !(sourcePage && primary === 'analyze');
+  const collection = item.collection.replaceAll('/', ' / ');
 
   return <article className="detail-pane item-page" aria-label="Selected item">
     <header className="item-head detail-heading">
       <div className="item-head-text">
-        <div className="eyebrow"><KindIcon kind={item.kind} size={14} />{item.kind}<span className="dot">·</span><span title={item.collection ? `In the “${item.collection}” collection. Collections are folders you organise; the lifecycle state is the badge beside the title.` : 'Not in any collection; it shows in the whole library and under Unfiled.'}><Folder size={13} />{item.collection.replaceAll('/', ' / ') || 'Unfiled'}</span></div>
-        <div className="item-title-row"><h1>{item.title}</h1>{isSource && !item.deletedAt && !shelved ? <button type="button" className="source-chip" onClick={() => onMadeFrom(item.id)} disabled={!made.length} title="Show what an analysis made from this source in the library"><Layers3 size={12} />{made.length} made from it</button> : <span className="item-state"><Badge status={status} />{publishNote}</span>}</div>
+        <div className="eyebrow"><KindIcon kind={item.kind} size={14} />{item.kind}<span className="dot">·</span>{item.collection ? <button type="button" className="item-crumb" title="Open this collection" onClick={() => onCollection(item.collection)}><Folder size={13} />{collection}</button> : <span title="Not in any collection"><Folder size={13} />Unfiled</span>}</div>
+        {/* A captured source has no lifecycle to show; only archived or deleted ones get a badge. */}
+        <div className="item-title-row"><h1>{item.title}</h1>{!(isSource && status === 'draft') && <span className="item-state"><Badge status={status} /></span>}</div>
         {item.description && <p className="item-lede">{item.description}</p>}
-        <div className="detail-meta">{fromSource && <button type="button" className="source-chip" onClick={() => onSelect(fromSource.id)} title="Open the source this was made from"><FileInput size={12} />From “{fromSource.title}”</button>}<span>Updated {date(item.updatedAt)}</span>{sameTitle && <span className="detail-source" title={`Another item is also called “${item.title}”. This one came from ${sameTitle.full}.`}>from {sameTitle.label}</span>}</div>
+        <div className="detail-meta">{origin && <button type="button" className="source-chip" onClick={() => onSelect(origin.id)} title={origin.kind === 'source' ? 'Open the source this was made from' : 'Open the item this was derived from'}><FileInput size={12} />From “{origin.title}”</button>}<span>Updated {date(item.updatedAt)}</span></div>
       </div>
       <div className="detail-actions">
-        <button className={`icon-button ${item.favourite ? 'favourited' : ''}`} aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'} onClick={() => setMeta({ favourite: !item.favourite })}><Star size={18} fill={item.favourite ? 'currentColor' : 'none'} /></button>
-        <button className="button primary" onClick={main.onClick} title={main.title}>{main.icon}{main.label}</button>
+        <button className={`icon-button ${item.favourite ? 'favourited' : ''}`} aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'} title={item.favourite ? 'In favourites' : 'Add to favourites'} onClick={() => setMeta({ favourite: !item.favourite })}><Star size={18} fill={item.favourite ? 'currentColor' : 'none'} /></button>
+        {showPrimary && <button className="button primary" onClick={main.onClick} title={main.title}>{main.icon}{main.label}</button>}
         <button className="button item-more" aria-label="More" title="More actions" aria-haspopup="menu" aria-expanded={Boolean(more)} onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setMore({ x: rect.right - 250, y: rect.bottom + 4 }); }}><MoreHorizontal size={16} /></button>
         {more && <ContextMenu x={more.x} y={more.y} onClose={() => setMore(null)} entries={entries} />}
       </div>
@@ -181,7 +183,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
           : sourcePage && !editing ? <div className="item-content">
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
             <SourcePage detail={detail} snapshot={snapshot} providers={providers} jobs={jobs} perform={perform} refresh={refresh} onSelect={onSelect} onMadeFrom={onMadeFrom} onCollection={onCollection} onAction={sourceAction} />
-            <details className="item-files-details"><summary>Attached files ({Object.keys(revision.files).length})</summary><BundledFiles detail={detail} perform={perform} refresh={refresh} onZoom={setZoom} preview={filePreview} onPreview={setFilePreview} /></details>
+            {/* The transcript has its own toggle at the top, so its file is listed without a second preview. */}
+            <BundledFiles detail={detail} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} noPreview={['transcript.md', 'session.jsonl']} />
           </div>
           : <div className="item-content">
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
@@ -206,11 +209,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
               <div className="item-doc editing"><div className="item-doc-bar"><span className="item-doc-name">{mainFile(detail)}</span><span className="muted small">Text autosaves privately on this machine.</span></div><textarea ref={editor} aria-label="Content" className="item-textarea" value={draft} spellCheck={false} rows={Math.max(12, draft.split('\n').length + 2)} onChange={e => setDraft(e.target.value)} /></div>
             </form>
             : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom} />}
-            {!editing && <p className="item-foot">Revision <code>{shortHash(revision.hash)}</code> · {date(revision.createdAt)} by {revision.author}{item.deletedAt ? '' : ' · Click the text to edit it. Saving makes a new draft revision; installs keep the approved one until you approve again.'}</p>}
-            <BundledFiles detail={detail} perform={perform} refresh={refresh} onZoom={setZoom} preview={filePreview} onPreview={setFilePreview} />
+            <BundledFiles detail={detail} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
           </div>}
         </div>
-        <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onSelect={onSelect} onCollection={onCollection} onMadeFrom={onMadeFrom} onMachines={onMachines} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} />
+        <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onMachines={onMachines} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} approveInHeader={showPrimary && primary === 'approve'} sourceInHeader={['open-original', 'open-link'].includes(primary)} />
       </div>
     </div>
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
@@ -223,7 +225,6 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
   const { item, revision } = detail;
   const { properties, body } = splitFrontMatter(revision.content);
   const variables = variablesIn(revision.content);
-  const files = Object.keys(revision.files);
   const images = Object.entries(revision.files).filter(([name]) => imageFile(name));
   // Codex agents are TOML; only Markdown is rendered.
   const markdown = !(item.kind === 'agent' && !/\.md$/i.test(item.agent?.filename ?? ''));
@@ -238,10 +239,9 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
       {markdown && <span className="item-seg" role="group" aria-label="Show as"><button type="button" aria-pressed={formatted} className={formatted ? 'on' : ''} onClick={() => onRaw(false)}>Formatted</button><button type="button" aria-pressed={!formatted} className={formatted ? '' : 'on'} onClick={() => onRaw(true)}>Raw</button></span>}
       {onEdit && <button type="button" className="text-button" aria-label="Edit text" onClick={onEdit}><Pencil size={13} />Edit</button>}
     </div>
-    {formatted && (properties.length > 0 || variables.length > 0 || files.length > 0) && <table className="item-props"><tbody>
+    {formatted && (properties.length > 0 || variables.length > 0) && <table className="item-props"><tbody>
       {properties.map(([key, value]) => <tr key={key}><th>{key}</th><td>{key === 'allowed-tools' || key === 'tools' ? value.split(',').filter(Boolean).map(tool => <code key={tool}>{tool.trim()}</code>) : value}</td></tr>)}
       {variables.length > 0 && <tr><th>variables</th><td>{variables.map(v => <span key={v} className="variable-token" title="Filled in when you copy or test it">{v}</span>)}</td></tr>}
-      {files.length > 0 && <tr><th>files</th><td>{files.length} bundled file{files.length === 1 ? '' : 's'}: {files.slice(0, 4).map(f => <code key={f}>{f}</code>)}{files.length > 4 && <span className="muted">+{files.length - 4} more</span>}</td></tr>}
     </tbody></table>}
     {images.length > 0 && <div className="asset-gallery">{images.map(([name, content]) => <button key={name} type="button" className="asset-button" title={`Enlarge ${name}`} onClick={() => onZoom({ name, src: imageSource(name, content) })}><img className="asset-preview" alt={name} src={imageSource(name, content)} /><span><ZoomIn size={13} />{name}</span></button>)}</div>}
     {formatted ? <div className="item-doc-body"><Markdown variables>{body}</Markdown></div> : <pre className="item-raw">{revision.content}</pre>}
@@ -249,17 +249,23 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
   </section>;
 }
 
-/** Bundled files and attachments: preview, enlarge, open, remove, and add or replace one (each change is a new draft). */
-function BundledFiles({ detail, perform, refresh, onZoom, preview, onPreview }: { detail: ItemDetail; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>; onZoom: (image: { name: string; src: string }) => void; preview: { name: string; text: string } | null; onPreview: (file: { name: string; text: string } | null) => void }) {
+/**
+ * Bundled files and attachments, listed once: preview, open, remove, and add or replace one (each change is a new draft).
+ * Images are enlarged from the gallery above, so they aren't repeated here. Hidden when there are none until the ⋯ menu's
+ * "Add a file…" asks for the form.
+ */
+function BundledFiles({ detail, perform, refresh, preview, onPreview, adding, onAdding, noPreview = [] }: { detail: ItemDetail; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>; preview: { name: string; text: string } | null; onPreview: (file: { name: string; text: string } | null) => void; adding: boolean; onAdding: (adding: boolean) => void; /** Files shown elsewhere (a transcript) or not worth reading here. */ noPreview?: string[] }) {
   const { item, revision } = detail;
   const open = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
   const entries = Object.entries(revision.files);
-  return <section className="content-section item-files"><div className="section-heading"><h3>Bundled files</h3><span className="muted small">{entries.length ? `${entries.length} file${entries.length === 1 ? '' : 's'}` : ''}</span></div>
-    {entries.length ? <div className="file-preview-list">{entries.map(([name, content]) => <div key={name} className="bundled-file">
-      {imageFile(name) ? <button type="button" className="bundled-thumb" aria-label={`Enlarge ${name}`} onClick={() => onZoom({ name, src: imageSource(name, content) })}><img src={imageSource(name, content)} alt="" /></button> : null}
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => { if (adding) form.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [adding]);
+  if (!entries.length && !adding) return null;
+  return <section className="content-section item-files" aria-label="Files"><div className="section-heading"><h3>Files <small className="muted">{entries.length || ''}</small></h3>{!item.deletedAt && !adding && <button type="button" className="text-button" onClick={() => onAdding(true)}><Plus size={13} />Add or replace a file</button>}</div>
+    {entries.length > 0 && <div className="file-preview-list">{entries.map(([name, content]) => <div key={name} className="bundled-file">
       <span className="bundled-name">{name}<small>{Math.round(content.length * .75).toLocaleString()} bytes</small></span>
-      <span className="wrap-actions">{isTextFile(name) && <button className="text-button" onClick={() => onPreview({ name, text: decode(content) })}>Preview</button>}{imageFile(name) && <button className="text-button" onClick={() => onZoom({ name, src: imageSource(name, content) })}><ZoomIn size={13} />Enlarge</button>}<button className="text-button" onClick={() => open(name)}><ExternalLink size={13} />Open</button>{!item.deletedAt && <button className="text-button danger-text" onClick={() => void perform(async () => { await api('desktop.removeAttachment', { id: item.id, expect: item.revision, relative: name }); await refresh(); }, 'Attachment removed in a new draft revision')}>Remove</button>}</span></div>)}</div> : <p className="muted small">This revision contains text only.</p>}
-    {preview && <div><div className="section-heading"><h3>{preview.name}</h3><button className="text-button" onClick={() => onPreview(null)}>Close preview</button></div><pre className="prompt-preview">{preview.text}</pre></div>}
-    {!item.deletedAt && <form onSubmit={event => { event.preventDefault(); const v = new FormData(event.currentTarget); void perform(async () => { await api('desktop.addAttachment', { id: item.id, expect: item.revision, relative: v.get('relative') }); await refresh(); }); }}><Field label="Add or replace a bundled file" hint="Choose its relative path, then select the file. Scripts stay inert until separately reviewed and run."><div className="input-button"><input name="relative" required placeholder="scripts/check.py or references/guide.md" /><button className="button" type="submit">Choose file</button></div></Field></form>}
+      <span className="wrap-actions">{isTextFile(name) && !noPreview.includes(name) && <button className="text-button" aria-expanded={preview?.name === name} onClick={() => onPreview(preview?.name === name ? null : { name, text: decode(content) })}>{preview?.name === name ? 'Hide preview' : 'Preview'}</button>}<button className="text-button" onClick={() => open(name)}><ExternalLink size={13} />Open</button>{!item.deletedAt && <button className="text-button danger-text" onClick={() => void perform(async () => { await api('desktop.removeAttachment', { id: item.id, expect: item.revision, relative: name }); await refresh(); }, 'Attachment removed in a new draft revision')}>Remove</button>}</span></div>)}</div>}
+    {preview && <pre className="prompt-preview" aria-label={`Preview of ${preview.name}`}>{preview.text}</pre>}
+    {!item.deletedAt && adding && <form ref={form} onSubmit={event => { event.preventDefault(); const v = new FormData(event.currentTarget); void perform(async () => { await api('desktop.addAttachment', { id: item.id, expect: item.revision, relative: v.get('relative') }); await refresh(); onAdding(false); }); }}><Field label="Add or replace a file" hint="Its relative path, then pick the file. Scripts stay inert until separately reviewed and run."><div className="input-button"><input name="relative" required autoFocus placeholder="scripts/check.py or references/guide.md" /><button className="button" type="submit">Choose file</button><button className="button" type="button" onClick={() => onAdding(false)}>Cancel</button></div></Field></form>}
   </section>;
 }
