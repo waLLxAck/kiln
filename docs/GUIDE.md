@@ -120,7 +120,7 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.23.0](releases/0.23.0.md).
+See [what changed in 0.24.0](releases/0.24.0.md).
 
 ## Quick search
 
