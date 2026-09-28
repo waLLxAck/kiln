@@ -18,6 +18,13 @@
 .fleet-edit { width: 26px; height: 26px; margin-right: 6px; }
 .fleet-rename { display: flex; align-items: center; gap: 2px; padding: 6px 6px 6px 10px; }
 .fleet-rename input { height: 30px; width: 200px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--text); font: inherit; }
+/* While Machines manages this machine only (multiMachine in features.ts): the machine, then a quiet placeholder for adding one. */
+.fleet-here, .fleet-soon { gap: 10px; padding: 6px 14px 6px 8px; }
+.fleet-here .fleet-machine-icon { background: var(--accent-tint); color: var(--accent-text); }
+.fleet-here-meta { font-weight: 400; color: var(--muted); }
+.fleet-soon { border-style: dashed; background: transparent; box-shadow: none; }
+.fleet-soon .fleet-machine-text b { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); }
+.fleet-soon-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; line-height: 16px; padding: 0 6px; border-radius: 999px; background: var(--accent-tint); color: var(--accent-text); }
 .fleet-share { display: flex; align-items: center; gap: 10px; }
 .fleet-share-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
 .fleet-share-state.warn { color: var(--warn); }

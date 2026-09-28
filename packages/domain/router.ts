@@ -168,6 +168,8 @@ export class Router {
       case 'skills.cleanEntry': return this.deployments.cleanScanEntry(args);
       case 'skills.import': return this.deployments.importExternal(args);
       case 'skills.sync': return this.fleet.sync();
+      // This machine's id and name only: no Git, nothing published (Machines while it manages this machine alone).
+      case 'fleet.identity': return this.fleet.identity();
       case 'fleet.view': return this.fleet.view(args);
       case 'fleet.live': return this.fleet.live();
       case 'fleet.report': return this.fleet.report();
@@ -250,7 +252,7 @@ export class Router {
     if (this.wb.repositoryState().ready) this.publisher.enqueue('unapprove', item.id, item.revision);
     return item;
   }
-  /** Experimental update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
+  /** Update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
   private published<T extends { itemId: string; approved: boolean; revision: string }>(result: T) {
     if (result.approved && this.wb.repositoryState().ready) this.publisher.enqueue('approve', result.itemId, result.revision);
     return result;

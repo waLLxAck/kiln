@@ -382,15 +382,6 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .provider-mark svg { width: 17px; height: 17px; }
 
 /* Machines */
-/* Public builds show this in place of Machines until it is ready. */
-.coming-soon { max-width: 560px; margin: 24px auto 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); text-align: center; padding: 48px 36px 40px; }
-.coming-soon-icon { width: 52px; height: 52px; border-radius: 14px; background: var(--accent-tint); color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
-.coming-soon-tag { display: block; width: fit-content; margin: 0 auto 10px; padding: 2px 10px; border-radius: 999px; background: var(--accent-tint); color: var(--accent-text); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-.coming-soon h2 { font-size: 18px; margin-bottom: 10px; }
-.coming-soon p { font-size: 13px; color: var(--text-2); max-width: 440px; margin: 0 auto 12px; line-height: 1.55; }
-.coming-soon p.muted { color: var(--muted); margin-bottom: 20px; }
-.coming-soon .button { margin: 0 auto; }
-.nav-item .nav-soon { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; line-height: 16px; }
 .machine-banner { display: flex; align-items: center; gap: 18px; padding: 18px 22px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); margin-bottom: 16px; box-shadow: var(--shadow-sm); }
 .machine-banner > div:nth-child(2) { flex: 1; }
 .machine-banner h3 { font-size: 15px; }
@@ -892,12 +883,12 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .live-dot.info { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
 .live-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
 
-/* Experimental: Update installed copies (installUpdates). Solid accent, so "Update" stands apart from the tinted found/linked states. */
+/* Update installed copies: solid accent, so "Update" stands apart from the tinted found/linked states. */
 .skill-toggle.outdated { color: var(--accent-text); background: var(--accent-tint-2); border-color: var(--accent); }
 .skill-toggle.outdated:hover { background: var(--accent-tint); border-color: var(--accent-strong); }
 .install-mark.outdated { color: var(--accent-ink); background: var(--accent); }
 .badge.update_available { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-/* Experimental: betterSearch (steadier, ranked search) */
+/* Ranked search and quick search */
 .search-field .search-busy { color: var(--accent); }
 .search-close-note { margin: 2px 2px 0; font-size: 12px; color: var(--warn); }
 .better-palette { position: relative; }
@@ -907,7 +898,7 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .palette-copied { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px; background: color-mix(in srgb, var(--panel) 94%, transparent); font-size: 16px; color: var(--text); }
 .palette-copied svg { color: var(--ok); flex-shrink: 0; }
 .palette-copied b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Experimental: keyboard navigation and undo (keyboardUndo) */
+/* Keyboard navigation and undo */
 .context-menu button:focus-visible { outline: none; background: var(--subtle-2); box-shadow: inset 0 0 0 1px var(--accent); }
 .context-menu button.danger:focus-visible { background: var(--bad-bg); }
 .toast-stack { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: min(640px, calc(100vw - 48px)); pointer-events: none; }
@@ -921,7 +912,7 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .shortcut-sheet dt { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; max-width: 190px; color: var(--muted); }
 .shortcut-sheet dd { margin: 0; color: var(--text-2); line-height: 1.4; }
 .shortcut-or { margin: 0 3px; color: var(--faint); }
-/* The run-finished toast (runNotifications) sits above however many toasts the stack shows. */
+/* The run-finished toast sits above however many toasts the stack shows. */
 body:has(.toast-stack > .toast) .run-toast { bottom: 80px; }
 body:has(.toast-stack > .toast:nth-child(2)) .run-toast { bottom: 134px; }
 body:has(.toast-stack > .toast:nth-child(3)) .run-toast { bottom: 188px; }
@@ -943,7 +934,7 @@ body:has(.toast-stack > .toast:nth-child(3)) .run-toast { bottom: 188px; }
 .code-diagnostics .text-button { flex: none; font-family: var(--mono); font-size: 11.5px; }
 .code-checks-ok { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 12px; color: var(--ok); }
 .lib-draft { flex-shrink: 0; font-size: 10.5px; padding: 0 6px; }
-/* Experimental: Install into project folders (projectInstalls) */
+/* Install into project folders */
 .project-install-heading { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
 .project-choices { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-md); max-height: 240px; overflow: auto; margin-bottom: 10px; }
 .project-choice { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); }

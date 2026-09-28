@@ -165,7 +165,7 @@ test('a differing external copy can be kept; approval refuses when the folder ch
     assert.equal(adopted.method, 'adopted');
     assert.equal(copy(f, item.id, f.claudeCopy)?.state, 'installed');
     assert.equal(fs.readFileSync(path.join(f.claudeCopy, 'SKILL.md'), 'utf8'), skill('Written by hand.'));
-    // With installUpdates on too, the Agents copy Kiln installed earlier is now behind the kept revision and Update brings it along.
+    // The Agents copy Kiln installed earlier is now behind the kept revision, and Update brings it along.
     assert.equal(copy(f, item.id, f.agents)?.outdated, true);
     assert.deepEqual(f.deployment.updateInstalls({ itemId: item.id }).updated.map(u => u.label), ['Agents']);
     assert.equal(fs.readFileSync(path.join(f.agents, 'SKILL.md'), 'utf8'), skill('Written by hand.'));

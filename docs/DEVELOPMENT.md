@@ -66,9 +66,9 @@ Only **Restart to update** verifies the cached installer again, starts it silent
 
 Build a newer installer with `npm run dist:win` after increasing `version` in `package.json`. When building from a worktree, set `KILN_SOURCE_ROOT` to the main checkout. Published installers are built with `KILN_PUBLIC_BUILD=1`, which records no source folder, so they follow GitHub releases instead.
 
-## Build-time switches
+## Code switches
 
-`KILN_PUBLIC_BUILD=1` also hides unfinished sections in the renderer. `apps/desktop/build-flags.ts` turns the environment into constants that `vite.config.ts` bakes in with `define` (read through `apps/desktop/src/features.ts`); they are not runtime settings. Today there is one: **Machines** shows a "Coming soon" page in public builds, and links into it are reworded. `npm run dev`, local `npm run build` / `npm start` and the desktop tests keep the full section. `KILN_SHOW_MACHINES=1` shows it in a public build as well, and `KILN_SHOW_MACHINES=0` shows the public page in a local build. `tests/desktop/machines.spec.ts` checks both.
+Every build shows the same renderer; `KILN_PUBLIC_BUILD=1` only affects the update source above. Multi-machine Machines (other machines, the All machines overview, marking items for another machine and sharing machine reports through GitHub) is off in code: `multiMachine` in `apps/desktop/src/features.ts`. While it is off, Machines manages this machine only and shows **Add a machine · Coming soon**, and the app never starts the fleet reporter (`fleet.start`), so nothing writes `workbench/machines/`. The fleet backend (`packages/fleet`) and `tests/fleet.test.ts` stay; the two-machine test in `tests/desktop/machines.spec.ts` is skipped until the switch is turned on again.
 
 ## Releases
 

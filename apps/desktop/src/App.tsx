@@ -13,8 +13,7 @@ import { CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog
 import { isWithin, relocate, untitledName } from '../../../packages/domain/collections';
 import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
 import { sharedTitleIds, titleCollisions } from './item-source';
-import { machinesEnabled } from './features';
-import { MachinesSoon } from './MachinesSoon';
+import { multiMachine } from './features';
 import { MachinesView } from './Machines';
 import { arrangeItems, defaultSort, groupItems, ItemBar, locationName, locationsFor, moveInOrder, nextSort, type Location } from './Library';
 import { BulkBar, LibraryTable } from './LibraryTable';
@@ -36,6 +35,7 @@ import { useItemDrag } from './ItemDrag';
 import { ShortcutSheet } from './ShortcutSheet';
 import { DeployDialog, ResultDialog, TrialDialog, VariablesDialog } from './dialogs';
 import { ProjectInstallDialog } from './ProjectInstalls';
+import type { ProjectLocation } from '../../../packages/deployment/projects';
 import { Detail } from './Detail';
 import { RepositoryPanel } from './RepositoryPanel';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
@@ -53,7 +53,7 @@ import { ExperimentsPage } from './ExperimentsPage';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 
-type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string } | null;
+type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation } | null;
 const hidden = ['archived', 'rejected'];
 /** Whether an item shows under a collection filter: everything for none, the collection with its subfolders, or only unfiled items. */
 const inCollection = (item: Item, collection: string) => !collection || (collection === UNFILED ? !item.collection : isWithin(item.collection, collection));
@@ -184,9 +184,10 @@ export default function App() {
   const [origins, setOrigins] = useState<Record<string, string>>({});
   const sharedTitles = snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '';
   useEffect(() => { if (!sharedTitles) { setOrigins({}); return; } let active = true; void api<Record<string, string>>('items.origins', { ids: sharedTitles.split(',') }).then(result => { if (active) setOrigins(result); }).catch(() => {}); return () => { active = false; }; }, [sharedTitles]);
-  // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
   // Machines: share this machine's installs with the rest of the fleet, now and after each change (see packages/fleet).
-  useEffect(() => { if (machinesEnabled) void api('fleet.start').catch(() => {}); }, []);
+  // Never started while Machines manages this machine only, so no machine report is committed.
+  useEffect(() => { if (multiMachine) void api('fleet.start').catch(() => {}); }, []);
+  // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
   useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
   useEffect(() => {
     const chosenTheme = theme ?? snapshot?.settings.theme;
@@ -299,6 +300,8 @@ export default function App() {
     if (name === 'copy' && detail && variablesIn(detail.revision.content).length === 0) { void perform(async () => { await api('desktop.copy', { id: detail.item.id, revision: detail.item.revision }); await refresh(); }, 'Copied to clipboard'); return; }
     if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }
     if (name.startsWith('keep:')) { const [, itemId, targetId] = name.split(':'); keeper.keep(itemId, targetId); return; }
+    // The rail's Manage… on a copy in a project folder Kiln doesn't manage: the project dialog on that folder (the root may hold colons).
+    if (name.startsWith('install-project:')) { const [, location, ...root] = name.split(':'); setDialog({ name: 'install-project', workspace: root.join(':'), location: (location || undefined) as ProjectLocation | undefined }); return; }
     setDialog({ name: name === 'copy' ? 'variables' : name, trial });
   };
   const updateAction = (restart: boolean) => void perform(async () => {
@@ -497,7 +500,7 @@ export default function App() {
   </section>;
   const itemPage = itemView && <div className="item-view">
     <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} showTests={testRequest} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
@@ -514,14 +517,13 @@ export default function App() {
         {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
         <div className="workspace-row"><div className="workspace-content">
         {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
-        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && machinesEnabled && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
+        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
         {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
-        {section === 'machines' && !machinesEnabled && <MachinesSoon onSettings={() => navigate('settings')} />}
-        {section === 'machines' && machinesEnabled && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
+        {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
         {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => openTrialItem(a.itemId!)}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
         {section === 'settings' && <div className="settings-grid"><RepositoryPanel root={snapshot.root} perform={perform} refresh={refresh} onSetup={() => setSetupOpen(true)} onMessage={setMessage} />
           <section className="settings-card"><div className="section-heading"><h3><Download size={18} />Skill &amp; agent locations</h3><Badge status={configured.length ? 'ready' : 'not set up'} /></div><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={setLocation} onScan={(provider, target) => setDialog({ name: 'scan', provider, targetId: target.id })} />
-            <div className="wrap-actions"><button className="button" disabled={!configured.length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library, plus anything marked for this machine in Machines</span></div>
+            <div className="wrap-actions"><button className="button" disabled={!configured.length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library{multiMachine ? ', plus anything marked for this machine in Machines' : ''}</span></div>
             <p className="muted small">The library records which skills you installed (workbench/installs.json). After cloning it on another machine, turn on the locations above and press the button, or run <code>workbench skills sync</code>.</p>
             {syncReport && <details open><summary>Sync result</summary><div className="file-preview-list">{syncReport.map((r, i) => <div key={i}><span>{snapshot.items.find(it => it.id === r.itemId)?.title ?? r.itemId} · {r.provider === 'codex-native' ? 'Codex-specific' : primarySkillLabel(r.provider)}</span><span className="muted">{r.result}</span></div>)}{!syncReport.length && <div><span className="muted">Nothing marked for install.</span></div>}</div></details>}
           </section>
@@ -558,12 +560,12 @@ export default function App() {
     {dialog?.name === 'delete-collection' && dialog.collection && (() => { const name = dialog.collection; return <DeleteCollectionDialog name={name} names={snapshot.collections} items={snapshot.items} onClose={() => setDialog(null)} onDelete={(items, note) => void perform(async () => { await api('collections.delete', { name, confirm: true, items }); if (collection && isWithin(collection, name)) setCollection(''); if (items === 'trash' && itemsWithin(snapshot.items, name).some(i => i.id === selected)) setSelected(''); await completed(); }, note)} />; })()}
     {dialog?.name === 'move-items' && dialog.itemIds && <MoveItemsDialog names={snapshot.collections} items={snapshot.items.filter(i => dialog.itemIds!.includes(i.id))} onClose={() => setDialog(null)} onDone={async (to, _moved, ids = []) => { const before = snapshot.items.filter(i => dialog.itemIds!.includes(i.id)); setDialog(null); setBulkIds([]); await refresh(); undoStack.recordMove(before, { collection: to, moved: ids }); }} />}
     {detail && dialog?.name === 'variables' && <VariablesDialog detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); setMessage('Copied to clipboard'); void refresh(); }} />}
-    {dialog?.name === 'trial' && (dialog.itemId ?? detail?.item.id) && <AgentTrialDialog itemId={dialog.itemId ?? detail!.item.id} providers={providers} targets={snapshot.targets} initialWorkspace={jobs.find(j => j.itemId === (dialog.itemId ?? detail?.item.id) && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} knownProjects revisions={detail?.item.id === (dialog.itemId ?? detail?.item.id) ? detail ?? undefined : undefined} />}
-    {detail && dialog?.name === 'manual-trial' && <TrialDialog detail={detail} providers={providers} targets={snapshot.targets} initialWorkspace={dialog.workspace} knownProjects onClose={() => { setDialog(null); void refresh(); }} onDone={() => void completed()} />}
+    {dialog?.name === 'trial' && (dialog.itemId ?? detail?.item.id) && <AgentTrialDialog itemId={dialog.itemId ?? detail!.item.id} providers={providers} initialWorkspace={jobs.find(j => j.itemId === (dialog.itemId ?? detail?.item.id) && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} revisions={detail?.item.id === (dialog.itemId ?? detail?.item.id) ? detail ?? undefined : undefined} />}
+    {detail && dialog?.name === 'manual-trial' && <TrialDialog detail={detail} providers={providers} initialWorkspace={dialog.workspace} onClose={() => { setDialog(null); void refresh(); }} onDone={() => void completed()} />}
     {dialog?.name === 'result' && dialog.trial && <ResultDialog trial={dialog.trial} onClose={() => setDialog(null)} onDone={() => void completed()} />}
     {detail && dialog?.name === 'derive' && <CreateSkillDialog itemId={detail.item.id} title={detail.item.title} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} />}
     {detail && dialog?.name === 'deploy' && <DeployDialog detail={detail} snapshot={snapshot} onClose={() => setDialog(null)} onDone={() => void completed()} />}
-    {detail && dialog?.name === 'install-project' && <ProjectInstallDialog item={detail.item} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {detail && dialog?.name === 'install-project' && <ProjectInstallDialog item={detail.item} initial={dialog.workspace ? { root: dialog.workspace, location: dialog.location } : undefined} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'add-project' && <ProjectInstallDialog onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} settings={snapshot.settings} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'scan' && dialog.provider && (() => { const provider = providers.find(p => p.id === dialog.provider), target = snapshot.targets.find(t => t.id === dialog.targetId); return provider && target ? <ScanDialog provider={provider} target={target} onClose={() => setDialog(null)} onImported={refresh} /> : null; })()}

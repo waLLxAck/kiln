@@ -33,6 +33,7 @@ type Props = {
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
   /** Duplicates: opens the consolidate dialog for this item's group, marks it as not a duplicate of the others, and names a copy briefly. */
   onConsolidate?: () => void; onNotDuplicates?: () => void; where?: (item: Item) => string;
+  /** Stars, moves to another status, trashes or restores the item as one action on the library's undo stack (Ctrl+Z). */ onMeta: (patch: { favourite: boolean } | { status: Item['status'] } | { deleted: boolean }) => void;
   /** Set when something outside the page (the list's Test, quick search) asks for this item's tests. */ showTests?: { id: string; at: number };
 };
 type View = 'content' | 'tests' | 'history';
@@ -57,7 +58,7 @@ let shownTests = 0;
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onConsolidate, onNotDuplicates, where = i => i.title, showTests }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
@@ -94,7 +95,6 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const shelved = ['archived', 'rejected'].includes(item.status);
 
   const openItem = () => void perform(() => api('desktop.openItem', { id: item.id }));
-  const setMeta = (change: Record<string, unknown>, message?: string) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...change }); await refresh(); }, message);
   // CodeMirror loads on first use, so focus it once it is on screen (tried for about a second).
   const focusEditor = (tries = 20) => { const content = document.querySelector<HTMLElement>('.item-code .cm-content'); if (content) content.focus(); else if (tries > 0) setTimeout(() => focusEditor(tries - 1), 50); };
   const startEdit = () => { setView('content'); draft.start(); requestAnimationFrame(() => focusEditor()); };
@@ -103,7 +103,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const toggleRaw = (value: boolean) => { setRaw(value); localStorage.setItem('kiln-detail-raw', value ? '1' : '0'); };
 
   const run: Record<PrimaryAction, { label: string; icon: ReactNode; onClick: () => void; title?: string }> = {
-    restore: { label: 'Restore', icon: <RotateCcw size={15} />, onClick: () => setMeta({ deleted: false }, 'Item restored') },
+    restore: { label: 'Restore', icon: <RotateCcw size={15} />, onClick: () => onMeta({ deleted: false }) },
     'open-original': { label: 'Open original', icon: <ExternalLink size={15} />, onClick: openItem },
     analyze: { label: 'Analyze again', icon: <ScanSearch size={15} />, onClick: analyse, title: 'Run the analysis again; new entries are added beside the earlier ones' },
     resolve: { label: changedCopiesLabel(drifted.length), icon: <TriangleAlert size={15} />, onClick: () => drifted[0] && onToggleInstall(drifted[0].provider, drifted[0].targetId), title: 'A copy was edited outside Kiln. Compare it, then reinstall the approved version or remove it.' },
@@ -119,14 +119,14 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   };
   const main = run[primary];
 
-  const statusEntries = (statuses: Item['status'][]): MenuEntry[] => statuses.filter(status => status !== item.status).map(status => ({ label: `Move to ${statusLabel[status]}`, hint: statusHelp[status], onSelect: () => setMeta({ status }) }));
+  const statusEntries = (statuses: Item['status'][]): MenuEntry[] => statuses.filter(status => status !== item.status).map(status => ({ label: `Move to ${statusLabel[status]}`, hint: statusHelp[status], onSelect: () => onMeta({ status }) }));
   // The ⋯ menu holds only what the page doesn't already show: Edit, Approve, Install into…, tests and history live in the
   // document bar and the rail, and the source page has its own Analyze, Ask and Edit.
-  const trash: MenuEntry = { label: 'Move to trash', icon: <Trash2 />, danger: true, hint: 'Restore it any time from Trash. Installed copies stay in place.', onSelect: () => setMeta({ deleted: true }, 'Moved to Trash. Restore it any time.') };
+  const trash: MenuEntry = { label: 'Move to trash', icon: <Trash2 />, danger: true, hint: 'Restore it any time from Trash, or press Ctrl+Z. Installed copies stay in place.', onSelect: () => onMeta({ deleted: true }) };
   const copyId: MenuEntry = { label: 'Copy item ID', icon: <Hash />, hint: 'For support or scripts', onSelect: () => void perform(async () => copyText(item.id), 'Item ID copied') };
   const opens = ['open-original', 'open-link', 'open-file'].includes(primary);
   const openStored: MenuEntry[] = opens ? [] : [{ label: 'Open stored file or link', icon: <ExternalLink />, onSelect: openItem }];
-  const addFile: MenuEntry = { label: 'Add a file…', icon: <Paperclip />, hint: 'Bundle a file with it, in a new draft revision', onSelect: () => { setView('content'); setAddingFile(true); } };
+  const addFile: MenuEntry = { label: 'Add a file…', icon: <Paperclip />, hint: item.kind === 'agent' ? 'Bundle a file from disk; it is saved as a new revision' : 'Start a text file in your draft, or bundle one from disk', onSelect: () => { setView('content'); setAddingFile(true); } };
   const entries: MenuEntry[] = item.deletedAt ? [
     copyId, 'separator',
     { label: 'Delete permanently…', icon: <Trash2 />, danger: true, onSelect: () => onAction('purge') },
@@ -161,7 +161,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         <div className="detail-meta">{origin && <button type="button" className="source-chip" onClick={() => onSelect(origin.id)} title={origin.kind === 'source' ? 'Open the source this was made from' : 'Open the item this was derived from'}><FileInput size={12} />From “{origin.title}”</button>}<span>Updated {date(item.updatedAt)}</span></div>
       </div>
       <div className="detail-actions">
-        <button className={`icon-button ${item.favourite ? 'favourited' : ''}`} aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'} title={item.favourite ? 'In favourites' : 'Add to favourites'} onClick={() => setMeta({ favourite: !item.favourite })}><Star size={18} fill={item.favourite ? 'currentColor' : 'none'} /></button>
+        <button className={`icon-button ${item.favourite ? 'favourited' : ''}`} aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'} title={item.favourite ? 'In favourites' : 'Add to favourites'} onClick={() => onMeta({ favourite: !item.favourite })}><Star size={18} fill={item.favourite ? 'currentColor' : 'none'} /></button>
         {showPrimary && <button className="button primary" onClick={main.onClick} title={main.title}>{main.icon}{main.label}</button>}
         <button className="button item-more" aria-label="More" title="More actions" aria-haspopup="menu" aria-expanded={Boolean(more)} onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setMore({ x: rect.right - 250, y: rect.bottom + 4 }); }}><MoreHorizontal size={16} /></button>
         {more && <ContextMenu x={more.x} y={more.y} onClose={() => setMore(null)} entries={entries} />}
