@@ -35,12 +35,16 @@ test('keep a copy edited outside Kiln from the Installs rail, Compare and Machin
   page.on('pageerror', error => errors.push(error.message));
   try {
     const itemId = await setUp(page, home);
-    const installs = page.getByRole('region', { name: 'Installs' });
+    const installs = page.getByRole('region', { name: 'Installs', exact: true });
+    // Personal locations are toggles in the rail; a changed copy's toggle opens its dialog, which offers Keep these changes.
+    const claudeCopy = installs.getByRole('group', { name: 'Installed for' }).getByRole('button', { name: /^Claude/ });
+    const keepFromRail = async () => { await claudeCopy.click(); await page.getByRole('dialog').getByRole('button', { name: 'Keep these changes' }).click(); };
     const toast = page.locator('.toast');
 
-    // The changed copy's row in the rail keeps it with one button; approving adopts the folder without rewriting it.
+    // The changed copy in the rail keeps it with one button; approving adopts the folder without rewriting it.
     const edited = fs.readFileSync(path.join(claude, 'SKILL.md'), 'utf8'), inode = fs.statSync(path.join(claude, 'SKILL.md')).ino;
-    await installs.getByRole('button', { name: 'Keep these changes' }).click();
+    await expect(claudeCopy).toContainText('edited');
+    await keepFromRail();
     let dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Changes kept as a draft' })).toBeVisible();
     await expect(dialog).toContainText('Kept changes from the Claude copy');
@@ -51,13 +55,15 @@ test('keep a copy edited outside Kiln from the Installs rail, Compare and Machin
     expect(fs.readFileSync(path.join(claude, 'SKILL.md'), 'utf8')).toBe(edited);
     expect(fs.statSync(path.join(claude, 'SKILL.md')).ino).toBe(inode);
     expect(fs.readFileSync(path.join(agents, 'SKILL.md'), 'utf8')).toBe(edited);
-    await expect(installs.getByRole('button', { name: 'Keep these changes' })).toHaveCount(0);
+    await expect(claudeCopy).toContainText('Installed');
     expect(await page.evaluate(() => window.kiln.call<any[]>('items.list', {}))).toHaveLength(1);
 
-    // Compare offers it too; Not now leaves the draft for later.
+    // Compare (here from the item's history, where the change outside Kiln is listed) offers it too; Not now leaves the draft for later.
     fs.appendFileSync(path.join(claude, 'SKILL.md'), 'Another local note.\n');
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
-    await installs.getByRole('button', { name: 'Compare', exact: true }).click();
+    await expect(claudeCopy).toContainText('edited');
+    await page.getByRole('button', { name: 'Open history', exact: true }).click();
+    await page.getByRole('button', { name: 'Compare', exact: true }).first().click();
     dialog = page.getByRole('dialog');
     await expect(dialog.getByText('1 of 1 file differ.')).toBeVisible();
     await dialog.getByRole('button', { name: 'Keep these changes' }).click();
@@ -71,13 +77,14 @@ test('keep a copy edited outside Kiln from the Installs rail, Compare and Machin
     // The item changed after the page was loaded: nothing is overwritten, and Kiln reloads it.
     fs.appendFileSync(path.join(claude, 'SKILL.md'), 'A third note.\n');
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
-    await expect(installs.getByRole('button', { name: 'Keep these changes' })).toBeVisible();
+    await expect(claudeCopy).toContainText('edited');
     await page.evaluate(async ({ id, content }) => {
       const detail = await window.kiln.call<any>('items.read', { id });
       await window.kiln.call('items.update', { id, expect: detail.item.revision, summary: 'Changed elsewhere', value: { ...detail.revision, collection: detail.item.collection, content } });
     }, { id: itemId, content: skill('Changed elsewhere.') });
-    await installs.getByRole('button', { name: 'Keep these changes' }).click();
+    await keepFromRail();
     await expect(page.getByText(/changed since you opened it, so nothing was kept/).first()).toBeVisible();
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
     detail = await read(page, itemId);
     expect(detail.revision.summary).toBe('Changed elsewhere');
     expect(detail.revision.content).not.toContain('A third note.');
@@ -85,7 +92,7 @@ test('keep a copy edited outside Kiln from the Installs rail, Compare and Machin
     // A folder with entries the importer skips can be kept, with a warning and no adopting.
     fs.mkdirSync(path.join(claude, 'node_modules')); fs.writeFileSync(path.join(claude, 'node_modules', 'x.js'), '');
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
-    await installs.getByRole('button', { name: 'Keep these changes' }).click();
+    await keepFromRail();
     dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Changes kept as a draft' })).toBeVisible();
     await expect(dialog).toContainText('Not kept, as when importing: node_modules');

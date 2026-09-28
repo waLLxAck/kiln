@@ -137,6 +137,9 @@ test('install into a chosen project from the rail, see it under Projects and as 
     await dialog.getByRole('button', { name: 'Cancel' }).click();
 
     // Machines' Add project… is the same dialog without an item: it adds the folder for a location and writes nothing into it.
+    // (Removing the copy above left the empty .claude/skills folders it was in; adding must not change anything.)
+    const contents = () => fs.readdirSync(project, { recursive: true }).map(String).sort();
+    const before = contents();
     await nav(page, 'Machines');
     await page.getByRole('button', { name: 'Add project…' }).first().click();
     dialog = page.getByRole('dialog');
@@ -147,7 +150,8 @@ test('install into a chosen project from the rail, see it under Projects and as 
     await dialog.getByRole('button', { name: 'Add project', exact: true }).click();
     await expect(toast).toContainText('Web app is now one of your projects (Agents)');
     await expect(page.getByRole('button', { name: 'Careful review in Web app: Not installed' })).toBeVisible();
-    expect(fs.readdirSync(project)).toEqual([]);
+    expect(contents()).toEqual(before);
+    expect(contents().some(name => name.includes('careful-review'))).toBe(false);
     await page.getByRole('button', { name: 'Add project…' }).first().click();
     dialog = page.getByRole('dialog');
     await dialog.getByRole('radiogroup', { name: 'Project' }).getByRole('radio', { name: /Web app/ }).check();

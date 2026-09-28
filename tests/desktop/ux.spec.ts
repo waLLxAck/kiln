@@ -64,6 +64,8 @@ test('library views retain tokens, search, the open item and scroll across secti
     await showKind(page, 'prompt');
     await page.getByRole('combobox', { name: 'Search library' }).fill('Remember');
     await expect(page.locator('.item-card')).toHaveCount(35);
+    // The list stays on screen while the search runs; its results start at the top, so scroll once they are in.
+    await expect(page.getByLabel('Searching')).toHaveCount(0);
     await page.locator('.item-list').evaluate(node => { node.scrollTop = 400; });
     await expect.poll(() => page.locator('.item-list').evaluate(node => node.scrollTop)).toBeGreaterThan(300);
     // Opening an item replaces the list; Esc brings the list back where it was.
@@ -74,7 +76,7 @@ test('library views retain tokens, search, the open item and scroll across secti
     await page.getByRole('button', { name: 'More', exact: true }).click();
     await expect(page.getByRole('menuitem', { name: /^Move to (captured|draft)/ })).toHaveCount(0);
     await page.getByRole('menuitem', { name: /^Move to testing/ }).click();
-    await page.locator('.detail-scroll').evaluate(node => { node.scrollTop = 300; });
+    await page.locator('.item-main').evaluate(node => { node.scrollTop = 300; });
     await page.getByRole('button', { name: 'Settings & repository' }).click();
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     // Coming back from another section restores the view as it was, open item included.
@@ -84,7 +86,7 @@ test('library views retain tokens, search, the open item and scroll across secti
     await expect(page.getByRole('menuitem', { name: /^Move to testing/ })).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menu')).toHaveCount(0);
-    await expect.poll(() => page.locator('.detail-scroll').evaluate(node => node.scrollTop)).toBeGreaterThan(200);
+    await expect.poll(() => page.locator('.item-main').evaluate(node => node.scrollTop)).toBeGreaterThan(200);
     await page.keyboard.press('Escape');
     await expect(page.getByRole('combobox', { name: 'Search library' })).toHaveValue('Remember');
     await expect(page.getByRole('button', { name: 'Remove kind: prompt' })).toBeVisible();

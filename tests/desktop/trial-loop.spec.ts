@@ -39,9 +39,8 @@ test('trial loop: re-test, improve with agent, your verdict beside the agent’s
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
     await page.getByText('Loop fixture', { exact: true }).first().click();
 
-    // Test (in the ⋯ menu: a prompt's primary action is Copy) opens the grid; its full run dialog picks the revision, the current one by default.
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Test', exact: true }).click();
+    // Open tests (in the rail's Tests section: a prompt's primary action is Copy) opens the grid; its full run dialog picks the revision, the current one by default.
+    await page.getByRole('region', { name: 'Tests', exact: true }).getByRole('button', { name: 'Open tests', exact: true }).click();
     const grid = page.getByRole('region', { name: 'Experiments', exact: true });
     await grid.getByRole('button', { name: 'Run options…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Run an experiment' });

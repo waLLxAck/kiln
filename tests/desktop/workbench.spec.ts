@@ -55,6 +55,8 @@ test('real desktop capture → copy → trial → approval → deploy → edit �
     expect(fs.existsSync(destination)).toBe(false);
     await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0); expect(fs.readFileSync(destination, 'utf8')).toBe(content);
+    // Test swapped the content for the experiments grid; ← Content brings the text (and its Edit) back.
+    await page.getByRole('button', { name: 'Content', exact: true }).click();
     await page.getByRole('button', { name: 'Edit text', exact: true }).click();
     await page.getByLabel('Content', { exact: true }).fill(content + '\nUnapproved change.');
     await page.getByLabel('What changed?').fill('Test approval integrity');

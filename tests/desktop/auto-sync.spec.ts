@@ -6,8 +6,9 @@ import { execFileSync } from 'node:child_process';
 import { desktopEnv, readyLibrary } from './fixture';
 
 const skill = '---\nname: from-the-laptop\ndescription: Review a change for correctness and clear evidence.\n---\n\n# Procedure\nRead the diff.\n';
-/** Kiln's own CLI (built by npm run build) on another clone: a second machine approving and pushing. */
+/** Kiln's own CLI (built by npm run build) on another clone: a second machine approving and pushing. Like any machine, it pulls first. */
 function approveOnLaptop(root: string, library: string, title: string) {
+  execFileSync('git', ['-C', library, 'pull', '-q', '--ff-only'], { windowsHide: true });
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.execPath, [path.resolve('dist/cli/workbench.cjs'), '--library', library, '--local', path.join(root, 'private-laptop'), ...args], { encoding: 'utf8', windowsHide: true })).data;
   const file = path.join(root, 'skill.md'); fs.writeFileSync(file, skill);
   const item = cli('items', 'create', '--title', title, '--kind', 'skill', '--file', file);
@@ -29,6 +30,8 @@ test('background sync: the status bar shows new GitHub commits and pulls them; o
     await expect(repo).toContainText('main');
     await expect(repo).toContainText('Up to date');
 
+    // At start the app pushes this machine's report to GitHub; the laptop's pull must see it, or its push is rejected.
+    await expect.poll(() => page.evaluate(async () => (await window.kiln.call('fleet.view') as { publish: { state: string } }).publish.state)).not.toBe('queued');
     expect(approveOnLaptop(root, other, 'From the laptop').commit).toBeTruthy();
     // The next background fetch finds it, without anyone asking.
     await expect(repo).toHaveAccessibleName('Repository: 1 new on GitHub');

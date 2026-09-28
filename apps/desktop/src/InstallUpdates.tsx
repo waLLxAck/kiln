@@ -5,7 +5,8 @@ import { api, shortHash } from './api';
 type Copy = { label: string; destination: string; targetId: string };
 export type UpdateResult = { itemId: string; revision: string; approved: boolean; updated: Copy[]; adopted: Copy[]; current: number; skipped: (Copy & { reason: string })[] };
 
-const list = (names: string[]) => names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+/** Names in alphabetical order: copies come in the order their locations were stored, which is not one the user chose. */
+const list = (unsorted: string[]) => { const names = [...unsorted].sort((a, b) => a.localeCompare(b)); return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`; };
 /** What an update did, for the toast: updated, adopted and skipped copies, and the new-session reminder when anything changed. */
 export function updateMessage(title: string, result: UpdateResult, quiet = false) {
   const parts = result.approved ? [`Approved revision ${shortHash(result.revision)}.`] : [];
