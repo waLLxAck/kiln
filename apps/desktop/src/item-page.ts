@@ -1,4 +1,5 @@
 import type { Installation, Item, ItemDetail } from '../../../packages/protocol/schema';
+import { experimentsOf, reviews, verdictOf } from './trial-verdicts';
 
 /**
  * Leading YAML front-matter (`---` … `---`) as ordered key/value pairs plus the body after it. Only the flat `key: value`
@@ -38,8 +39,9 @@ export function primaryAction({ detail, installations, locations }: { detail: It
   const installable = ['skill', 'agent'].includes(item.kind);
   if (installable && copies.some(copy => copy.state === 'drifted')) return 'resolve';
   const approved = detail.approvals.some(a => a.revision === item.revision && a.trust === 'local');
-  const finished = detail.trials.filter(t => t.revision === item.revision && t.status === 'completed');
-  const passed = finished.some(t => t.judgement === 'pass');
+  const finished = experimentsOf(detail.trials).filter(t => t.revision === item.revision && t.status === 'completed');
+  // Your own verdict on an experiment counts over the agent's.
+  const judged = reviews(detail.trials), passed = finished.some(t => verdictOf(t, judged) === 'pass');
   if (!approved && !['archived', 'rejected'].includes(item.status)) {
     if (passed) return installable && !copies.length && locations > 0 ? 'approve-install' : 'approve';
     // A prompt is used by copying it, tested or not; everything else is tested before it is trusted.

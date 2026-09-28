@@ -1,3 +1,4 @@
+import { experimentsOf } from './trial-verdicts';
 import { trialPlace } from './trial-place';
 import type { Activity, Approval, Installation, ItemDetail, PublishJob, Receipt, Revision, Snapshot, Trial } from '../../../packages/protocol/schema';
 
@@ -44,7 +45,7 @@ export function buildHistory(detail: ItemDetail, snapshot: Pick<Snapshot, 'publi
   const oldest = [...detail.revisions].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   const events: HistoryEvent[] = [
     ...detail.revisions.map(r => ({ type: 'revision' as const, id: `revision:${r.hash}`, at: r.createdAt, revision: r, author: revisionAuthor(r, r === oldest, Boolean(item.origin)), approved: approved.has(r.hash), current: r.hash === item.revision })),
-    ...detail.trials.filter(t => !t.deletedAt).map(t => ({ type: 'test' as const, id: `test:${t.id}`, at: t.completedAt ?? t.createdAt, trial: t, place: trialPlace(t, places) })),
+    ...experimentsOf(detail.trials).filter(t => !t.deletedAt).map(t => ({ type: 'test' as const, id: `test:${t.id}`, at: t.completedAt ?? t.createdAt, trial: t, place: trialPlace(t, places) })),
     ...detail.approvals.map(a => ({ type: 'approved' as const, id: `approved:${a.id}`, at: a.createdAt, approval: a })),
     ...snapshot.publish.filter(j => j.itemId === item.id && j.action === 'approve' && j.status === 'done').map(j => ({ type: 'published' as const, id: `published:${j.id}`, at: j.finishedAt ?? j.startedAt, job: j })),
     ...snapshot.receipts.filter(r => r.itemId === item.id).map(r => ({ type: 'installed' as const, id: `installed:${r.id}`, at: r.createdAt, receipt: r })),

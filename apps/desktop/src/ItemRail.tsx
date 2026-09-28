@@ -1,3 +1,4 @@
+import { experimentsOf, reviews, verdictOf } from './trial-verdicts';
 import { useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronRight, Circle, ExternalLink, FileDiff, FlaskConical, History as HistoryIcon, Plus, Rocket, Server, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
 import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
@@ -62,9 +63,10 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const publishJob = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision);
   const copies = installations.filter(copy => copy.itemId === item.id);
   const receipts = snapshot.receipts.filter(r => r.itemId === item.id);
-  const trials = [...detail.trials].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const judged = reviews(detail.trials);
+  const trials = [...experimentsOf(detail.trials)].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const originGone = Boolean(item.origin && !snapshot.items.some(i => i.id === item.origin!.itemId));
-  const completed = detail.trials.filter(t => t.revision === item.revision && t.status === 'completed').length;
+  const completed = experimentsOf(detail.trials).filter(t => t.revision === item.revision && t.status === 'completed').length;
   const copied = detail.observations.filter(o => o.kind === 'copied').length;
   const licence = item.licence && item.licence !== 'Unknown' ? item.licence : '';
   const url = /^https?:\/\//i.test(item.source);
@@ -83,7 +85,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
       : <button className="rail-mini accent" title="Let Kiln manage this identical copy, or remove it" onClick={() => onToggleInstall(copy.provider, copy.targetId)}>Install</button>}
   </div>;
   const trialRow = (t: Trial) => <button type="button" className="rail-item rail-button" key={t.id} onClick={onOpenTests} title={t.note || t.task}>
-    <Badge status={trialVerdict(t)} />
+    <Badge status={verdictOf(t, judged) ?? t.status} />
     <div className="rail-text"><span className="rail-name">{trialPlace(t, places)}</span><span className="rail-sub"><code>{shortHash(t.revision)}</code>{t.model ? ` · ${t.model}` : ''}</span></div>
     <span className="rail-when">{date(t.createdAt)}</span>
   </button>;

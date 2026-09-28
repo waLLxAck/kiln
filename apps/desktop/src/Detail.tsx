@@ -1,3 +1,4 @@
+import { experimentsOf } from './trial-verdicts';
 import { trialPlaces } from './trial-place';
 import { Markdown } from './Markdown';
 import { useScrollMemory } from './view-memory';
@@ -182,7 +183,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
       <div className="item-cols">
         <div className="item-main" {...scroll}>
           {view === 'tests' ? <div className="item-subview">
-            <div className="item-subbar"><button className="text-button" onClick={() => setView('content')}><ArrowLeft size={14} />Content</button><h2>Tests</h2><span className="muted small">{detail.trials.length} experiment{detail.trials.length === 1 ? '' : 's'} · results stay with the exact revision</span></div>
+            <div className="item-subbar"><button className="text-button" onClick={() => setView('content')}><ArrowLeft size={14} />Content</button><h2>Tests</h2><span className="muted small">{experimentsOf(detail.trials).length} experiment{experimentsOf(detail.trials).length === 1 ? '' : 's'} · results stay with the exact revision</span></div>
             <ExperimentsGrid detail={detail} snapshot={snapshot} providers={providers} jobs={jobs} perform={perform} refresh={refresh} onAction={onAction} />
           </div>
           : view === 'history' ? <><AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} /><History places={places} detail={detail} snapshot={snapshot} installations={installations} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onInstallRevision={installable ? setDeployRevision : undefined} onBack={() => setView('content')} /></>
