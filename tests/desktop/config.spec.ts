@@ -1,8 +1,11 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect, _electron as electron, type Locator } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { desktopEnv } from './fixture';
+
+/** The text in a CodeMirror editor, line by line: it is a contenteditable, so it has no value. */
+const text = (editor: Locator) => editor.evaluate(node => Array.from(node.querySelectorAll('.cm-line'), line => line.textContent).join('\n'));
 
 test('config editor creates settings, edits permissions and hooks, rejects bad JSON, restores backups and finds project hooks', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-config-'));
@@ -44,7 +47,8 @@ test('config editor creates settings, edits permissions and hooks, rejects bad J
     // Raw: broken JSON turns the structured tabs off and is refused on save.
     await page.getByRole('tab', { name: 'Raw', exact: true }).click();
     const editor = page.getByRole('textbox', { name: 'settings.json content', exact: true });
-    await expect(editor).toHaveValue(/"Read\(\.env\)"/);
+    await expect(editor).toHaveClass(/cm-content/);
+    await expect.poll(() => text(editor)).toContain('"Read(.env)"');
     await editor.fill('{broken');
     await expect(page.getByRole('tab', { name: /Permissions/ })).toBeDisabled();
     await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -61,12 +65,12 @@ test('config editor creates settings, edits permissions and hooks, rejects bad J
     await page.getByRole('button', { name: /3 backups/ }).click();
     await page.locator('.cfg-backup').last().getByRole('button', { name: 'Restore', exact: true }).click();
     await page.getByRole('tab', { name: 'Raw', exact: true }).click();
-    await expect(editor).toHaveValue('{}\n');
+    await expect.poll(() => text(editor)).toBe('{}\n');
     await app.evaluate(({ dialog }, project) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [project] }); }, project);
     await page.getByRole('button', { name: 'Add project folder', exact: true }).click();
     await page.getByLabel('Filter config files').fill('session.json');
     await page.locator('.cfg-file').filter({ hasText: 'session.json' }).click();
-    await expect(page.getByRole('textbox', { name: 'session.json content' })).toHaveValue('{"version":1,"hooks":{}}');
+    await expect.poll(() => text(page.getByRole('textbox', { name: 'session.json content' }))).toBe('{"version":1,"hooks":{}}');
     await expect(page.getByRole('button', { name: 'Copy to library', exact: true })).toHaveCount(0);
     await page.screenshot({ path: 'test-results/config-files.png' });
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }

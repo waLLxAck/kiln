@@ -282,6 +282,8 @@ test('a machine report rides a recent background fetch, and fetches again when G
     await a.view();
     assert.equal(a.router.fetcher.status().checkedAt, checked, 'neither the report nor Machines fetched again');
 
+    // Timestamps are compared below; Windows clocks can give two fetches the same millisecond, so let one pass.
+    await new Promise(resolve => setTimeout(resolve, 50));
     // Another machine approves something; A's fetch no longer has it, so A's next push is rejected and rebuilt after a fetch.
     const b = f.clone();
     const theirs = b.wb.create({ title: 'From the laptop', kind: 'skill', content: skill('from-the-laptop') });

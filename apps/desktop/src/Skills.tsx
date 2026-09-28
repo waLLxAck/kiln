@@ -6,7 +6,8 @@ import type { Installation, Item, Provider, ProviderId, Snapshot, Target } from 
 import { api } from './api';
 import { Badge, InlineError, Modal, providerName } from './components';
 import { FolderComparison } from './Compare';
-import { KeepButton, KeptDialog, keepExplanation, updateMessage, type KeepResult, type UpdateResult } from './InstallUpdates';
+import { updateMessage, type UpdateResult } from './InstallUpdates';
+import { KeepButton, KeptDialog, keepExplanation, type KeepResult } from './KeepChanges';
 
 import { personalTarget } from './skill-folders';
 export { personalTarget };
@@ -70,7 +71,7 @@ export function SkillInstallDialog({ item, provider, target, installations, appr
   const update = () => run(async () => ({ destination, method: updateMessage(item.title, await api<UpdateResult>('skills.update', { itemId: item.id, targetId: target.id })) }), '{method}');
   const keeping = state === 'differs' || state === 'drifted';
   const [kept, setKept] = useState<KeepResult | null>(null);
-  if (kept) return <KeptDialog item={item} targetId={target.id} result={kept} settings={settings} onDone={onDone} />;
+  if (kept) return <KeptDialog item={item} targetId={target.id} result={kept} onDone={onDone} />;
   const titles: Record<SkillState, string> = { off: `Install for ${label}`, on: `Remove from ${label}`, outdated: `Update available in ${label}`, linked: `Linked copy in ${label}`, found: `Existing copy in ${label}`, differs: `Different version in ${label}`, drifted: `Edited copy in ${label}` };
   return <Modal title={titles[state]} subtitle={item.title} onClose={onClose} wide={comparing}>
     <code className="path-text">{destination}</code>

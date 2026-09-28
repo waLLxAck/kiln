@@ -1,4 +1,4 @@
-/** Pure helpers for editing a revision's bundled files as text (the `codeEditor` flag). Files are stored as base64. */
+/** Pure helpers for editing a revision's bundled files as text. Files are stored as base64. */
 
 /** Larger files are listed but not opened in the editor. */
 export const EDITABLE_TEXT_LIMIT = 512 * 1024;

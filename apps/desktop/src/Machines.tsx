@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUp, Check, Download, FileDiff, FolderOpen, Laptop, Layers3, Monitor, Pencil, RefreshCw, Settings, Share2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowUp, Check, Download, FileDiff, FolderOpen, Laptop, Layers3, Monitor, Pencil, RefreshCw, Save, Settings, Share2, Trash2, X } from 'lucide-react';
 import type { FleetView, Installation, Item, MachineReport, Provider, ProviderId, Receipt, Snapshot } from '../../../packages/protocol/schema';
 import { agentFolder } from '../../../packages/domain/agent-format';
 import { targetSkillsFolder } from '../../../packages/providers/skill-locations';
 import { applyWanted, buildReport, cellFor, installable, isProject, latestApproval, localCopies, locationClient, summarise, type Cell, type CellState, type FleetLocation, type LocalLocation } from '../../../packages/fleet/model';
 import { api, date, shortHash } from './api';
 import { Badge, Empty, KindIcon, providerName } from './components';
+import { canKeep, keepExplanation } from './KeepChanges';
 import './machines.css';
 
 type Props = {
@@ -15,6 +16,8 @@ type Props = {
   /** Opens the install dialog for one item and location on this machine (install, adopt, replace or remove). */
   onInstall?: (itemId: string, provider: ProviderId, targetId: string) => void;
   onOpenItem?: (itemId: string) => void;
+  /** Keep these changes: saves a changed copy on this machine as a new draft of the item (KeepChanges.tsx). */
+  onKeep?: (itemId: string, targetId: string) => void;
 };
 type Machine = { id: string; name: string; platform: string; self: boolean; reportedAt: string | null; report: MachineReport; locations: (FleetLocation & Partial<LocalLocation>)[]; pending: Set<string> };
 type Selection = 'self' | 'all' | string;
@@ -43,7 +46,7 @@ function Glyph({ state }: { state: CellState }) {
  * overview. This machine is computed live from the snapshot; other machines are their last report on GitHub. Nothing here
  * reaches another machine directly: marks for another machine are committed to its report and take effect when it next syncs.
  */
-export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onEnroll, onCompare, onUninstall, onInstall, onOpenItem }: Props) {
+export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onEnroll, onCompare, onUninstall, onInstall, onOpenItem, onKeep }: Props) {
   const [view, setView] = useState<FleetView | null>(null);
   const [selected, setSelected] = useState<Selection>('self');
   const [open, setOpen] = useState<{ itemId: string; key: string } | null>(null);
@@ -230,6 +233,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
           {cell.state === 'outdated' && target && <button className="button primary" onClick={() => updateOutdated([{ itemId: item.id, targetId: target.id }])}><ArrowUp size={14} />Update to {shortHash(rev)}</button>}
           {(cell.state === 'changed' || cell.state === 'external') && install && <button className="button primary" onClick={install}>Review…</button>}
           {(cell.state === 'changed' || cell.state === 'outdated' || (cell.state === 'external' && !installation?.matches)) && target && <button className="button" onClick={() => { setOpen(null); onCompare(item.id, target.id); }}><FileDiff size={14} />Compare…</button>}
+          {canKeep(installation) && target && onKeep && <button className="button" title={keepExplanation} onClick={() => { setOpen(null); onKeep(item.id, target.id); }}><Save size={14} />Keep these changes</button>}
           {cell.state === 'installed' && installation && <button className="button" onClick={() => void api('desktop.revealPath', { path: installation.destination }).catch(e => onMessage(String(e)))}><FolderOpen size={14} />Open folder</button>}
           {(cell.state === 'installed' || cell.state === 'outdated') && receipt && <button className="button danger-text" onClick={() => { setOpen(null); onUninstall(receipt); }}><Trash2 size={14} />Remove</button>}
         </> : <>{cell.state === 'off' && <button className="button primary" onClick={() => mark(m, item.id, location.key, true)}><Download size={14} />Mark for {m.name}</button>}</>}
