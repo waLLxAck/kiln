@@ -463,7 +463,8 @@ export default function App() {
   /** Shift with the list keys: `ids` picked, `anchor` the open row they extend from. */
   const pickRange = (ids: string[], anchor: string) => { setSelected(anchor); setBulkIds(ids); };
   // Duplicates (Consolidate.tsx): how many other copies a row has, a short name for a copy, and the two actions' undo.
-  const copiesOf = (item: Item) => item.deletedAt ? undefined : (groupOf(snapshot.duplicates, item.id)?.ids.length ?? 1) - 1 || undefined;
+  const groupSize = new Map(snapshot.duplicates.flatMap(g => g.ids.map(id => [id, g.ids.length] as const)));
+  const copiesOf = (item: Item) => item.deletedAt ? undefined : (groupSize.get(item.id) ?? 1) - 1 || undefined;
   const copyName = (item: Item) => sameTitle.get(item.id)?.label ?? (item.collection ? item.collection.replaceAll('/', ' / ') : 'Unfiled');
   const consolidated = (result: { kept: Item; merged: string[]; undo: Record<string, unknown> }) => {
     const count = result.merged.length + 1;
