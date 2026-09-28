@@ -15,9 +15,10 @@ test('the library table keeps one line per item, Title and Status visible, acros
       }
     });
     await page.getByRole('button', { name: 'Refresh library' }).click();
-    // Collection comes first; the Title cell holds only the title, and the description moved to the row's tooltip.
+    // Collection comes first; the Title cell holds only the title, and the description moved to the row's tooltip. A skill is
+    // listed, so Invoked by shows too.
     const head = page.locator('.lib-row.head');
-    await expect(head.getByRole('columnheader')).toHaveText(['Collection', 'Title', 'Status', 'Installed', 'Last test', 'Updated']);
+    await expect(head.getByRole('columnheader')).toHaveText(['Collection', 'Title', 'Status', 'Installed', 'Invoked by', 'Last test', 'Updated']);
     await expect(page.getByText('A description that runs on past the edge of the title column.')).toHaveCount(0);
     await expect(page.locator('.item-card').first()).toHaveAttribute('title', 'A description that runs on past the edge of the title column.');
     for (const width of [1000, 1300, 1900]) {
@@ -42,6 +43,7 @@ test('library columns move by dragging a heading or from the header menu, and th
     });
     await page.getByRole('button', { name: 'Refresh library' }).click();
     const head = page.locator('.lib-row.head'), headings = head.getByRole('columnheader');
+    // Only prompts: Invoked by (skills only) gives way.
     await expect(headings).toHaveText(['Collection', 'Title', 'Status', 'Installed', 'Last test', 'Updated']);
     // Drag Title in front of Collection. The press that ends a drag must not also sort by Title.
     const sortedBefore = await head.locator('[aria-sort="ascending"], [aria-sort="descending"]').count();
@@ -73,6 +75,16 @@ test('library columns move by dragging a heading or from the header menu, and th
     await head.locator('[data-col=title]').click();
     await expect(head.locator('[data-col=title]')).toHaveAttribute('aria-sort', 'ascending');
     await expect(page.locator('.item-card .item-title')).toHaveText(['Alpha', 'Beta']);
+    // Any column but Title can be hidden from the header menu; it stays hidden after a reload and comes back from the same menu.
+    await head.locator('[data-col=installed]').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Hide column' }).click();
+    await expect(headings).toHaveText(['Collection', 'Title', 'Status', 'Last test', 'Updated']);
+    await page.reload();
+    await expect(headings).toHaveText(['Collection', 'Title', 'Status', 'Last test', 'Updated']);
+    await head.locator('[data-col=title]').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Hide column' })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: 'Show Installed' }).click();
+    await expect(headings).toHaveText(['Collection', 'Title', 'Status', 'Installed', 'Last test', 'Updated']);
     // A chosen collection hides Collection and keeps the rest in order.
     await page.locator('.sidebar .nav-item').filter({ hasText: 'Columns' }).click();
     await expect(headings).toHaveText(['Title', 'Status', 'Installed', 'Last test', 'Updated']);

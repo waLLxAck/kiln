@@ -26,8 +26,8 @@ const trackVars = ['--lib-cols', '--lib-cols-mid', '--lib-cols-narrow'] as const
  * fit the column to its content. Right-click (or the menu key) offers Move left, Move right, Reset width and Hide column for the
  * column under it, the hidden columns to show again, and Reset columns. `sort` is null while a search orders the list by relevance: then no heading shows as sorted.
  */
-export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLayout }: { layout: Layout; shown: ColumnKey[]; collectionShown: boolean; sort: Sort; onSort: (key: SortKey) => void; onLayout: (layout: Layout) => void }) {
-  const { order, widths } = layout, hidden = layout.hidden ?? [];
+export function LibraryHead({ layout, shown, gone = [], collectionShown, sort, onSort, onLayout }: { layout: Layout; shown: ColumnKey[]; /** Columns left out for now by the view, not by the user (Invoked by with no skill listed). */ gone?: ColumnKey[]; collectionShown: boolean; sort: Sort; onSort: (key: SortKey) => void; onLayout: (layout: Layout) => void }) {
+  const { order, widths } = layout, hidden = layout.hidden ?? [], away = [...hidden, ...gone];
   const head = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [resizing, setResizing] = useState<ColumnKey | null>(null);
@@ -65,7 +65,7 @@ export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLa
       p.detach(); press.current = null;
       if (!p.dragging) return;
       swallowClick.current = true; setTimeout(() => { swallowClick.current = false; }, 0);
-      onOrder(moveColumn(order, key, target(e.clientX).index, collectionShown, hidden));
+      onOrder(moveColumn(order, key, target(e.clientX).index, collectionShown, away));
     };
     const cancel = () => { press.current?.detach(); press.current = null; };
     const escape = (e: KeyboardEvent) => { if (e.key === 'Escape' && press.current?.dragging) { e.stopPropagation(); cancel(); } };
@@ -147,7 +147,7 @@ export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLa
   };
   const entries = (key?: ColumnKey): MenuEntry[] => {
     const index = key ? shown.indexOf(key) : -1;
-    const step = (direction: -1 | 1) => () => { if (key) { onOrder(stepColumn(order, key, direction, collectionShown, hidden)); focusColumn(key); } };
+    const step = (direction: -1 | 1) => () => { if (key) { onOrder(stepColumn(order, key, direction, collectionShown, away)); focusColumn(key); } };
     return [
       ...(key ? [{ heading: COLUMNS[key].label }, { label: 'Move left', icon: <ArrowLeft size={14} />, disabled: index <= 0, onSelect: step(-1) }, { label: 'Move right', icon: <ArrowRight size={14} />, disabled: index < 0 || index >= shown.length - 1, onSelect: step(1) }] : []),
       ...(key && key !== 'title' ? [{ label: 'Reset width', icon: <MoveHorizontal size={14} />, disabled: widths[key] === undefined, hint: `${COLUMNS[key].width}px`, onSelect: () => onLayout({ ...layout, widths: resetWidth(widths, key) }) }] : []),

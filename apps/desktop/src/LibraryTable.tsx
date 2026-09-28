@@ -44,7 +44,9 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
   const [folded, setFolded] = useState<string[]>([]);
   const [install, setInstall] = useState<{ x: number; y: number; item: Item } | null>(null);
   const [layout, setLayout] = useColumnLayout();
-  const shown = visibleColumns(layout.order, collectionShown, layout.hidden), tracks = gridTracks(shown, layout.widths);
+  // Invoked by gives way while no skill is listed, as Collection does inside a collection: it would be dashes only.
+  const gone: ColumnKey[] = groups.some(g => g.items.some(i => i.kind === 'skill')) ? [] : ['model'];
+  const shown = visibleColumns(layout.order, collectionShown, [...(layout.hidden ?? []), ...gone]), tracks = gridTracks(shown, layout.widths);
   const many = picked.length > 1;
   // Rows in the order shown, skipping folded groups: what the arrows walk through.
   const visible = groups.flatMap(g => group !== 'none' && folded.includes(g.key) ? [] : g.items);
@@ -66,7 +68,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
     {installable(item) && !item.deletedAt && <button type="button" className="row-action" aria-haspopup="menu" title="Install into a skill folder" onClick={event => { const box = event.currentTarget.getBoundingClientRect(); setInstall({ x: box.right - 240, y: box.bottom + 4, item }); }}><Download size={13} />Install<ChevronDown size={11} /></button>}
   </span>;
   return <div className="lib-table" role="table" aria-label="Library items" aria-rowcount={visible.length} style={{ '--lib-cols': tracks.full, '--lib-cols-mid': tracks.mid, '--lib-cols-narrow': tracks.narrow } as CSSProperties}>
-    <LibraryHead layout={layout} shown={shown} collectionShown={collectionShown} sort={sort} onSort={onSort} onLayout={setLayout} />
+    <LibraryHead layout={layout} shown={shown} gone={gone} collectionShown={collectionShown} sort={sort} onSort={onSort} onLayout={setLayout} />
     <div className="item-list" ref={scroll.ref} onScroll={scroll.onScroll} onKeyDown={keyDown} onFocus={event => { const id = (event.target as HTMLElement).dataset.id; if (id) lastFocus.current = id; }}>
       {groups.map(g => { const shut = group !== 'none' && folded.includes(g.key); return <Fragment key={g.key || 'all'}>
         {group !== 'none' && <button type="button" className="lib-group" aria-expanded={!shut} onClick={() => setFolded(current => shut ? current.filter(k => k !== g.key) : [...current, g.key])}>

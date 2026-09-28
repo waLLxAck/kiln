@@ -12,7 +12,7 @@ export const COLUMNS: Record<ColumnKey, Column> = {
   title: { key: 'title', label: 'Title', sortable: true, width: 0, min: 180, max: 0 },
   status: { key: 'status', label: 'Status', sortable: true, width: 150, min: 100, max: 360 },
   installed: { key: 'installed', label: 'Installed', sortable: false, width: 150, min: 90, max: 360 },
-  /** Whether a model may invoke the skill on its own, with its switch (Invocation.tsx). */
+  /** Whether a model may invoke the skill on its own, with its switch (Invocation.tsx). Shown only while a skill is listed. */
   model: { key: 'model', label: 'Invoked by', sortable: false, width: 124, min: 96, max: 240 },
   test: { key: 'test', label: 'Last test', sortable: false, width: 130, min: 90, max: 400 },
   updatedAt: { key: 'updatedAt', label: 'Updated', sortable: true, width: 110, min: 80, max: 200 },
