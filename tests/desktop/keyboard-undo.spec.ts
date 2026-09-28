@@ -230,3 +230,35 @@ test('bulk trash of many shows progress and one undo restores them all', async (
     await expect(page.locator('.toast', { hasText: 'Undone: Moved 60 items to Trash' })).toBeVisible();
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('the item page star, status and trash go on the same undo stack as the list', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-keyboard-item-'));
+  const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
+  const page = await app.firstWindow();
+  try {
+    await expect(page.getByRole('button', { name: 'Capture your first item', exact: true })).toBeVisible();
+    await seed(page, ['Alpha']);
+    await card(page, 'Alpha').click();
+    const item = page.getByRole('article', { name: 'Selected item' }), toast = page.locator('.undo-toast');
+    await item.getByRole('button', { name: 'Add favourite' }).click();
+    await expect(toast).toContainText('Added “Alpha” to favourites');
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => (await stored(page, 'Alpha')).favourite).toBe(false);
+    await expect(item.getByRole('button', { name: 'Add favourite' })).toBeVisible();
+
+    await item.getByRole('button', { name: 'More' }).click();
+    await page.getByRole('menuitem', { name: 'Move to testing' }).click();
+    await expect.poll(async () => (await stored(page, 'Alpha')).status).toBe('testing');
+    await expect(toast).toContainText('Moved “Alpha” to testing');
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => (await stored(page, 'Alpha')).status).toBe('captured');
+
+    await item.getByRole('button', { name: 'More' }).click();
+    await page.getByRole('menuitem', { name: 'Move to trash' }).click();
+    await expect.poll(async () => Boolean((await stored(page, 'Alpha')).deletedAt)).toBe(true);
+    await expect(toast).toContainText('Moved “Alpha” to Trash');
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => Boolean((await stored(page, 'Alpha')).deletedAt)).toBe(false);
+    await expect(page.locator('.toast', { hasText: 'Undone: Moved “Alpha” to Trash' })).toBeVisible();
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
