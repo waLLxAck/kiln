@@ -2,15 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { Workbench } from '../domain/workbench';
-import { itemSchema } from '../protocol/schema';
+import { distinctSchema, itemSchema } from '../protocol/schema';
 import { localPaths } from './sync';
 
 /**
  * What an organisation commit (background sync) may carry: moves, order and favourites of items whose approved revision is
- * already on GitHub, the collection list, and desired installs of published items. Everything else stays local: an item.json
- * is only taken when nothing but these fields differs from the committed one, so draft content can never ride along.
+ * already on GitHub, the collection list, desired installs of published items, and the pairs marked as not duplicates.
+ * Consolidation rides along too: a published copy merged into another published item goes to the trash on GitHub as well
+ * (and comes back when restored), so other machines see one item. Everything else stays local: an item.json is only taken
+ * when nothing but these fields differs from the committed one, so draft content can never ride along.
  */
 const organisational = new Set(['collection', 'order', 'favourite']);
+const merging = new Set([...organisational, 'deletedAt', 'mergedInto']);
 function git(root: string, args: string[]) {
   return execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 20_000_000, stdio: ['ignore', 'pipe', 'pipe'] });
 }
@@ -26,7 +29,7 @@ function onlyChanged(working: Record<string, unknown>, head: Record<string, unkn
 /** An absent conflict list and an empty one mean the same; the published copy always writes it. */
 const withHeads = (value: Record<string, unknown>) => ({ ...value, conflictHeads: value.conflictHeads ?? [] });
 const serialise = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
-export type OrganisationPlan = { files: Record<string, string>; items: { id: string; title: string }[]; collections: boolean; installs: boolean; message: string };
+export type OrganisationPlan = { files: Record<string, string>; items: { id: string; title: string }[]; collections: boolean; installs: boolean; distinct?: boolean; message: string };
 
 /** `installIds`: items whose desired installs changed on this machine since they were last published. */
 export function organisationPlan(wb: Workbench, installIds: Iterable<string> = []): OrganisationPlan {
@@ -34,6 +37,8 @@ export function organisationPlan(wb: Workbench, installIds: Iterable<string> = [
   const files: Record<string, string> = {}, items: OrganisationPlan['items'] = [];
   const changed = new Set(localPaths(wb.root));
   const trusted = new Set(wb.approvals().filter(a => a.trust === 'local').map(a => `${a.itemId}:${a.revision}`));
+  let publishedIds: Set<string> | undefined;
+  const published = () => publishedIds ??= new Set(git(wb.root, ['ls-tree', '--name-only', 'HEAD', `${relative}/items/`]).split('\n').map(l => l.split('/')[2]).filter(Boolean));
   for (const file of changed) {
     const id = file.match(new RegExp(`^${relative}/items/([a-f0-9-]{36})/item\\.json$`))?.[1];
     if (!id) continue;
@@ -42,10 +47,12 @@ export function organisationPlan(wb: Workbench, installIds: Iterable<string> = [
     const parsed = itemSchema.safeParse(JSON.parse(text)), before = itemSchema.safeParse(head);
     if (!parsed.success || !before.success) continue;
     const item = parsed.data;
+    // A merge (or its undoing) of a published copy into a published item; the trash on its own stays on this machine.
+    const merge = Boolean(item.mergedInto || before.data.mergedInto) && (!item.mergedInto || (Boolean(item.deletedAt) && published().has(item.mergedInto)));
     // The approved revision GitHub already has, still approved here and not in the trash: only then is the change organisation.
-    if (item.revision !== before.data.revision || item.status !== 'approved' || before.data.status !== 'approved' || item.deletedAt || before.data.deletedAt || !trusted.has(`${id}:${item.revision}`)) continue;
+    if (item.revision !== before.data.revision || item.status !== 'approved' || before.data.status !== 'approved' || (!merge && (item.deletedAt || before.data.deletedAt)) || !trusted.has(`${id}:${item.revision}`)) continue;
     // updatedAt may differ but is not a reason to commit on its own; approving rewrites it.
-    if (!onlyChanged(withHeads(JSON.parse(text)), withHeads(head), key => organisational.has(key), key => key === 'updatedAt')) continue;
+    if (!onlyChanged(withHeads(JSON.parse(text)), withHeads(head), key => (merge ? merging : organisational).has(key), key => key === 'updatedAt')) continue;
     files[file] = Buffer.from(text).toString('base64'); items.push({ id, title: item.title });
   }
   const config = `${relative}/workbench.json`;
@@ -57,6 +64,12 @@ export function organisationPlan(wb: Workbench, installIds: Iterable<string> = [
       if (head && onlyChanged(working, head, key => key === 'collections')) { files[config] = Buffer.from(text).toString('base64'); collections = true; }
     } catch { /* Unreadable: leave it for the user. */ }
   }
+  const pairs = `${relative}/distinct.json`;
+  let distinct = false;
+  if (changed.has(pairs)) {
+    try { const text = fs.readFileSync(path.join(wb.root, pairs), 'utf8'); distinctSchema.parse(JSON.parse(text)); files[pairs] = Buffer.from(text).toString('base64'); distinct = true; }
+    catch { /* Unreadable or removed: leave it for the user. */ }
+  }
   const manifest = `${relative}/installs.json`;
   let installs = false;
   const wanted = [...new Set(installIds)];
@@ -64,10 +77,9 @@ export function organisationPlan(wb: Workbench, installIds: Iterable<string> = [
     // Only items whose install intent changed here: approval commits never write installs.json into this folder, so an entry
     // missing from it may simply never have been known here, not removed. Items still waiting for their approval commit get
     // their intent with that commit.
-    const published = new Set(git(wb.root, ['ls-tree', '--name-only', 'HEAD', `${relative}/items/`]).split('\n').map(l => l.split('/')[2]).filter(Boolean));
     const head = committed(wb.root, manifest) ?? {}, working = wb.installs() as Record<string, unknown>, next: Record<string, unknown> = { ...head };
     for (const id of wanted) {
-      if (!published.has(id)) continue;
+      if (!published().has(id)) continue;
       if (working[id]) next[id] = working[id]; else delete next[id];
     }
     if (!same(next, head)) {
@@ -75,8 +87,8 @@ export function organisationPlan(wb: Workbench, installIds: Iterable<string> = [
       files[manifest] = Buffer.from(text).toString('base64'); installs = true;
     }
   }
-  const parts = [items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : '', collections ? 'collections' : '', installs ? 'desired installs' : ''].filter(Boolean);
-  const subject = items.length === 1 && !collections && !installs ? `Organise "${items[0].title.replace(/\s+/g, ' ').trim().slice(0, 50)}"` : `Organise library: ${parts.join(', ')}`;
+  const parts = [items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : '', collections ? 'collections' : '', installs ? 'desired installs' : '', distinct ? 'items that are not duplicates' : ''].filter(Boolean);
+  const subject = items.length === 1 && !collections && !installs && !distinct ? `Organise "${items[0].title.replace(/\s+/g, ' ').trim().slice(0, 50)}"` : `Organise library: ${parts.join(', ')}`;
   const body = items.length > 1 ? items.slice(0, 10).map(i => `- ${i.title.replace(/\s+/g, ' ').trim().slice(0, 80)}`).join('\n') + (items.length > 10 ? `\n- and ${items.length - 10} more` : '') : '';
-  return { files, items, collections, installs, message: body ? `${subject}\n\n${body}` : subject };
+  return { files, items, collections, installs, distinct, message: body ? `${subject}\n\n${body}` : subject };
 }

@@ -73,6 +73,8 @@ export class DeploymentService {
     const destination = contained(target.root, relative); noLinks(destination);
     return { destination, files, proposedHash: digest(files) };
   }
+  /** Whether a receipt makes a copy this item's: its own, or one written for a copy since merged into it (consolidation). */
+  private owns(receipt: Receipt | undefined, itemId: string): receipt is Receipt { return Boolean(receipt) && (receipt!.itemId === itemId || this.wb.mergedTarget(receipt!.itemId) === itemId); }
   private latest(destination: string) { const last = this.receipts().filter(r => r.destination === destination).at(-1); return last?.status === 'applied' ? last : undefined; }
   plan(input: unknown): Plan {
     const data = z.object({ itemId: idSchema, revision: hashSchema, targetId: idSchema }).parse(input);
@@ -80,7 +82,7 @@ export class DeploymentService {
       const rendered = this.render(data.itemId, data.revision, this.target(data.targetId));
       const current = readDestination(rendered.destination), expectedState = stateHash(current), owner = this.latest(rendered.destination);
       let blocked: string | null = null;
-      if (current && (!owner || owner.itemId !== data.itemId)) blocked = 'TARGET_UNMANAGED: This destination is not owned by this item. Existing files will not be replaced.';
+      if (current && !this.owns(owner, data.itemId)) blocked = 'TARGET_UNMANAGED: This destination is not owned by this item. Existing files will not be replaced.';
       else if (owner && owner.hash !== expectedState) blocked = 'TARGET_DRIFTED: Destination changed outside Kiln. Restore or inspect it before applying.';
       const plan: Plan = { id: randomUUID(), ...data, ...rendered, expectedState, operation: current ? 'replace' : 'create', createdAt: now(), expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), blocked };
       writeJson(path.join(this.wb.local, 'plans', `${plan.id}.json`), plan); return plan;
@@ -98,8 +100,8 @@ export class DeploymentService {
       invariant(rendered.destination === plan.destination && digest(rendered.files) === plan.proposedHash && digest(plan.files) === plan.proposedHash, 'PLAN_TAMPERED', 'Plan no longer matches its approved bundle.');
       const previousFiles = readDestination(plan.destination), current = stateHash(previousFiles), owner = this.latest(plan.destination);
       invariant(current === data.expectState && current === plan.expectedState, 'TARGET_DRIFTED', 'Destination changed after preview. No files were written.');
-      invariant(current === null || (owner && owner.itemId === plan.itemId && owner.hash === current), 'TARGET_UNMANAGED', 'Destination ownership changed.');
-      const receipt: Receipt = { id: randomUUID(), planId: plan.id, itemId: plan.itemId, revision: plan.revision, targetId: plan.targetId, destination: plan.destination, hash: plan.proposedHash, previousHash: current, previousFiles, previousRevision: owner?.revision ?? null, status: 'applied', createdAt: now(), newSessionRequired: true };
+      invariant(current === null || (this.owns(owner, plan.itemId) && owner.hash === current), 'TARGET_UNMANAGED', 'Destination ownership changed.');
+      const receipt: Receipt = { id: randomUUID(), planId: plan.id, itemId: plan.itemId, revision: plan.revision, targetId: plan.targetId, destination: plan.destination, hash: plan.proposedHash, previousHash: current, previousFiles, previousRevision: owner?.itemId === plan.itemId ? owner.revision : null, status: 'applied', createdAt: now(), newSessionRequired: true };
       this.switchBundle(target, receipt, rendered.files, current);
       this.wb.record('deployed', `Deployed approved snapshot to ${target.name}; start a new agent session`, plan.itemId, plan.revision);
       return receipt;
@@ -242,7 +244,7 @@ export class DeploymentService {
         seen.add(destination);
         if (!fs.lstatSync(destination, { throwIfNoEntry: false })) continue;
         const linked = fs.lstatSync(destination).isSymbolicLink(), last = receipts.filter(r => r.destination === destination).at(-1);
-        const owned = last?.status === 'applied' && last.itemId === item.id ? last : undefined;
+        const owned = last?.status === 'applied' && this.owns(last, item.id) ? last : undefined;
         const current = this.currentState(destination);
         const state: Installation['state'] = owned ? (current === owned.hash ? 'installed' : 'drifted') : 'external';
         const outdated = owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
@@ -402,11 +404,12 @@ export class DeploymentService {
       if (fs.lstatSync(destination).isSymbolicLink()) this.removeLink(destination);
       else {
         const owned = this.latest(destination), current = this.currentState(destination), wanted = this.renderedHash(revision);
+        const mine = this.owns(owned, item.id);
         if (owned?.itemId === item.id && current === wanted) { receipt = owned; method = 'unchanged'; }
-        else if (owned?.itemId === item.id && current === owned.hash) method = 'updated';
-        else if (owned?.itemId !== item.id && current === wanted) { receipt = this.adopt(target, item, revision, destination); method = 'adopted'; }
+        else if (current === wanted) { receipt = this.adopt(target, item, revision, destination); method = 'adopted'; }
+        else if (mine && current === owned.hash) method = 'updated';
         else {
-          invariant(data.replace, owned?.itemId === item.id ? 'TARGET_DRIFTED' : 'TARGET_UNMANAGED', owned?.itemId === item.id ? 'The installed copy was edited outside Kiln. Choose Replace to set those edits aside and reinstall.' : `A different “${name}” folder already exists there. Import it into the library first, or choose Replace to set it aside and install the library version.`);
+          invariant(data.replace, mine ? 'TARGET_DRIFTED' : 'TARGET_UNMANAGED', mine ? 'The installed copy was edited outside Kiln. Choose Replace to set those edits aside and reinstall.' : `A different “${name}” folder already exists there. Import it into the library first, or choose Replace to set it aside and install the library version.`);
           setAside = this.setAside(destination, target);
         }
       }
@@ -433,8 +436,8 @@ export class DeploymentService {
       if (fs.lstatSync(destination).isSymbolicLink()) { this.removeLink(destination); method = 'unlinked'; this.wb.record('uninstalled', `Removed the link in ${target.name}; the linked folder is untouched`, item.id, revision.hash); }
       else {
         let owned = this.latest(destination); const current = this.currentState(destination);
-        if ((!owned || owned.itemId !== item.id) && current === this.renderedHash(revision)) owned = this.adopt(target, item, revision, destination);
-        if (owned && owned.itemId === item.id && owned.hash === current) { this.uninstall({ receiptId: owned.id, expectState: owned.hash, confirm: true }); method = 'uninstalled'; }
+        if (!this.owns(owned, item.id) && current === this.renderedHash(revision)) owned = this.adopt(target, item, revision, destination);
+        if (this.owns(owned, item.id) && owned.hash === current) { this.uninstall({ receiptId: owned.id, expectState: owned.hash, confirm: true }); method = 'uninstalled'; }
         else { invariant(data.force, owned ? 'TARGET_DRIFTED' : 'TARGET_UNMANAGED', `The “${name}” folder there differs from your library. Import it first to keep those changes, or choose Remove anyway to set the folder aside.`); this.setAside(destination, target); method = 'set aside'; this.wb.record('uninstalled', `Set aside an external “${name}” folder from ${target.name}`, item.id, revision.hash); }
       }
     }
@@ -680,7 +683,7 @@ export class DeploymentService {
     if (!stat) return { ...base, state: 'absent', current: null };
     if (stat.isSymbolicLink()) return { ...base, state: 'linked', current: null };
     const current = this.currentState(destination), owned = this.latest(destination), wanted = this.renderedHash(revision);
-    if (owned?.itemId === item.id) return { ...base, current, state: current !== owned.hash ? 'drifted' : current === wanted ? 'installed' : 'older' };
+    if (this.owns(owned, item.id)) return { ...base, current, state: current !== owned.hash ? 'drifted' : current === wanted ? 'installed' : 'older' };
     return { ...base, current, state: current === wanted ? 'identical' : 'differs' };
   }
 }

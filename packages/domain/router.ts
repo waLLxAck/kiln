@@ -25,10 +25,10 @@ import { GitQueue } from '../git/queue';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 /** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
-const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
+const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'items.consolidate', 'items.unconsolidate', 'items.distinct', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles; /** Machine reports: app version, publish timing. Reporting after changes starts only with `fleet.start`. */ fleet?: Omit<FleetOptions, 'log'> };
 /** Calls that change what this machine's report says; each schedules a publish once reporting has started. */
-const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore']);
+const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore', 'items.consolidate', 'items.unconsolidate']);
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
@@ -154,6 +154,10 @@ export class Router {
       case 'items.move': return this.wb.moveItems(args);
       case 'items.restore': return this.wb.restore(args);
       case 'items.purge': return this.wb.purge(args);
+      case 'items.duplicates': return this.duplicates();
+      case 'items.consolidate': return this.consolidate(args);
+      case 'items.unconsolidate': return this.unconsolidate(args);
+      case 'items.distinct': return this.wb.markDistinct(args);
       case 'agents.scan': return scanAgents(this.wb, args);
       case 'agents.import': return importAgents(this.wb, args);
       case 'skills.install': return this.installSkill(args);
@@ -217,6 +221,23 @@ export class Router {
       case 'git.sync': { const { action } = z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args); return this.gitQueue.run(() => sync(this.wb.root, this.wb.canonical, action)); }
       default: throw new WorkbenchError('CAPABILITY_UNSUPPORTED', `Unsupported operation: ${method}`);
     }
+  }
+  /** Groups of likely copies, each copy with enough to tell them apart (the CLI prints this as it is). */
+  duplicates() {
+    const byId = new Map(this.wb.snapshot().items.map(i => [i.id, i]));
+    return { groups: this.wb.duplicateGroups().map(group => ({ ...group, items: group.ids.flatMap(id => { const i = byId.get(id); return i ? [{ id, title: i.title, kind: i.kind, collection: i.collection, status: i.status, revision: i.revision, source: i.source, updatedAt: i.updatedAt }] : []; }) })) };
+  }
+  /** Consolidation (Workbench.consolidate), plus marks for other machines moved from the merged copies to the kept one. */
+  consolidate(args: unknown) {
+    const result = this.wb.consolidate(args);
+    const marks = this.fleet.repoint(result.merged, result.kept.id);
+    return { ...result, undo: { ...result.undo, marks } };
+  }
+  unconsolidate(args: unknown) {
+    const { marks } = z.object({ keep: idSchema, marks: z.array(z.object({ machineId: idSchema, itemId: idSchema, location: z.string(), had: z.boolean() })).max(2000).default([]) }).passthrough().parse(args);
+    const result = this.wb.unconsolidate(args);
+    this.fleet.unpoint(marks.filter(m => result.restored.includes(m.itemId)), result.kept.id);
+    return result;
   }
   /** Approval is recorded at once; the commit and push to GitHub follow in the background and show up under `publish`. */
   approve(args: unknown) {
