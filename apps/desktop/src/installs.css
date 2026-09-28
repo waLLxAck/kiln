@@ -1,0 +1,6 @@
+/* The item rail's Installs section: update states and the Projects group. The rest of the rail is item.css. */
+.rail-count.accent { color: var(--accent-text); background: var(--accent-tint); }
+.rail-sub.accent { color: var(--accent-text); }
+.rail-subhead { margin: 10px 0 2px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.rail-subhead + .rail-item { border-top: 0; }
+.rail-body .other-copies { margin-bottom: 2px; }

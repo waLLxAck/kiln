@@ -26,11 +26,11 @@ test('development builds keep the full Machines section', async () => {
     await expect(page.getByRole('tab', { name: /This machine/ })).toBeVisible();
     await expect(page.getByRole('tab', { name: /All machines/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Report now' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Enroll project folder', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add project…' }).first()).toBeVisible();
     await expect(page.getByText('Coming soon')).toHaveCount(0);
     await nav(page).getByRole('button', { name: 'Library', exact: true }).click();
     await openSkillInstalls(page);
-    await expect(page.getByText('Check live drift in Machines')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Installs' }).getByRole('button', { name: 'Other machines…' })).toBeVisible();
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -51,16 +51,17 @@ test('a public build shows Machines as coming soon, with nothing that leads into
     await nav(page).getByRole('button', { name: 'Machines' }).click();
     await expect(page.getByText('Coming soon', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Every place your skills are installed, in one view' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Enroll project folder' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add project…' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /This machine/ })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Recover interrupted installs' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Open Settings' }).click();
     await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
     await nav(page).getByRole('button', { name: 'Library', exact: true }).click();
     await openSkillInstalls(page);
-    await expect(page.getByRole('button', { name: 'Install a specific revision…' })).toBeVisible();
+    // Installing into a project doesn't need Machines.
+    await expect(page.getByRole('button', { name: 'Install into project…' })).toBeVisible();
     await expect(page.getByRole('article', { name: 'Selected item' }).getByText(/Machines/)).toHaveCount(0);
-    await expect(page.getByText('Check live drift in Machines')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Other machines…' })).toHaveCount(0);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 

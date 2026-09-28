@@ -126,7 +126,7 @@ export class ProjectInstalls {
     invariant(targets.length, 'TARGET_NOT_ENROLLED', 'Kiln does not install into this folder, so there is nothing to forget.');
     const managed = this.managedCopies(root);
     const titles = [...new Set(managed.map(r => { try { return this.wb.getItem(r.itemId).title; } catch { return 'an item no longer in the library'; } }))];
-    invariant(!managed.length, 'COPIES_REMAIN', `Kiln still manages ${managed.length === 1 ? 'a copy' : `${managed.length} copies`} in this folder (${titles.join(', ')}). Remove ${managed.length === 1 ? 'it' : 'them'} from the Installs tab first.`);
+    invariant(!managed.length, 'COPIES_REMAIN', `Kiln still manages ${managed.length === 1 ? 'a copy' : `${managed.length} copies`} in this folder (${titles.join(', ')}). Remove ${managed.length === 1 ? 'it' : 'them'} from the item's Installs section first.`);
     for (const target of targets) this.wb.removeTarget({ id: target.id, confirm: true });
     return { root: path.resolve(root), removed: targets.length };
   }

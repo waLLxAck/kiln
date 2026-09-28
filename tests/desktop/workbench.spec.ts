@@ -46,17 +46,14 @@ test('real desktop capture → copy → trial → approval → deploy → edit �
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Machines' }).click();
-    await page.getByRole('button', { name: 'Enroll project folder', exact: true }).click();
-    await page.getByLabel('Name', { exact: true }).fill('Test Codex project');
-    await page.getByLabel('Allowed root').fill(target);
-    await page.getByRole('dialog').getByRole('button', { name: 'Enroll environment', exact: true }).click();
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
-    await page.getByRole('button', { name: 'Install into a project folder…', exact: true }).click();
-    await page.getByRole('button', { name: 'Preview install' }).click();
+    // Install into any project folder from the rail; the first install makes it one of your projects.
+    await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as typeof dialog.showOpenDialog; }, target);
+    await page.getByRole('region', { name: 'Installs', exact: true }).getByRole('button', { name: 'Install into project…' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Choose folder…' }).click();
     const destination = path.join(target, '.agents', 'skills', 'desktop-review', 'SKILL.md');
+    await expect(page.getByRole('dialog').getByLabel('Preview', { exact: true })).toContainText('Nothing is there yet');
     expect(fs.existsSync(destination)).toBe(false);
-    await page.getByRole('button', { name: 'Confirm & install' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0); expect(fs.readFileSync(destination, 'utf8')).toBe(content);
     await page.getByRole('button', { name: 'Edit text', exact: true }).click();
     await page.getByLabel('Content', { exact: true }).fill(content + '\nUnapproved change.');

@@ -73,8 +73,11 @@ export function localCopies(inputs: FleetInputs) {
     if (!approved.has(item.id)) approved.set(item.id, latestApproval(inputs.approvals, item.id)?.revision);
     const latest = approved.get(item.id);
     const receipt = copy.receiptId ? receipts.get(copy.receiptId) : undefined;
-    const revision = receipt?.revision ?? (copy.matches ? item.revision : null);
-    const state: CopyState = copy.state === 'drifted' ? 'changed' : copy.state === 'external' ? 'external' : latest && revision !== latest ? 'outdated' : 'installed';
+    // Outdated is what the deployment service says (`Installation.outdated`), so ↑ here is exactly what Update would write. A Kiln
+    // copy that isn't outdated has the approved revision's files, even if it was installed from an earlier revision with the same files.
+    const outdated = copy.state === 'installed' && Boolean(copy.outdated);
+    const revision = copy.state === 'installed' && !outdated && latest ? latest : receipt?.revision ?? (copy.matches ? item.revision : null);
+    const state: CopyState = copy.state === 'drifted' ? 'changed' : copy.state === 'external' ? 'external' : outdated ? 'outdated' : 'installed';
     const existing = copies[item.id]?.[location.key];
     if (existing && rank[existing.state] <= rank[state]) continue;
     (copies[item.id] ??= {})[location.key] = { revision, state };

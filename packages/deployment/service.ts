@@ -574,9 +574,10 @@ export class DeploymentService {
    * Update: brings copies Kiln wrote, and that are unchanged since, up to the approved revision through the usual plan and apply,
    * so receipts, backups and drift checks stay as for any install. Copies edited outside Kiln, differing external folders and links
    * are never overwritten; they are reported as skipped. An edited copy whose bytes already equal the approved revision is adopted
-   * as it is. `approve` first approves the current revision, which must still be `expect`.
+   * as it is. `approve` first approves the current revision, which must still be `expect`. This is the one update path: the item
+   * header, a location's Update and Machines (through `updateOutdated`) all come here.
    */
-  updateInstalls(input: unknown) {
+  updateInstalls(input: unknown): UpdateResult {
     const data = z.object({ itemId: idSchema, targetId: idSchema.optional(), approve: z.boolean().default(false), expect: hashSchema.optional() }).parse(input);
     const item = this.wb.getItem(data.itemId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before updating its installs.');
@@ -586,11 +587,24 @@ export class DeploymentService {
       invariant(data.expect === item.revision, 'REVISION_CONFLICT', 'This item changed since you opened it. Review the new revision before approving it.');
       if (!this.wb.approvals().some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local')) { this.approveHere(item, 'Approved by choosing Approve & update installs in Kiln.'); approved = true; }
     }
+    return { ...this.updateItem(item, this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId)), approved };
+  }
+  /**
+   * Update all outdated (Machines): each item with an outdated copy on this machine, or only the copies given, goes through the
+   * same update as one item. Never approves. Without `copies` an item's other copies are checked too, so skips are reported.
+   */
+  updateOutdated(input: unknown = {}): UpdateResult[] {
+    const { copies } = z.object({ copies: z.array(z.object({ itemId: idSchema, targetId: idSchema })).max(5000).optional() }).parse(input ?? {});
+    const all = this.installations(), chosen = (c: Installation) => !copies || copies.some(x => x.itemId === c.itemId && x.targetId === c.targetId);
+    const ids = [...new Set(all.filter(c => c.outdated && chosen(c)).map(c => c.itemId))];
+    return ids.map(id => ({ ...this.updateItem(this.wb.getItem(id), all.filter(c => c.itemId === id && chosen(c))), approved: false }));
+  }
+  private updateItem(item: Item, copies: Installation[]): Omit<UpdateResult, 'approved'> {
     const revision = this.approvedRevision(item.id); invariant(revision, 'APPROVAL_REQUIRED', 'Approve a revision before updating installed copies.');
     const wanted = this.renderedHash(revision);
-    const updated: { label: string; destination: string; targetId: string }[] = [], adopted: typeof updated = [], skipped: { label: string; destination: string; reason: string }[] = [];
+    const updated: UpdatedCopy[] = [], adopted: UpdatedCopy[] = [], skipped: UpdateResult['skipped'] = [];
     let current = 0;
-    for (const copy of this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId)) {
+    for (const copy of copies) {
       const label = this.copyLabel(copy), entry = { label, destination: copy.destination, targetId: copy.targetId };
       try {
         if (copy.outdated) {
@@ -604,7 +618,7 @@ export class DeploymentService {
         else if (this.currentState(copy.destination) !== wanted) skipped.push({ ...entry, reason: 'not installed by Kiln and different' });
       } catch (error) { skipped.push({ ...entry, reason: (error instanceof Error ? error.message : String(error)).replace(/^[A-Z_]+: /, '') }); }
     }
-    return { itemId: item.id, revision: revision.hash, approved, updated, adopted, current, skipped };
+    return { itemId: item.id, title: item.title, revision: revision.hash, updated, adopted, current, skipped };
   }
   /**
    * Keep these changes: saves an installed copy (edited outside Kiln, or an external folder that differs) as a new draft of the
@@ -671,4 +685,7 @@ export class DeploymentService {
   }
 }
 /** What an install into a folder would meet: nothing, a Kiln copy (current, an older revision, or edited since), a link, or someone else's folder. */
+type UpdatedCopy = { label: string; destination: string; targetId: string };
+/** What an update did with one item's copies; `approved` when it approved the current revision first. */
+export type UpdateResult = { itemId: string; title: string; revision: string; approved: boolean; updated: UpdatedCopy[]; adopted: UpdatedCopy[]; current: number; skipped: (UpdatedCopy & { reason: string })[] };
 export type CopyPreview = { destination: string; state: 'absent' | 'installed' | 'older' | 'drifted' | 'linked' | 'identical' | 'differs'; current: string | null; approved: boolean; /** Validation errors that stop the install, empty when none. */ problem: string };
