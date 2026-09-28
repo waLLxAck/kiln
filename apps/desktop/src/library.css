@@ -104,6 +104,19 @@
 .lib-row.head .lib-cell.moving { color: var(--accent-text); background: var(--accent-tint); padding: 0 6px; margin: 0 -6px; }
 .col-drop { position: absolute; z-index: 3; top: 4px; width: 2px; margin-left: -1px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 2px var(--ring); pointer-events: none; }
 body.col-dragging, body.col-dragging * { cursor: grabbing !important; user-select: none; }
+/* Column edges (LibraryHead.tsx): each fills the gap on its column's side away from Title, placed in that column's grid area. */
+.lib-row.head .lib-cell { justify-self: stretch; }
+.col-edge { position: absolute; z-index: 2; grid-row: 1; grid-column: var(--at) / span 1; top: 0; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
+.col-edge.right { left: 100%; }
+.col-edge.left { right: 100%; }
+.col-edge::after { content: ''; position: absolute; top: 9px; bottom: 9px; left: 5.5px; width: 1px; border-radius: 1px; background: transparent; transition: background-color .12s; }
+.lib-row.head:hover .col-edge::after { background: var(--line-strong); }
+.lib-row.head .col-edge:is(:hover, :focus-visible, .active)::after { top: 5px; bottom: 5px; left: 5px; width: 2px; background: var(--accent); }
+.lib-row.head .col-edge:focus-visible { outline: none; }
+.lib-row.head.dragging .col-edge { display: none; }
+body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none; }
+/* Double-clicking an edge measures the column's cells at their natural width for one layout. */
+.lib-row > .lib-cell.col-measure { width: max-content; justify-self: start; overflow: visible; }
 /* Rows are click and swipe targets like the buttons they replaced: selectable text let a second swipe start a native drag of the selection. */
 .item-card.lib-row { display: grid; align-items: center; height: 40px; padding: 0 12px 0 8px; border-radius: 0; border-bottom: 1px solid var(--line); gap: 0 12px; cursor: default; outline: none; user-select: none; }
 .item-card.lib-row:hover { background: var(--subtle); }
@@ -162,9 +175,11 @@ body.col-dragging, body.col-dragging * { cursor: grabbing !important; user-selec
 /* Narrower windows: Last test gives way first, then Installed; Title and Status always stay. */
 @media (max-width: 1320px) {
   .lib-row { grid-template-columns: var(--lib-cols-mid); }
+  .col-edge { grid-column: var(--at-mid) / span 1; }
   .lib-row .col-test, .lib-row.head .col-test { display: none; }
 }
 @media (max-width: 1080px) {
   .lib-row { grid-template-columns: var(--lib-cols-narrow); }
+  .col-edge { grid-column: var(--at-narrow) / span 1; }
   .lib-row .col-test, .lib-row .col-installed, .lib-row .col-collection, .lib-row.head :is(.col-test, .col-installed, .col-collection) { display: none; }
 }

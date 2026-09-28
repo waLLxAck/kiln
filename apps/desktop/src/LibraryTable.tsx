@@ -4,7 +4,7 @@ import type { Approval, Installation, Item, Trial } from '../../../packages/prot
 import { ContextMenu, KindIcon, type MenuEntry } from './components';
 import { date } from './api';
 import { InstalledCell, StatusCell, TestCell, type Location } from './Library';
-import { LibraryHead, useColumnOrder } from './LibraryHead';
+import { LibraryHead, useColumnLayout } from './LibraryHead';
 import { gridTracks, visibleColumns, type ColumnKey } from './library-columns';
 import { installable } from './library-filters';
 import { site, type GroupKey, type Sort, type SortKey } from './library-sort';
@@ -34,14 +34,14 @@ type Props = {
 /**
  * The library as a table, one line per item. Click opens an item; Ctrl-click and Shift-click pick rows; the keys of keyboard.ts
  * move, extend, open and jump by title. Hovering a row shows Copy, Test and Install; swiping it sideways archives it, and
- * dragging it up or down (or by its icon) carries it to a collection in the sidebar. Columns can be dragged into another order
- * (LibraryHead.tsx); the Title cell holds only the title, with the description as the row's tooltip.
+ * dragging it up or down (or by its icon) carries it to a collection in the sidebar. Columns can be dragged into another order and
+ * resized from their edges (LibraryHead.tsx); the Title cell holds only the title, with the description as the row's tooltip.
  */
 export function LibraryTable({ groups, group, collectionShown, row, locations, installations, approvals, selected, picked, sort, onSort, onClick, onMenu, onFocusRow, onPick, onOpen, onSelectAll, shortcut, canSwipe, onArchive, drag, onCopy, onTest, installEntries, scroll, empty, hint }: Props) {
   const [folded, setFolded] = useState<string[]>([]);
   const [install, setInstall] = useState<{ x: number; y: number; item: Item } | null>(null);
-  const [order, setOrder] = useColumnOrder();
-  const shown = visibleColumns(order, collectionShown), tracks = gridTracks(shown);
+  const [layout, setLayout] = useColumnLayout();
+  const shown = visibleColumns(layout.order, collectionShown), tracks = gridTracks(shown, layout.widths);
   const many = picked.length > 1;
   // Rows in the order shown, skipping folded groups: what the arrows walk through.
   const visible = groups.flatMap(g => group !== 'none' && folded.includes(g.key) ? [] : g.items);
@@ -63,7 +63,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
     {installable(item) && !item.deletedAt && <button type="button" className="row-action" aria-haspopup="menu" title="Install into a skill folder" onClick={event => { const box = event.currentTarget.getBoundingClientRect(); setInstall({ x: box.right - 240, y: box.bottom + 4, item }); }}><Download size={13} />Install<ChevronDown size={11} /></button>}
   </span>;
   return <div className="lib-table" role="table" aria-label="Library items" aria-rowcount={visible.length} style={{ '--lib-cols': tracks.full, '--lib-cols-mid': tracks.mid, '--lib-cols-narrow': tracks.narrow } as CSSProperties}>
-    <LibraryHead order={order} shown={shown} collectionShown={collectionShown} sort={sort} onSort={onSort} onOrder={setOrder} />
+    <LibraryHead layout={layout} shown={shown} collectionShown={collectionShown} sort={sort} onSort={onSort} onLayout={setLayout} />
     <div className="item-list" ref={scroll.ref} onScroll={scroll.onScroll} onKeyDown={keyDown} onFocus={event => { const id = (event.target as HTMLElement).dataset.id; if (id) lastFocus.current = id; }}>
       {groups.map(g => { const shut = group !== 'none' && folded.includes(g.key); return <Fragment key={g.key || 'all'}>
         {group !== 'none' && <button type="button" className="lib-group" aria-expanded={!shut} onClick={() => setFolded(current => shut ? current.filter(k => k !== g.key) : [...current, g.key])}>
