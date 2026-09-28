@@ -7,7 +7,8 @@ import { validateContent } from '../packages/domain/content';
 import { contentChecks } from '../packages/domain/content-checks';
 import { validateAgent } from '../packages/domain/agent-format';
 import { safeRelativePath } from '../packages/domain/relative-path';
-import { draftKey, parseDraft, serialiseDraft, withDraftContent } from '../apps/desktop/src/item-draft';
+import { draftChanges, draftKey, draftValue, fieldValues, parseDraft, serialiseDraft, splitTags, withField } from '../apps/desktop/src/item-draft';
+import type { Item, Revision } from '../packages/protocol/schema';
 import { editableText, encodeText, mergeTextEdits, newFileProblem } from '../apps/desktop/src/bundled-text';
 import { itemLanguage, languageFor, lineSeparatorFor } from '../apps/desktop/src/code-language';
 
@@ -85,24 +86,43 @@ test('content checks point at the line they are about', () => {
   assert.equal(contentChecks(authoring({ kind: 'skill', content: '---\nname: ok\ndescription: [x\n---\n' }))[0].line, 3);
 });
 
-test('item drafts: the original { content, base } format still restores and the plain editor keeps writing it', () => {
+test('item drafts: the original { content, base } format still restores', () => {
   const old = JSON.stringify({ content: 'Hello', base: 'abc' });
   assert.deepEqual(parseDraft(old), { content: 'Hello', base: 'abc' });
   assert.equal(parseDraft(null), null);
   assert.equal(parseDraft('not json'), null);
   assert.equal(parseDraft(JSON.stringify({ content: 'x' })), null, 'a draft needs its base revision');
-  assert.equal(withDraftContent(null, 'Hi', 'h1'), JSON.stringify({ content: 'Hi', base: 'h1' }));
-  assert.equal(withDraftContent(old, 'Hi', 'h1'), JSON.stringify({ content: 'Hi', base: 'h1' }), 'drafts without code editor fields are written exactly as before');
   assert.equal(draftKey('id-1'), 'kiln-draft:id-1');
 });
 
-test('item drafts keep metadata and bundled file edits, ignore junk and survive the plain editor', () => {
+test('item drafts keep metadata and bundled file edits and ignore junk', () => {
   const full = serialiseDraft({ content: 'Body', base: 'h', meta: { title: 'New title', tags: 'a, b' }, files: { 'references/notes.md': 'Notes\r\n' } });
   assert.deepEqual(parseDraft(full), { content: 'Body', base: 'h', meta: { title: 'New title', tags: 'a, b' }, files: { 'references/notes.md': 'Notes\r\n' } });
   assert.equal(serialiseDraft({ content: 'Body', base: 'h', meta: {}, files: {} }), JSON.stringify({ content: 'Body', base: 'h' }));
   assert.deepEqual(parseDraft(JSON.stringify({ content: 'c', base: 'b', meta: { title: 3, source: 'web', unknown: 'x' }, files: ['nope'] })), { content: 'c', base: 'b', meta: { source: 'web' } });
-  // The plain editor (flag off) rewrites content and base but must not drop what the code editor stored.
-  assert.deepEqual(parseDraft(withDraftContent(full, 'Edited without the flag', 'h')), { content: 'Edited without the flag', base: 'h', meta: { title: 'New title', tags: 'a, b' }, files: { 'references/notes.md': 'Notes\r\n' } });
+});
+
+test('item drafts keep only changed fields, and save them with the item’s own values for the rest', () => {
+  const item = { id: 'i', kind: 'skill', title: 'Review', tags: ['a', 'b'], collection: 'Work/Code', source: 'https://example.com', licence: 'MIT', revision: 'r1' } as unknown as Item;
+  const revision = { hash: 'r1', kind: 'skill', title: 'Review', content: 'Body', description: '', tags: ['a', 'b'], collection: 'Work', source: 'https://example.com', licence: 'MIT', files: { 'notes.md': b64('Notes\n'), 'logo.png': 'iVBORw0KGgo=' } } as unknown as Revision;
+  assert.deepEqual(fieldValues(item), { title: 'Review', agentFilename: '', collection: 'Work/Code', tags: 'a, b', source: 'https://example.com', licence: 'MIT', summary: '' });
+  let meta = withField({}, item, 'title', 'Careful review');
+  meta = withField(meta, item, 'tags', 'a, b');
+  assert.deepEqual(meta, { title: 'Careful review' }, 'a field set back to the item’s value is dropped');
+  assert.deepEqual(withField(meta, item, 'title', 'Review'), {});
+  assert.equal(draftChanges(revision, { content: 'Body', meta: { summary: 'Why' } }), false, 'a revision note alone is not a change');
+  assert.equal(draftChanges(revision, { content: 'Body', meta: {}, files: { 'new.md': '' } }), true);
+  assert.equal(draftChanges(revision, { content: 'Body!', meta: {} }), true);
+  assert.deepEqual(splitTags(' #x, y ,, x '), ['x', 'y']);
+  const value = draftValue(revision, item, { content: 'New body', base: 'r1', meta: { title: 'Careful review', tags: 'c, #d' }, files: { 'notes.md': 'Notes\nMore\n', 'references/new.md': 'New\n' } });
+  assert.equal(value.title, 'Careful review');
+  assert.deepEqual(value.tags, ['c', 'd']);
+  assert.equal(value.collection, 'Work/Code', 'the collection comes from the item, which may have moved without a new revision');
+  assert.equal(value.content, 'New body');
+  assert.deepEqual(Object.keys(value.files).sort(), ['logo.png', 'notes.md', 'references/new.md']);
+  assert.equal(value.files['logo.png'], 'iVBORw0KGgo=', 'binary files keep their bytes');
+  assert.equal(Buffer.from(value.files['notes.md'], 'base64').toString(), 'Notes\nMore\n');
+  assert.deepEqual(draftValue(revision, item, { content: 'Body', base: 'r1' }).tags, ['a', 'b']);
 });
 
 test('bundled files: text is detected by content and round-trips byte for byte; binary files are left alone', () => {

@@ -1,7 +1,7 @@
 import type { AgentJob, AgentKind } from './service';
 
 /**
- * runNotifications: what the backend tells the desktop when a run ends, and the words used to announce it. Shared by the main
+ * What the backend tells the desktop when a run ends, and the words used to announce it. Shared by the main
  * process (desktop notifications) and the renderer (the in-app toast and the runs list), so both say the same thing.
  */
 

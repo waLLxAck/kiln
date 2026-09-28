@@ -40,19 +40,18 @@ test('context menu shows single-key shortcuts; A archives with a short undo; swi
     await expect(menu).toHaveCount(0);
     await expect(page.locator('.item-card')).toHaveCount(2);
     const toast = page.locator('.undo-toast');
-    await expect(toast).toContainText('Archived First prompt');
+    await expect(toast).toContainText('Archived “First prompt”');
     await page.screenshot({ path: 'test-results/undo-toast.png' });
     await toast.getByRole('button', { name: 'Undo' }).click();
     await expect(page.locator('.item-card')).toHaveCount(3);
     await expect(toast).toHaveCount(0);
-    await expect(page.locator('.toast')).toContainText('First prompt is back in captured');
+    await expect(page.locator('.toast')).toContainText('Undone: Archived “First prompt”');
 
-    // The same key works on a focused card without opening the menu, and the toast leaves on its own after 3 seconds.
-    await card(page, 'Second prompt').click();
+    // The same key works on a focused row without opening the menu, and the toast leaves on its own after 3 seconds.
     await card(page, 'Second prompt').focus();
     await page.keyboard.press('a');
     await expect(page.locator('.item-card')).toHaveCount(2);
-    await expect(toast).toContainText('Archived Second prompt');
+    await expect(toast).toContainText('Archived “Second prompt”');
     await page.mouse.move(0, 0);
     await expect(toast).toHaveCount(0, { timeout: 10000 });
 
@@ -64,12 +63,12 @@ test('context menu shows single-key shortcuts; A archives with a short undo; swi
     await page.screenshot({ path: 'test-results/swipe-mid.png' });
     await page.mouse.up();
     await expect(page.locator('.item-card')).toHaveCount(1);
-    await expect(toast).toContainText('Archived Third prompt');
+    await expect(toast).toContainText('Archived “Third prompt”');
 
     // Archiving another item replaces the undo target.
     await card(page, 'First prompt').click({ button: 'right' });
     await page.getByRole('menuitem', { name: /^Archived/ }).click();
-    await expect(toast).toContainText('Archived First prompt');
+    await expect(toast).toContainText('Archived “First prompt”');
     await toast.getByRole('button', { name: 'Undo' }).click();
     await expect(page.locator('.item-card')).toHaveCount(1);
     await expect(card(page, 'First prompt')).toBeVisible();

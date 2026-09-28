@@ -1,16 +1,10 @@
-import { useSyncExternalStore } from 'react';
 import type { Item } from '../../../packages/protocol/schema';
 
 /*
- * Experimental keyboardUndo: the pure parts (list keys, type-ahead, the undo stack's rules, batching), kept free of the
- * bridge so unit tests can run them. The hooks and components that use them live in keyboard.ts, UndoStack.tsx,
- * ItemDrag.tsx and ShortcutSheet.tsx.
+ * Keyboard navigation and undo: the pure parts (list keys, type-ahead, the undo stack's rules, batching), kept free of the
+ * bridge so unit tests can run them. The hooks and components that use them live in keyboard.ts (used by LibraryTable.tsx),
+ * UndoStack.tsx, ItemDrag.tsx and ShortcutSheet.tsx.
  */
-
-/** Whether keyboardUndo is on, for components far from the snapshot (context menus). App sets it from the settings. */
-let flag = false; const listeners = new Set<() => void>();
-export function setKeyboardUndo(on: boolean) { if (on === flag) return; flag = on; for (const listener of listeners) listener(); }
-export const useKeyboardUndo = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => flag);
 
 /** The ids from the anchor row to the target row, both included, in list order. Nothing when either is out of range. */
 export function rangeIds(ids: string[], anchor: number, target: number) {
@@ -56,7 +50,8 @@ export const typeAheadKey = (key: string) => key.length === 1 && /[\p{L}\p{N} ]/
 export type UndoField = 'deleted' | 'status' | 'favourite' | 'collection';
 export type UndoValue = boolean | string;
 export type UndoChange = { id: string; field: UndoField; before: UndoValue; after: UndoValue };
-export type UndoEntry = { id: number; label: string; changes: UndoChange[] };
+/** `run`, when set, undoes an action that is more than field changes (a consolidation) and says what it did. */
+export type UndoEntry = { id: number; label: string; changes: UndoChange[]; run?: () => Promise<string> };
 export const UNDO_LIMIT = 20;
 /** The field's current value on an item. */
 export const fieldOf = (item: Item, field: UndoField): UndoValue => field === 'deleted' ? Boolean(item.deletedAt) : field === 'status' ? item.status : field === 'favourite' ? item.favourite : item.collection;

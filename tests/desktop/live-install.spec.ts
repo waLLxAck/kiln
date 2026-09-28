@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { showKind } from './fixture';
 
 test('authorized live install/uninstall affects only the disposable fixture in Codex and Claude', async () => {
   test.skip(process.env.KILN_LIVE_TEST !== '1', 'Requires explicit live-test opt-in and user-authorized library.');
@@ -22,7 +23,7 @@ test('authorized live install/uninstall affects only the disposable fixture in C
   fs.writeFileSync(path.join(evidence, 'fixture-validation', 'SKILL.md'), content);
   let fixtureId = '';
   try {
-    await page.getByRole('tab', { name: /^Skills/ }).click();
+    await showKind(page, 'skill');
     const originalItems = await page.evaluate(async () => (await window.kiln.call<{ items: { id: string; source: string }[] }>('snapshot')).items.filter(i => i.source.startsWith('repository:')));
     expect(originalItems).toHaveLength(217);
     await page.screenshot({ path: path.join(evidence, 'all-skills.png') });
@@ -39,30 +40,29 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     await page.getByRole('button', { name: 'Capture item', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Kiln installation check' })).toBeVisible();
     fixtureId = await page.evaluate(async () => (await window.kiln.call<{ items: { id: string; title: string; status: string }[] }>('snapshot')).items.filter(i => i.title === 'Kiln installation check' && i.status === 'captured').at(-1)!.id);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).toHaveText('approved');
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    for (const [index, environment] of ['Personal Codex', 'Personal Claude Code'].entries()) {
-      await page.getByRole('button', { name: 'Deploy', exact: true }).first().click();
-      await page.getByLabel('Environment').selectOption({ label: `${environment} · ${index === 0 ? 'codex' : 'claude'} · Personal` });
-      await page.getByRole('button', { name: 'Preview deployment' }).click();
+    // Personal installs are the rail's location toggles: Agents (~/.agents/skills) and Claude (~/.claude/skills).
+    const toggles = page.getByRole('region', { name: 'Installs', exact: true }).getByRole('group', { name: 'Installed for' });
+    for (const [index, location] of ['Agents', 'Claude'].entries()) {
       expect(fs.existsSync(destinations[index])).toBe(false);
-      await page.getByRole('button', { name: 'Confirm & apply snapshot' }).click();
+      await toggles.getByRole('button', { name: new RegExp(`^${location}`) }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
       expect(fs.readFileSync(path.join(destinations[index], 'SKILL.md'), 'utf8')).toBe(content);
     }
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'deployments', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Uninstall skill', exact: true })).toHaveCount(2);
+    await expect(toggles.getByRole('button', { name: /Installed/ })).toHaveCount(2);
     await page.screenshot({ path: path.join(evidence, 'test-skill-installed.png') });
-    for (let index = 0; index < 2; index++) {
-      await page.getByRole('button', { name: 'Uninstall skill', exact: true }).first().click();
-      await page.getByRole('button', { name: 'Confirm uninstall', exact: true }).click();
+    for (const location of ['Agents', 'Claude']) {
+      await toggles.getByRole('button', { name: new RegExp(`^${location}`) }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
     }
     for (const destination of destinations) expect(fs.existsSync(destination)).toBe(false);
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'content', exact: true }).click();
-    await page.getByRole('button', { name: 'Move to archived' }).click();
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Move to archived' }).click();
     for (const [relative, expected] of Object.entries(before.installed)) {
       if (relative.endsWith(':link')) expect(fs.readlinkSync(path.join(os.homedir(), relative.slice(0, -5)))).toBe(expected);
       else expect(createHash('sha256').update(fs.readFileSync(path.join(os.homedir(), relative))).digest('hex')).toBe(expected);
@@ -70,9 +70,8 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     expect(errors).toEqual([]);
     const result = { fixtureId, fixtureName, destinations, installedAndVerified: true, uninstalledAndVerified: true, existingEntriesVerifiedUnchanged: Object.keys(before.installed).length, githubConnectionVerified: repository, catalogSkillsVerified: 217, completedAt: new Date().toISOString() };
     fs.writeFileSync(path.join(evidence, 'live-install-result.json'), JSON.stringify(result, null, 2));
-    await page.getByRole('tab', { name: /^Skills/ }).click();
-    await page.getByRole('button', { name: /build-knowledge-system/ }).first().click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'overview', exact: true }).click();
+    await showKind(page, 'skill');
+    await page.locator('.item-card', { hasText: /build-knowledge-system/ }).first().click();
     await page.screenshot({ path: path.join(evidence, 'migrated-library.png') });
   } finally {
     // Cleanup goes through the same guarded domain operation, only for this fixture.

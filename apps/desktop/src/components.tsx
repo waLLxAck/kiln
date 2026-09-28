@@ -1,7 +1,6 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
 import { Bot, X, FileText, Link, Image, File, Terminal, BookOpen, BookMarked, FolderSymlink, FileInput, Check, Lightbulb, ListOrdered, Loader2, ArrowUpRight, Wrench } from 'lucide-react';
 import type { Item, ProviderId } from '../../../packages/protocol/schema';
-import { useKeyboardUndo } from './keyboard-undo';
 
 /** The Kiln mark (cream kiln arch with an orange fire opening). Its dark rounded square is the `.brand-symbol` background. */
 export function KilnMark() {
@@ -20,7 +19,8 @@ export function KindIcon({ kind, size = 19 }: { kind: Item['kind']; size?: numbe
   const Icon = { prompt: FileText, agent: Bot, skill: Terminal, instruction: BookOpen, link: Link, insight: Lightbulb, technique: ListOrdered, tool: Wrench, resource: BookMarked, image: Image, file: File, reference: FolderSymlink, source: FileInput }[kind];
   return <Icon size={size} aria-hidden="true" />;
 }
-export function Badge({ status }: { status: string }) { return <span className={`badge ${status}`} title={statusHelp[status]}>{status === 'approved' && <Check size={11} />}{status.replaceAll('_', ' ')}</span>; }
+/** A status or state chip. The stored `captured` status reads as "draft", the word the rest of the app uses. */
+export function Badge({ status }: { status: string }) { return <span className={`badge ${status}`} title={statusHelp[status]}>{status === 'approved' && <Check size={11} />}{status === 'captured' ? 'draft' : status.replaceAll('_', ' ')}</span>; }
 export function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState('');
@@ -60,27 +60,45 @@ export function shortcutEntry(entries: MenuEntry[], event: KeyboardEvent | { key
   for (const entry of entries) if (typeof entry === 'object' && 'label' in entry && !entry.disabled && entry.shortcut?.toLowerCase() === key) return entry;
   return null;
 }
-/** Right-click menu anchored at a screen position; keeps itself inside the window. */
+/**
+ * Where a menu opened by `event` goes: at the pointer, or under the element for the menu key and Shift+F10, which come
+ * with no pointer position.
+ */
+export function menuPoint(event: { clientX: number; clientY: number; currentTarget: EventTarget | null }) {
+  if (event.clientX || event.clientY || !(event.currentTarget instanceof Element)) return { x: event.clientX, y: event.clientY };
+  const box = event.currentTarget.getBoundingClientRect();
+  return { x: box.left + Math.min(24, box.width / 2), y: box.bottom + 4 };
+}
+/**
+ * Right-click menu anchored at a screen position; keeps itself inside the window. It opens with its first enabled entry
+ * focused: the arrows, Home and End move between entries, Enter or Space runs one, its letter runs it at once, and Esc or
+ * Tab close the menu and hand focus back to whatever opened it.
+ */
 export function ContextMenu({ x, y, entries, onClose }: { x: number; y: number; entries: MenuEntry[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
-  // Experimental keyboardUndo: focus starts on the first enabled entry, arrows move it, and closing hands focus back to the opener.
-  const keys = useKeyboardUndo();
-  useLayoutEffect(() => { const box = ref.current?.getBoundingClientRect(); if (!box) return; setPosition({ left: Math.min(x, window.innerWidth - box.width - 8), top: Math.min(y, window.innerHeight - box.height - 8) }); }, [x, y]);
-  useLayoutEffect(() => { const menu = ref.current; if (!keys || !menu) return; const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null; menu.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true }); return () => { if (menu.contains(document.activeElement)) opener?.focus({ preventScroll: true }); }; }, [keys]);
+  useLayoutEffect(() => { const box = ref.current?.getBoundingClientRect(); if (!box) return; setPosition({ left: Math.max(8, Math.min(x, window.innerWidth - box.width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - box.height - 8)) }); }, [x, y]);
+  // Focus starts on the first enabled entry (the menu itself when none is), and closing hands it back to the opener.
+  useLayoutEffect(() => { const menu = ref.current; if (!menu) return; const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null; (menu.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? menu).focus({ preventScroll: true }); return () => { if (menu.contains(document.activeElement)) opener?.focus({ preventScroll: true }); }; }, []);
   const move = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    // Tab leaves the menu the way Esc does, rather than wandering off with the menu still open.
+    if (event.key === 'Tab') { event.preventDefault(); event.stopPropagation(); onClose(); return; }
     const entries = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)')], at = entries.indexOf(document.activeElement as HTMLElement), last = entries.length - 1;
     const next = event.key === 'ArrowDown' ? (at < 0 || at === last ? 0 : at + 1) : event.key === 'ArrowUp' ? (at <= 0 ? last : at - 1) : event.key === 'Home' ? 0 : event.key === 'End' ? last : null;
-    if (next === null || last < 0) return;
-    event.preventDefault(); event.stopPropagation(); entries[next].focus();
+    // Moving keys stay in the menu even when there is nowhere to go, so they never scroll or step the list behind it.
+    if (next !== null || event.key === 'PageUp' || event.key === 'PageDown') { event.preventDefault(); event.stopPropagation(); }
+    if (next !== null && last >= 0) entries[next].focus();
   };
   useEffect(() => {
     const away = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) onClose(); };
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (keys) { event.preventDefault(); event.stopPropagation(); } onClose(); return; } const hit = shortcutEntry(entries, event); if (hit) { event.preventDefault(); event.stopPropagation(); hit.onSelect?.(); onClose(); } };
+    // Esc closes only the menu: the menu is gone by the time the window's own Esc listener runs, so stop it here.
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return; } const hit = shortcutEntry(entries, event); if (hit) { event.preventDefault(); event.stopPropagation(); hit.onSelect?.(); onClose(); } };
     window.addEventListener('mousedown', away); window.addEventListener('keydown', key, true); window.addEventListener('blur', onClose); window.addEventListener('resize', onClose);
     return () => { window.removeEventListener('mousedown', away); window.removeEventListener('keydown', key, true); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
-  }, [onClose, entries, keys]);
-  return <div ref={ref} className="context-menu" role="menu" style={position} onContextMenu={event => event.preventDefault()} onKeyDown={keys ? move : undefined}>
-    {entries.map((entry, i) => entry === 'separator' ? <hr key={i} /> : 'heading' in entry ? <div key={i} className="context-heading">{entry.heading}</div> : <button key={i} role="menuitem" className={entry.danger ? 'danger' : ''} disabled={entry.disabled} title={entry.hint} onClick={() => { entry.onSelect?.(); onClose(); }}><span className="context-check">{entry.checked && <Check size={13} />}</span>{entry.icon}<span className="context-label">{entry.label}</span>{entry.shortcut && <kbd className="context-key" aria-label={`Shortcut ${entry.shortcut}`}>{entry.shortcut}</kbd>}{entry.note && <span className="context-note">{entry.note}</span>}</button>)}
+  }, [onClose, entries]);
+  return <div ref={ref} className="context-menu" role="menu" tabIndex={-1} style={position} onContextMenu={event => event.preventDefault()} onKeyDown={move}>
+    {entries.map((entry, i) => entry === 'separator' ? <hr key={i} /> : 'heading' in entry ? <div key={i} className="context-heading">{entry.heading}</div> : <button key={i} role="menuitem" className={entry.danger ? 'danger' : ''} disabled={entry.disabled} title={entry.hint}
+      // The pointer moves focus too, so the arrows carry on from the entry under it.
+      onPointerMove={event => { if (document.activeElement !== event.currentTarget) event.currentTarget.focus({ preventScroll: true }); }} onClick={() => { entry.onSelect?.(); onClose(); }}><span className="context-check">{entry.checked && <Check size={13} />}</span>{entry.icon}<span className="context-label">{entry.label}</span>{entry.shortcut && <kbd className="context-key" aria-label={`Shortcut ${entry.shortcut}`}>{entry.shortcut}</kbd>}{entry.note && <span className="context-note">{entry.note}</span>}</button>)}
   </div>;
 }

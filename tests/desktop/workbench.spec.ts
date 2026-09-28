@@ -9,7 +9,7 @@ type Page = Awaited<ReturnType<Awaited<ReturnType<typeof electron.launch>>['firs
 async function createItem(page: Page, input: { kind: string; title: string; content: string }) {
   await page.evaluate(async input => { await (window as any).kiln.call('items.create', { ...input, collection: 'Personal', tags: [], files: {}, source: '', licence: 'Unknown' }); }, input);
   await page.getByRole('button', { name: 'Refresh library' }).click();
-  await page.getByRole('button', { name: new RegExp(input.title) }).click();
+  await page.locator('.item-card', { hasText: input.title }).click();
 }
 
 test('real desktop capture → copy → trial → approval → deploy → edit → rollback', async () => {
@@ -23,7 +23,9 @@ test('real desktop capture → copy → trial → approval → deploy → edit �
     const content = '---\nname: desktop-review\ndescription: Review a supplied change for defects.\n---\n\n# Procedure\nRead the supplied diff. Verify claims.';
     await createItem(page, { kind: 'skill', title: 'Desktop review skill', content });
     await expect(page.getByRole('heading', { name: 'Desktop review skill' })).toBeVisible();
-    await page.getByRole('button', { name: 'Copy', exact: true }).click();
+    // An untested skill offers Test as its primary action; Copy is in the ⋯ menu.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Copy', exact: true }).click();
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(content);
     await page.getByRole('button', { name: 'Test', exact: true }).click();
     await page.getByRole('button', { name: 'Manual handoff instead', exact: true }).click();
@@ -34,41 +36,38 @@ test('real desktop capture → copy → trial → approval → deploy → edit �
     await page.getByRole('button', { name: 'Copy handoff', exact: true }).click();
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toContain('known off-by-one');
     await page.getByRole('button', { name: 'Done', exact: true }).click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: /trials/ }).click();
+    // The experiments grid opened by Test selects the prepared handoff, so its result can be recorded from the panel.
     await page.getByRole('button', { name: 'Record result', exact: true }).click();
     await page.getByLabel('What happened?').fill('Found the known boundary error with a concrete fix.');
     await page.getByLabel('Output transcript (stored only on this machine)').fill('Observed output: the loop includes an extra element.');
     await page.getByRole('button', { name: 'Save judgement' }).click();
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).toHaveText('approved');
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Machines' }).click();
-    await page.getByRole('button', { name: 'Enroll project folder', exact: true }).click();
-    await page.getByLabel('Name', { exact: true }).fill('Test Codex project');
-    await page.getByLabel('Allowed root').fill(target);
-    await page.getByRole('dialog').getByRole('button', { name: 'Enroll environment', exact: true }).click();
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'installs', exact: true }).click();
-    await page.getByRole('button', { name: 'Install into a project folder…', exact: true }).click();
-    await page.getByRole('button', { name: 'Preview install' }).click();
+    // Install into any project folder from the rail; the first install makes it one of your projects.
+    await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as typeof dialog.showOpenDialog; }, target);
+    await page.getByRole('region', { name: 'Installs', exact: true }).getByRole('button', { name: 'Install into project…' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Choose folder…' }).click();
     const destination = path.join(target, '.agents', 'skills', 'desktop-review', 'SKILL.md');
+    await expect(page.getByRole('dialog').getByLabel('Preview', { exact: true })).toContainText('Nothing is there yet');
     expect(fs.existsSync(destination)).toBe(false);
-    await page.getByRole('button', { name: 'Confirm & install' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0); expect(fs.readFileSync(destination, 'utf8')).toBe(content);
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'content', exact: true }).click();
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    // Test swapped the content for the experiments grid; ← Content brings the text (and its Edit) back.
+    await page.getByRole('button', { name: 'Content', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit text', exact: true }).click();
     await page.getByLabel('Content', { exact: true }).fill(content + '\nUnapproved change.');
     await page.getByLabel('What changed?').fill('Test approval integrity');
     await page.getByRole('button', { name: 'Save revision' }).click();
-    await expect(page.locator('.detail-meta .badge')).not.toHaveText('approved');
+    await expect(page.locator('.item-state .badge')).not.toHaveText('approved');
     expect(fs.readFileSync(destination, 'utf8')).toBe(content);
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'installs', exact: true }).click();
+    await page.getByRole('button', { name: 'Open history', exact: true }).click();
     await page.getByRole('button', { name: 'Review rollback' }).click();
     await page.getByRole('button', { name: 'Confirm rollback' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0); expect(fs.existsSync(destination)).toBe(false);
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'overview', exact: true }).click();
+    await page.getByRole('button', { name: 'Content', exact: true }).click();
     await page.screenshot({ path: 'test-results/workbench.png' });
     expect(errors).toEqual([]);
     expect(await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined');
@@ -84,9 +83,9 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     await expect(page.getByRole('button', { name: 'Capture your first item', exact: true })).toBeVisible({ timeout: 60000 });
     await createItem(page, { kind: 'prompt', title: 'Make the next step clear', content: 'Explain the next step clearly.' });
     await expect(page.getByRole('heading', { name: 'Make the next step clear' })).toBeVisible();
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).toHaveText('approved');
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     const approved = await page.evaluate(async () => {
       const snapshot = await window.kiln.call<{ approvals: { note: string; evidence: string[] }[] }>('snapshot');
@@ -94,27 +93,31 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     });
     expect(approved.note).toBe('Approved by clicking Approve in Kiln.');
     expect(approved.evidence).toEqual([]);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Unapprove', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).not.toHaveText('approved');
+    await page.getByRole('complementary', { name: 'Item status and organisation' }).getByRole('button', { name: 'Unapprove', exact: true }).click();
+    await expect(page.locator('.item-state .badge')).not.toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).toHaveText('approved');
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();
-    await expect(page.getByRole('button', { name: /Make the next step clear/ })).toBeVisible();
+    // The item that was open comes back open, still approved; the list behind it has its card.
+    await expect(page.getByRole('heading', { name: 'Make the next step clear', level: 1 })).toBeVisible();
+    await expect(page.locator('.item-state .badge')).toHaveText('approved');
+    await page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
+    await expect(page.locator('.item-card', { hasText: /Make the next step clear/ })).toBeVisible();
     await app.evaluate(({ clipboard }) => clipboard.writeText('Do not change this on Escape'));
-    await page.getByRole('button', { name: /Quick search/ }).click();
+    await page.getByRole('button', { name: /Search or run a command/ }).click();
     const palette = await app.waitForEvent('window');
     await expect(palette.getByRole('combobox', { name: 'Quick search' })).toBeVisible();
     await palette.getByRole('combobox').fill('clear');
-    await expect(palette.getByRole('option')).toHaveCount(1);
+    await expect(palette.getByRole('group', { name: 'Items' }).getByRole('option')).toHaveCount(1);
     await palette.keyboard.press('Escape');
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe('Do not change this on Escape');
     await createItem(page, { kind: 'prompt', title: 'Untrusted markup', content: '<img src=x onerror="window.compromised=true"><script>window.compromised=true</script>' });
     await expect(page.getByRole('heading', { name: 'Untrusted markup' })).toBeVisible();
-    await expect(page.locator('.content-preview')).toContainText('<script>');
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: 'Raw', exact: true }).click();
+    await expect(page.locator('.item-raw')).toContainText('<script>');
+    await page.getByRole('button', { name: 'Formatted', exact: true }).click();
     await expect(page.locator('.markdown-content')).toBeVisible();
     expect(await page.evaluate(() => Boolean((window as unknown as { compromised?: boolean }).compromised))).toBe(false);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
@@ -138,8 +141,10 @@ test('delete started experiments from both lists and keep them deleted after reo
     await expect(page.getByRole('button', { name: 'Delete experiment', exact: true })).toHaveCount(1);
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
-    await page.getByRole('button', { name: /Delete experiment fixture/ }).click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: /trials/ }).click();
+    // The library comes back as it was left, open item included; Esc returns to the list.
+    await page.keyboard.press('Escape');
+    await page.locator('.item-card', { hasText: /Delete experiment fixture/ }).click();
+    await page.getByRole('button', { name: 'Open tests', exact: true }).click();
     await page.getByRole('button', { name: 'Delete experiment', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Delete experiment', exact: true })).toHaveCount(0);
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();

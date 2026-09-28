@@ -1,5 +1,7 @@
-// Build-time switches baked in by vite.config.ts (see ../build-flags.ts). Outside a Vite build, such as in unit tests, the
-// constant is missing and every section is shown.
-declare const __KILN_SHOW_MACHINES__: boolean | undefined;
-/** False in public release builds: the Machines section shows "Coming soon" and nothing links into it. */
-export const machinesEnabled: boolean = typeof __KILN_SHOW_MACHINES__ === 'undefined' ? true : __KILN_SHOW_MACHINES__;
+/**
+ * Multi-machine Machines: other machines in the switcher, the All machines overview, marking items for another machine, and
+ * sharing this machine's installs as `workbench/machines/<id>.json` through GitHub (packages/fleet). Off until it is reliable:
+ * Machines manages this machine only and says "Add a machine · Coming soon", the reporter is never started, and nothing is
+ * published or committed. The fleet backend stays in the code with its tests. A code switch for a later release, not a setting.
+ */
+export const multiMachine = false;

@@ -17,8 +17,8 @@ function heldRunner() {
   return { calls, runner };
 }
 const verdict = { output: 'Output', judgement: 'pass', note: 'Worked' };
-const setup = (flag: boolean) => {
-  const wb = fixture(); if (flag) wb.setExperiment({ id: 'runNotifications', enabled: true });
+const setup = () => {
+  const wb = fixture();
   const held = heldRunner(), finished: AgentJob[] = [];
   const service = new AgentService(wb, () => {}, held.runner, async () => []);
   service.onFinished = job => finished.push(structuredClone(job));
@@ -26,21 +26,8 @@ const setup = (flag: boolean) => {
   return { wb, service, items, finished, calls: held.calls };
 };
 
-test('flag off: a third run is refused while two are running, as before', async () => {
-  const { wb, service, items, calls } = setup(false);
-  try {
-    service.start({ id: items[0].id, kind: 'trial' }); service.start({ id: items[1].id, kind: 'trial' });
-    assert.throws(() => service.start({ id: items[2].id, kind: 'trial' }), /Two agent runs are active/);
-    assert.throws(() => service.chat({ itemId: items[2].id, message: 'Hello' }), /Two agent runs are active/);
-    await until(() => calls.length === 2);
-    assert.equal(service.queued, 0);
-    for (const call of calls) call.finish(verdict);
-    await until(() => service.running === 0);
-  } finally { wb.close(); }
-});
-
-test('flag on: a third run waits in the queue and starts, in order, when a slot frees', async () => {
-  const { wb, service, items, calls, finished } = setup(true);
+test('a third run waits in the queue and starts, in order, when a slot frees', async () => {
+  const { wb, service, items, calls, finished } = setup();
   try {
     const first = service.start({ id: items[0].id, kind: 'trial' }); service.start({ id: items[1].id, kind: 'trial' });
     const third = service.start({ id: items[2].id, kind: 'trial', context: 'third' }), fourth = service.start({ id: items[3].id, kind: 'derive' });
@@ -69,8 +56,8 @@ test('flag on: a third run waits in the queue and starts, in order, when a slot 
   } finally { wb.close(); }
 });
 
-test('flag on: a queued run can be cancelled before it starts and never reaches the CLI', async () => {
-  const { wb, service, items, calls, finished } = setup(true);
+test('a queued run can be cancelled before it starts and never reaches the CLI', async () => {
+  const { wb, service, items, calls, finished } = setup();
   try {
     service.start({ id: items[0].id, kind: 'trial' }); service.start({ id: items[1].id, kind: 'trial' });
     const queued = service.start({ id: items[2].id, kind: 'trial' });
@@ -90,8 +77,8 @@ test('flag on: a queued run can be cancelled before it starts and never reaches 
   } finally { wb.close(); }
 });
 
-test('flag on: a chat turn queues too, and a queued turn blocks another message about the same item', async () => {
-  const { wb, service, items, calls } = setup(true);
+test('a chat turn queues too, and a queued turn blocks another message about the same item', async () => {
+  const { wb, service, items, calls } = setup();
   try {
     service.start({ id: items[0].id, kind: 'trial' }); service.start({ id: items[1].id, kind: 'trial' });
     const turn = service.chat({ itemId: items[2].id, message: 'What does this do?' });
@@ -110,7 +97,7 @@ test('flag on: a chat turn queues too, and a queued turn blocks another message 
 });
 
 test('queued runs left behind by an app exit are marked interrupted and retryable, with their trial closed', async () => {
-  const { wb, service, items, calls } = setup(true);
+  const { wb, service, items, calls } = setup();
   try {
     service.start({ id: items[0].id, kind: 'trial' }); service.start({ id: items[1].id, kind: 'trial' });
     const queued = service.start({ id: items[2].id, kind: 'trial' });

@@ -1,16 +1,13 @@
 import { useState } from 'react';
 import { FolderOpen } from 'lucide-react';
-import type { Target } from '../../../packages/protocol/schema';
 import { api } from './api';
 import { Field } from './components';
 import { useKnownProjects } from './KnownProjects';
 
-/** A run location is independent of deployment enrollment and provider. `known` (experimental projectInstalls) offers every known project folder. */
-export function ExperimentProject({ targets, value, onChange, disabled = false, known = false }: { targets: Target[]; value: string; onChange: (value: string) => void; disabled?: boolean; known?: boolean }) {
+/** A run location is independent of deployment enrollment and provider: any known project folder (KnownProjects.ts), or any folder. */
+export function ExperimentProject({ value, onChange, disabled = false }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
   const [error, setError] = useState('');
-  const { projects: knownProjects } = useKnownProjects(known);
-  const enrolled = [...new Map(targets.filter(t => t.scope === 'project').map(t => [t.root, t])).values()];
-  const projects = knownProjects ? knownProjects.filter(p => p.exists).map(p => ({ root: p.root, name: p.name })) : enrolled;
+  const projects = (useKnownProjects().projects ?? []).filter(p => p.exists);
   const browse = async () => {
     setError('');
     try { const folder = await api<string | null>('desktop.chooseDirectory'); if (folder) onChange(folder); }

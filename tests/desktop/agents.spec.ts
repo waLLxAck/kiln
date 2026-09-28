@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { desktopEnv } from './fixture';
+import { desktopEnv, showKind } from './fixture';
 
 test('agents live in Library, import intact, edit as drafts and install for their client', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-agents-ui-'));
@@ -13,7 +13,7 @@ test('agents live in Library, import intact, edit as drafts and install for thei
   const app = await electron.launch({ ...(process.env.KILN_AGENTS_EXE ? { executablePath: process.env.KILN_AGENTS_EXE } : { args: ['.'] }), env: { ...desktopEnv(root), KILN_HOME: home } });
   try {
     const page = await app.firstWindow();
-    await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add agents', exact: true })).toHaveCount(0);
     const target = await page.evaluate(async home => window.kiln.call<any>('targets.enroll', { name: 'Copilot agents', provider: 'copilot', root: home, scope: 'personal' }), home);
     await page.reload();
@@ -28,16 +28,14 @@ test('agents live in Library, import intact, edit as drafts and install for thei
     const imported = await page.evaluate(async () => (await window.kiln.call<any>('snapshot')).items.find((i: any) => i.kind === 'agent'));
     expect(imported.agent).toEqual({ provider: 'copilot', filename: 'reviewer.md' });
     await page.reload();
-    await page.getByRole('tab', { name: /^Agents/ }).click();
+    await showKind(page, 'agent');
     await page.locator('.item-card').filter({ hasText: 'careful-reviewer' }).click();
-    await page.getByRole('button', { name: 'Manage installations', exact: true }).click();
     await page.getByRole('group', { name: 'Installed for' }).getByRole('button', { name: /Copilot.*found/ }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Let Kiln manage it' }).click();
     await expect.poll(() => fs.readFileSync(source, 'utf8')).toBe(content);
     await expect.poll(async () => await page.evaluate(async id => ({ installed: (await window.kiln.call<any[]>('deploy.installations', { itemId: id })).some(i => i.state === 'installed'), error: document.querySelector('.global-error')?.textContent ?? '' }), imported.id), { timeout: 60000 }).toEqual({ installed: true, error: '' });
     await page.screenshot({ path: 'artifacts/library-agent.png' });
-    await page.getByRole('button', { name: 'content', exact: true }).click();
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit text', exact: true }).click();
     await page.getByLabel('Content', { exact: true }).fill(content + '\nCheck the tests.');
     await page.getByLabel('What changed?').fill('Clarify review');
     await page.getByRole('button', { name: 'Save revision' }).click();
@@ -46,11 +44,13 @@ test('agents live in Library, import intact, edit as drafts and install for thei
     const configs = await page.evaluate(() => window.kiln.call<any>('home.list'));
     expect(configs.files.some((f: any) => f.path === source)).toBe(false);
     expect(target.provider).toBe('copilot');
-    await page.locator('.detail-actions').getByRole('button', { name: 'Installed', exact: true }).click();
     await page.getByRole('group', { name: 'Installed for' }).getByRole('button', { name: /Copilot.*Installed/ }).click();
     await page.getByRole('dialog').getByRole('button', { name: /Remove/ }).click();
     await expect.poll(() => fs.existsSync(source)).toBe(false);
-    await expect(page.getByRole('button', { name: 'Approve & install', exact: true })).toBeVisible();
+    // An untested draft offers Test first; Approve & install stays in the ⋯ menu.
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: 'Approve & install', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.locator('.detail-actions .skill-toggles')).toHaveCount(0);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -1,6 +1,5 @@
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import { targetSkillsFolder, skillLocation, skillLocationLabel, locationFolder, type SkillLocation } from '../providers/skill-locations';
-import { experimentOn } from '../protocol/experiments';
 import { readInstalledCopy } from './keep';
 import { scanAgents } from '../domain/agents-import';
 import { agentFolder } from '../domain/agent-format';
@@ -74,6 +73,8 @@ export class DeploymentService {
     const destination = contained(target.root, relative); noLinks(destination);
     return { destination, files, proposedHash: digest(files) };
   }
+  /** Whether a receipt makes a copy this item's: its own, or one written for a copy since merged into it (consolidation). */
+  private owns(receipt: Receipt | undefined, itemId: string): receipt is Receipt { return Boolean(receipt) && (receipt!.itemId === itemId || this.wb.mergedTarget(receipt!.itemId) === itemId); }
   private latest(destination: string) { const last = this.receipts().filter(r => r.destination === destination).at(-1); return last?.status === 'applied' ? last : undefined; }
   plan(input: unknown): Plan {
     const data = z.object({ itemId: idSchema, revision: hashSchema, targetId: idSchema }).parse(input);
@@ -81,7 +82,7 @@ export class DeploymentService {
       const rendered = this.render(data.itemId, data.revision, this.target(data.targetId));
       const current = readDestination(rendered.destination), expectedState = stateHash(current), owner = this.latest(rendered.destination);
       let blocked: string | null = null;
-      if (current && (!owner || owner.itemId !== data.itemId)) blocked = 'TARGET_UNMANAGED: This destination is not owned by this item. Existing files will not be replaced.';
+      if (current && !this.owns(owner, data.itemId)) blocked = 'TARGET_UNMANAGED: This destination is not owned by this item. Existing files will not be replaced.';
       else if (owner && owner.hash !== expectedState) blocked = 'TARGET_DRIFTED: Destination changed outside Kiln. Restore or inspect it before applying.';
       const plan: Plan = { id: randomUUID(), ...data, ...rendered, expectedState, operation: current ? 'replace' : 'create', createdAt: now(), expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), blocked };
       writeJson(path.join(this.wb.local, 'plans', `${plan.id}.json`), plan); return plan;
@@ -99,8 +100,8 @@ export class DeploymentService {
       invariant(rendered.destination === plan.destination && digest(rendered.files) === plan.proposedHash && digest(plan.files) === plan.proposedHash, 'PLAN_TAMPERED', 'Plan no longer matches its approved bundle.');
       const previousFiles = readDestination(plan.destination), current = stateHash(previousFiles), owner = this.latest(plan.destination);
       invariant(current === data.expectState && current === plan.expectedState, 'TARGET_DRIFTED', 'Destination changed after preview. No files were written.');
-      invariant(current === null || (owner && owner.itemId === plan.itemId && owner.hash === current), 'TARGET_UNMANAGED', 'Destination ownership changed.');
-      const receipt: Receipt = { id: randomUUID(), planId: plan.id, itemId: plan.itemId, revision: plan.revision, targetId: plan.targetId, destination: plan.destination, hash: plan.proposedHash, previousHash: current, previousFiles, previousRevision: owner?.revision ?? null, status: 'applied', createdAt: now(), newSessionRequired: true };
+      invariant(current === null || (this.owns(owner, plan.itemId) && owner.hash === current), 'TARGET_UNMANAGED', 'Destination ownership changed.');
+      const receipt: Receipt = { id: randomUUID(), planId: plan.id, itemId: plan.itemId, revision: plan.revision, targetId: plan.targetId, destination: plan.destination, hash: plan.proposedHash, previousHash: current, previousFiles, previousRevision: owner?.itemId === plan.itemId ? owner.revision : null, status: 'applied', createdAt: now(), newSessionRequired: true };
       this.switchBundle(target, receipt, rendered.files, current);
       this.wb.record('deployed', `Deployed approved snapshot to ${target.name}; start a new agent session`, plan.itemId, plan.revision);
       return receipt;
@@ -224,7 +225,7 @@ export class DeploymentService {
     const result: Installation[] = [];
     const items = (Array.isArray(itemId) ? itemId.map(id => this.wb.getItem(id)) : itemId ? [this.wb.getItem(itemId)] : this.wb.listItems()).filter(item => ['skill', 'agent'].includes(item.kind));
     const receipts = this.receipts(), targets = this.wb.targets();
-    const updates = experimentOn(this.wb.settings(), 'installUpdates'), approvals = updates ? this.wb.approvals() : [];
+    const approvals = this.wb.approvals();
     for (const item of items) {
       let revision: Revision | undefined; try { revision = this.wb.getRevision(item.id); } catch { continue; }
       const name = this.folderName(item, revision); if (!name) continue;
@@ -243,10 +244,10 @@ export class DeploymentService {
         seen.add(destination);
         if (!fs.lstatSync(destination, { throwIfNoEntry: false })) continue;
         const linked = fs.lstatSync(destination).isSymbolicLink(), last = receipts.filter(r => r.destination === destination).at(-1);
-        const owned = last?.status === 'applied' && last.itemId === item.id ? last : undefined;
+        const owned = last?.status === 'applied' && this.owns(last, item.id) ? last : undefined;
         const current = this.currentState(destination);
         const state: Installation['state'] = owned ? (current === owned.hash ? 'installed' : 'drifted') : 'external';
-        const outdated = updates && owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
+        const outdated = owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
         result.push({ itemId: item.id, targetId: target.id, provider: target.provider, location: revision.kind === 'skill' ? location : undefined, scope: target.scope, destination, state, linked, matches: current !== null && current === rendered, receiptId: owned?.id ?? null, ...(outdated ? { outdated: true as const } : {}) });
       }
     }
@@ -403,11 +404,12 @@ export class DeploymentService {
       if (fs.lstatSync(destination).isSymbolicLink()) this.removeLink(destination);
       else {
         const owned = this.latest(destination), current = this.currentState(destination), wanted = this.renderedHash(revision);
+        const mine = this.owns(owned, item.id);
         if (owned?.itemId === item.id && current === wanted) { receipt = owned; method = 'unchanged'; }
-        else if (owned?.itemId === item.id && current === owned.hash) method = 'updated';
-        else if (owned?.itemId !== item.id && current === wanted) { receipt = this.adopt(target, item, revision, destination); method = 'adopted'; }
+        else if (current === wanted) { receipt = this.adopt(target, item, revision, destination); method = 'adopted'; }
+        else if (mine && current === owned.hash) method = 'updated';
         else {
-          invariant(data.replace, owned?.itemId === item.id ? 'TARGET_DRIFTED' : 'TARGET_UNMANAGED', owned?.itemId === item.id ? 'The installed copy was edited outside Kiln. Choose Replace to set those edits aside and reinstall.' : `A different “${name}” folder already exists there. Import it into the library first, or choose Replace to set it aside and install the library version.`);
+          invariant(data.replace, mine ? 'TARGET_DRIFTED' : 'TARGET_UNMANAGED', mine ? 'The installed copy was edited outside Kiln. Choose Replace to set those edits aside and reinstall.' : `A different “${name}” folder already exists there. Import it into the library first, or choose Replace to set it aside and install the library version.`);
           setAside = this.setAside(destination, target);
         }
       }
@@ -434,8 +436,8 @@ export class DeploymentService {
       if (fs.lstatSync(destination).isSymbolicLink()) { this.removeLink(destination); method = 'unlinked'; this.wb.record('uninstalled', `Removed the link in ${target.name}; the linked folder is untouched`, item.id, revision.hash); }
       else {
         let owned = this.latest(destination); const current = this.currentState(destination);
-        if ((!owned || owned.itemId !== item.id) && current === this.renderedHash(revision)) owned = this.adopt(target, item, revision, destination);
-        if (owned && owned.itemId === item.id && owned.hash === current) { this.uninstall({ receiptId: owned.id, expectState: owned.hash, confirm: true }); method = 'uninstalled'; }
+        if (!this.owns(owned, item.id) && current === this.renderedHash(revision)) owned = this.adopt(target, item, revision, destination);
+        if (this.owns(owned, item.id) && owned.hash === current) { this.uninstall({ receiptId: owned.id, expectState: owned.hash, confirm: true }); method = 'uninstalled'; }
         else { invariant(data.force, owned ? 'TARGET_DRIFTED' : 'TARGET_UNMANAGED', `The “${name}” folder there differs from your library. Import it first to keep those changes, or choose Remove anyway to set the folder aside.`); this.setAside(destination, target); method = 'set aside'; this.wb.record('uninstalled', `Set aside an external “${name}” folder from ${target.name}`, item.id, revision.hash); }
       }
     }
@@ -494,23 +496,31 @@ export class DeploymentService {
     for (const [itemId, providers] of Object.entries(installs)) for (const provider of providers) {
       const target = this.personalTarget(provider);
       if (!target) { report.push({ itemId, provider, result: 'skipped: skill location not set up on this machine' }); continue; }
-      try {
-        const item = this.wb.getItem(itemId); if (item.deletedAt) { report.push({ itemId, provider, result: 'skipped: item is in the trash' }); continue; }
-        const approval = this.wb.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-        invariant(approval, 'APPROVAL_REQUIRED', 'No approved revision is available. Review and approve this item before syncing.');
-        const revision = this.wb.getRevision(itemId, approval.revision);
-        const rendered = this.render(itemId, revision.hash, target);
-        const current = readDestination(rendered.destination);
-        if (current && stateHash(current) === rendered.proposedHash) {
-          if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
-          report.push({ itemId, provider, result: 'already installed' }); continue;
-        }
-        const plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
-        this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
-        report.push({ itemId, provider, result: 'installed approved revision' });
-      } catch (error) { report.push({ itemId, provider, result: `failed: ${error instanceof Error ? error.message : String(error)}` }); }
+      report.push({ itemId, provider, result: this.installApproved(itemId, target) });
     }
     return report;
+  }
+  /**
+   * Installs the latest locally trusted approved revision of an item into one target, as sync does: an identical copy is
+   * adopted, a Kiln-owned unchanged copy is updated, anything else is refused by the plan. Never approves; returns the outcome
+   * in words rather than throwing, so one bad entry doesn't stop a batch.
+   */
+  installApproved(itemId: string, target: Target) {
+    try {
+      const item = this.wb.getItem(itemId); if (item.deletedAt) return 'skipped: item is in the trash';
+      const approval = this.wb.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      invariant(approval, 'APPROVAL_REQUIRED', 'No approved revision is available. Review and approve this item before syncing.');
+      const revision = this.wb.getRevision(itemId, approval.revision);
+      const rendered = this.render(itemId, revision.hash, target);
+      const current = readDestination(rendered.destination);
+      if (current && stateHash(current) === rendered.proposedHash) {
+        if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
+        return 'already installed';
+      }
+      const plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
+      this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
+      return 'installed approved revision';
+    } catch (error) { return `failed: ${error instanceof Error ? error.message : String(error)}`; }
   }
   drift() {
     const destinations = [...new Set(this.receipts().map(r => r.destination))];
@@ -543,7 +553,7 @@ export class DeploymentService {
       return { id: journal.id, status: 'partial: files changed; manual inspection required' };
     }));
   }
-  // Experimental: installUpdates ("Update installed copies") and keepOutsideEdits ("Keep changes made outside Kiln").
+  // Update installed copies, and keep changes made outside Kiln.
   /** The revision an update installs: the current one when it is approved on this machine, else the newest local approval. */
   approvedRevision(itemId: string, approvals = this.wb.approvals()): Revision | null {
     const item = this.wb.getItem(itemId), local = approvals.filter(a => a.itemId === itemId && a.trust === 'local');
@@ -567,11 +577,11 @@ export class DeploymentService {
    * Update: brings copies Kiln wrote, and that are unchanged since, up to the approved revision through the usual plan and apply,
    * so receipts, backups and drift checks stay as for any install. Copies edited outside Kiln, differing external folders and links
    * are never overwritten; they are reported as skipped. An edited copy whose bytes already equal the approved revision is adopted
-   * as it is. `approve` first approves the current revision, which must still be `expect`.
+   * as it is. `approve` first approves the current revision, which must still be `expect`. This is the one update path: the item
+   * header, a location's Update and Machines (through `updateOutdated`) all come here.
    */
-  updateInstalls(input: unknown) {
+  updateInstalls(input: unknown): UpdateResult {
     const data = z.object({ itemId: idSchema, targetId: idSchema.optional(), approve: z.boolean().default(false), expect: hashSchema.optional() }).parse(input);
-    invariant(experimentOn(this.wb.settings(), 'installUpdates'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Update installed copies” in Settings → Experimental features first.');
     const item = this.wb.getItem(data.itemId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before updating its installs.');
     invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agents have installed copies to update.');
@@ -580,11 +590,24 @@ export class DeploymentService {
       invariant(data.expect === item.revision, 'REVISION_CONFLICT', 'This item changed since you opened it. Review the new revision before approving it.');
       if (!this.wb.approvals().some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local')) { this.approveHere(item, 'Approved by choosing Approve & update installs in Kiln.'); approved = true; }
     }
+    return { ...this.updateItem(item, this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId)), approved };
+  }
+  /**
+   * Update all outdated (Machines): each item with an outdated copy on this machine, or only the copies given, goes through the
+   * same update as one item. Never approves. Without `copies` an item's other copies are checked too, so skips are reported.
+   */
+  updateOutdated(input: unknown = {}): UpdateResult[] {
+    const { copies } = z.object({ copies: z.array(z.object({ itemId: idSchema, targetId: idSchema })).max(5000).optional() }).parse(input ?? {});
+    const all = this.installations(), chosen = (c: Installation) => !copies || copies.some(x => x.itemId === c.itemId && x.targetId === c.targetId);
+    const ids = [...new Set(all.filter(c => c.outdated && chosen(c)).map(c => c.itemId))];
+    return ids.map(id => ({ ...this.updateItem(this.wb.getItem(id), all.filter(c => c.itemId === id && chosen(c))), approved: false }));
+  }
+  private updateItem(item: Item, copies: Installation[]): Omit<UpdateResult, 'approved'> {
     const revision = this.approvedRevision(item.id); invariant(revision, 'APPROVAL_REQUIRED', 'Approve a revision before updating installed copies.');
     const wanted = this.renderedHash(revision);
-    const updated: { label: string; destination: string; targetId: string }[] = [], adopted: typeof updated = [], skipped: { label: string; destination: string; reason: string }[] = [];
+    const updated: UpdatedCopy[] = [], adopted: UpdatedCopy[] = [], skipped: UpdateResult['skipped'] = [];
     let current = 0;
-    for (const copy of this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId)) {
+    for (const copy of copies) {
       const label = this.copyLabel(copy), entry = { label, destination: copy.destination, targetId: copy.targetId };
       try {
         if (copy.outdated) {
@@ -598,7 +621,7 @@ export class DeploymentService {
         else if (this.currentState(copy.destination) !== wanted) skipped.push({ ...entry, reason: 'not installed by Kiln and different' });
       } catch (error) { skipped.push({ ...entry, reason: (error instanceof Error ? error.message : String(error)).replace(/^[A-Z_]+: /, '') }); }
     }
-    return { itemId: item.id, revision: revision.hash, approved, updated, adopted, current, skipped };
+    return { itemId: item.id, title: item.title, revision: revision.hash, updated, adopted, current, skipped };
   }
   /**
    * Keep these changes: saves an installed copy (edited outside Kiln, or an external folder that differs) as a new draft of the
@@ -609,7 +632,6 @@ export class DeploymentService {
    */
   keepCopy(input: unknown) {
     const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
-    invariant(experimentOn(this.wb.settings(), 'keepOutsideEdits'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Keep changes made outside Kiln” in Settings → Experimental features first.');
     const item = this.wb.getItem(data.itemId), target = this.target(data.targetId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before keeping changes into it.');
     invariant(['skill', 'agent'].includes(item.kind), 'NOT_DEPLOYABLE', 'Only skills and agents have installed copies.');
@@ -632,7 +654,6 @@ export class DeploymentService {
    */
   approveKept(input: unknown) {
     const data = z.object({ itemId: idSchema, targetId: idSchema, expect: hashSchema }).parse(input);
-    invariant(experimentOn(this.wb.settings(), 'keepOutsideEdits'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Keep changes made outside Kiln” in Settings → Experimental features first.');
     const item = this.wb.getItem(data.itemId), target = this.target(data.targetId);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item first.');
     invariant(item.revision === data.expect, 'REVISION_CONFLICT', 'This item changed since the changes were kept. Review the new revision before approving it.');
@@ -647,7 +668,7 @@ export class DeploymentService {
     if (target.scope === 'personal') this.wb.setInstall(item.id, item.kind === 'skill' && target.skillFolder ? 'codex-native' : target.provider, true);
     return { itemId: item.id, revision: revision.hash, destination, method: unchanged ? 'unchanged' as const : 'adopted' as const, approved, receipt };
   }
-  // Experimental: projectInstalls ("Install into project folders").
+  // Install into project folders.
   /**
    * Read-only preview of installing an item's current revision into `target`, which need not be enrolled yet: the destination the
    * plan would use and what is there now. `current` is the state hash that install must still find, so a change in between refuses.
@@ -662,9 +683,12 @@ export class DeploymentService {
     if (!stat) return { ...base, state: 'absent', current: null };
     if (stat.isSymbolicLink()) return { ...base, state: 'linked', current: null };
     const current = this.currentState(destination), owned = this.latest(destination), wanted = this.renderedHash(revision);
-    if (owned?.itemId === item.id) return { ...base, current, state: current !== owned.hash ? 'drifted' : current === wanted ? 'installed' : 'older' };
+    if (this.owns(owned, item.id)) return { ...base, current, state: current !== owned.hash ? 'drifted' : current === wanted ? 'installed' : 'older' };
     return { ...base, current, state: current === wanted ? 'identical' : 'differs' };
   }
 }
 /** What an install into a folder would meet: nothing, a Kiln copy (current, an older revision, or edited since), a link, or someone else's folder. */
+type UpdatedCopy = { label: string; destination: string; targetId: string };
+/** What an update did with one item's copies; `approved` when it approved the current revision first. */
+export type UpdateResult = { itemId: string; title: string; revision: string; approved: boolean; updated: UpdatedCopy[]; adopted: UpdatedCopy[]; current: number; skipped: (UpdatedCopy & { reason: string })[] };
 export type CopyPreview = { destination: string; state: 'absent' | 'installed' | 'older' | 'drifted' | 'linked' | 'identical' | 'differs'; current: string | null; approved: boolean; /** Validation errors that stop the install, empty when none. */ problem: string };

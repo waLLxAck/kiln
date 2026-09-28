@@ -48,7 +48,7 @@ export class HomeFiles {
     const saved = fs.existsSync(file) ? z.array(z.string()).parse(readJson(file)) : [];
     return [...new Set([...(this.options.projects?.() ?? []), ...saved].map(root => path.resolve(root)))];
   }
-  /** Only the folders added with "Add project folder", without enrolled install targets. Read by the experimental known-projects list. */
+  /** Only the folders added with "Add project folder", without enrolled install targets. Read by the known-projects list. */
   savedProjects(): string[] {
     const file = path.join(this.privateRoot, 'config-projects.json');
     try { return fs.existsSync(file) ? z.array(z.string()).parse(readJson(file)) : []; } catch { return []; }

@@ -5,16 +5,16 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, approvalSchema, authoringSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot, type Usage } from '../protocol/schema';
+import { analysisSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
-import { environmentExperiments, experimentIds, experimentOn, type ExperimentId } from '../protocol/experiments';
 import { closeMatches } from './fuzzy';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
+import { defaultTags, distinctKeys, duplicateGroups, signature, type Signature } from './duplicates';
 
 /** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
 function workingFingerprint(dir: string, revision: string) {
@@ -35,8 +35,6 @@ function workingFingerprint(dir: string, revision: string) {
 export const PENDING_SUMMARY = 'Edited';
 /** Managed trials store `mode: 'codex'` for every provider (the schema predates Claude Code runs), so activity names the provider the trial records instead. */
 const agentLabel = (provider: 'codex' | 'claude' | 'manual') => provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Agent';
-/** Unknown flag names are kept (a flag removed from the list must not fail an older settings file); only true turns one on. */
-const experimentsSchema = z.record(z.string(), z.boolean()).catch({}).default({});
 export class Workbench {
   readonly canonical: string;
   readonly local: string;
@@ -46,13 +44,17 @@ export class Workbench {
   private watcher?: fs.FSWatcher;
   private indexedItems: Item[] = [];
   private indexedAllItems: Item[] = [];
-  private indexedContentHashes = new Map<string, string>();
+  /** Duplicate-detection summary of each live item's current revision (see duplicates.ts). */
+  private indexedSignatures = new Map<string, Signature>();
+  /** Bumped by every refresh, so cached duplicate groups know when the items changed. */
+  private generation = 0;
+  private duplicateCache?: { key: string; groups: DuplicateGroup[] };
   /** Per item: size and mtime of its working files at the last reconciliation. Unchanged files mean nothing to re-read. */
   private fingerprints = new Map<string, string>();
   /** Items whose folders the watcher saw change since the last reconciliation; null means every item (first run, or an event without a path). */
   private changedItems: Set<string> | null = null;
-  /** Content digest per revision hash, for duplicate detection without re-reading revisions. */
-  private contentDigests = new Map<string, string>();
+  /** Duplicate-detection summary per revision hash; revisions never change, so each is read for this once. */
+  private signatures = new Map<string, Signature>();
   /** Usage counts from the observations folder; dropped when an observation is written and on a full refresh, which also picks up other processes' writes. */
   private usageCache?: Usage;
   warnings: string[] = [];
@@ -195,6 +197,14 @@ export class Workbench {
   /** Every snapshot carries these counts; reading every observation file each time would grow with use, so they are cached. */
   usage(): Usage {
     return this.usageCache ??= this.observations().reduce<Usage>((acc, o) => { if (o.itemId) { const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++; } return acc; }, {});
+  }
+  /** Usage with each merged copy's counts added to the item it was merged into (they stay on the copy too, for the trash). */
+  private foldedUsage(): Usage {
+    const usage = this.usage(), merged = this.indexedAllItems.filter(i => i.deletedAt && i.mergedInto && usage[i.id]);
+    if (!merged.length) return usage;
+    const folded: Usage = Object.fromEntries(Object.entries(usage).map(([id, n]) => [id, { ...n }]));
+    for (const item of merged) { const target = this.mergedTarget(item.id); if (!target) continue; const n = folded[target] ??= { copied: 0, used: 0 }; n.copied += usage[item.id].copied; n.used += usage[item.id].used; }
+    return folded;
   }
   activity() { return readRecords(path.join(this.canonical, 'activity'), value => value as Activity, this.warnings).sort((a, b) => b.at.localeCompare(a.at)); }
   record(kind: string, message: string, itemId: string | null = null, revision?: string) {
@@ -347,15 +357,16 @@ export class Workbench {
     } catch (error) { this.warnings.push(error instanceof Error ? error.message : String(error)); }
     this.indexedAllItems = this.listItems(true);
     this.indexedItems = this.indexedAllItems.filter(item => !item.deletedAt);
-    this.indexedContentHashes.clear();
-    // Revisions are immutable, so a content digest computed once per revision hash stays valid; the index loads only revisions it has not seen.
+    this.indexedSignatures.clear();
+    // Revisions are immutable, so a summary computed once per revision hash stays valid; the index loads only revisions it has not seen.
     this.index.rebuild(this.indexedItems.map(item => {
       let loaded: Revision | undefined; const load = () => loaded ??= this.getRevision(item.id);
-      let contentDigest = this.contentDigests.get(item.revision);
-      if (!contentDigest) { try { contentDigest = digest(load().content); this.contentDigests.set(item.revision, contentDigest); } catch { contentDigest = ''; } }
-      this.indexedContentHashes.set(item.id, contentDigest);
+      let summary = this.signatures.get(item.revision);
+      if (!summary) { try { summary = signature(load()); this.signatures.set(item.revision, summary); } catch { /* Reported by the library warnings. */ } }
+      if (summary) this.indexedSignatures.set(item.id, summary);
       return { item, load };
     }));
+    this.generation++;
     this.dirty = false;
   }
   search(query: string, includeArchived = false) {
@@ -364,11 +375,10 @@ export class Workbench {
     return this.indexedItems.filter(item => (!ids || ids.has(item.id)) && (includeArchived || !['archived', 'rejected'].includes(item.status)));
   }
   /**
-   * Search for the betterSearch experiment: best matches first (descriptions count too), a typo-tolerant fallback on titles and
+   * Ranked search: best matches first (descriptions count too), a typo-tolerant fallback on titles and
    * tags when nothing matches exactly (`close`), and `total` so a capped list can say how much it left out.
    */
   rankedSearch(query: string, options: { archived?: boolean; limit?: number } = {}) {
-    if (!experimentOn(this.settings(), 'betterSearch')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Ranked search is an experimental feature; turn on "Steadier, ranked search" in Settings.');
     if (this.dirty) this.refresh();
     const shown = (item: Item) => options.archived || !['archived', 'rejected'].includes(item.status);
     let items: Item[], close = false;
@@ -407,9 +417,141 @@ export class Workbench {
   }
   detail(id: string): ItemDetail {
     const item = this.getItem(id), revision = this.getRevision(id);
-    const contentHash = digest(revision.content);
-    const duplicates = this.dirty ? this.listItems().filter(other => other.id !== id && this.getRevision(other.id).content === revision.content) : this.indexedItems.filter(other => other.id !== id && this.indexedContentHashes.get(other.id) === contentHash);
-    return { analyses: this.analyses(id), item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id), validation: validateContent(revision), duplicates };
+    const group = this.duplicateGroups().find(g => g.ids.includes(id));
+    const byId = new Map(this.indexedAllItems.map(i => [i.id, i]));
+    const duplicates = (group?.ids ?? []).filter(other => other !== id).flatMap(other => byId.get(other) ?? []);
+    // Copies merged into this item count toward its use, as they do in the snapshot's usage.
+    const merged = new Set(this.indexedAllItems.filter(i => i.mergedInto && this.mergedTarget(i.id) === id).map(i => i.id));
+    return { analyses: this.analyses(id), item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id || (o.itemId !== null && merged.has(o.itemId))), validation: validateContent(revision), duplicates };
+  }
+  /** Where a copy merged by consolidation went, following later merges; null for anything not in the trash as a merged copy. */
+  mergedTarget(id: string): string | null {
+    let at = id, target: string | null = null;
+    for (let hops = 0; hops < 20; hops++) {
+      let item: Item; try { item = this.getItem(at); } catch { return target; }
+      if (!item.deletedAt || !item.mergedInto) return target;
+      target = at = item.mergedInto;
+    }
+    return target;
+  }
+  private distinctFile() { return path.join(this.canonical, 'distinct.json'); }
+  /** Pairs of items marked as not duplicates. An unreadable file counts as none and is reported. */
+  distinctPairs(): [string, string][] {
+    const file = this.distinctFile();
+    if (!fs.existsSync(file)) return [];
+    try { return distinctSchema.parse(readJson(file)).pairs; } catch (error) { this.warnings.push(`distinct.json: ${error instanceof Error ? error.message : error}`); return []; }
+  }
+  /** Likely duplicates among live items, from the cached revision summaries. Recomputed only when items or distinct pairs change. */
+  duplicateGroups(): DuplicateGroup[] {
+    if (this.dirty) this.refresh(false);
+    let stamp = 'none'; try { const s = fs.statSync(this.distinctFile()); stamp = `${s.size}:${s.mtimeMs}`; } catch { /* No pairs marked. */ }
+    const key = `${this.generation}:${stamp}`;
+    if (this.duplicateCache?.key !== key) this.duplicateCache = { key, groups: duplicateGroups(this.indexedItems, this.indexedSignatures, distinctKeys(this.distinctPairs())) };
+    return this.duplicateCache.groups;
+  }
+  /**
+   * Marks items as not duplicates of one another (every pair among them), or takes that back with `distinct: false`. Stored in
+   * the library so the mark follows the user to other machines; it changes no item.
+   */
+  markDistinct(input: unknown) {
+    const data = z.object({ ids: z.array(idSchema).min(2).max(50), distinct: z.boolean().default(true) }).parse(input);
+    const ids = [...new Set(data.ids)]; invariant(ids.length >= 2, 'INVALID_INPUT', 'Name at least two different items.');
+    return this.mutate(() => {
+      const titles = ids.map(id => this.getItem(id).title);
+      const pairs = new Map(this.distinctPairs().map(([a, b]) => { const pair = (a < b ? [a, b] : [b, a]) as [string, string]; return [pair.join(':'), pair]; }));
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const pair = (ids[i] < ids[j] ? [ids[i], ids[j]] : [ids[j], ids[i]]) as [string, string];
+        if (data.distinct) pairs.set(pair.join(':'), pair); else pairs.delete(pair.join(':'));
+      }
+      writeJson(this.distinctFile(), distinctSchema.parse({ schemaVersion: 1, pairs: [...pairs.values()].sort((x, y) => x[0].localeCompare(y[0]) || x[1].localeCompare(y[1])) }));
+      const names = titles.map(t => `“${t}”`).join(', ');
+      this.record('organised', data.distinct ? `Marked ${names} as not duplicates` : `Marked ${names} as possible duplicates again`, null);
+      return { ids, distinct: data.distinct };
+    }, undefined, false);
+  }
+  /**
+   * Consolidation: keeps one copy and moves the others to the trash, marked as merged into it. The kept item may take the text
+   * and bundled files of another copy, and its tags and collection are chosen; a changed text or tags save one new, unapproved
+   * revision ("Consolidated from …"). It absorbs the others' favourite, their desired installs, and (through `mergedInto`) their
+   * use and their installed copies on this machine. Approvals and tests stay with the items they were about; nothing is approved.
+   * Every item must still be at the revision the caller saw. Returns what `unconsolidate` needs to put everything back.
+   */
+  consolidate(input: unknown) {
+    const data = z.object({ keep: idSchema, expect: hashSchema, merge: z.array(z.object({ id: idSchema, expect: hashSchema })).min(1).max(20),
+      content: idSchema.optional(), tags: z.array(z.string().trim().min(1).max(60)).max(30).optional(), collection: z.string().optional(), summary: z.string().trim().max(500).optional() }).parse(input);
+    const ids = [data.keep, ...data.merge.map(m => m.id)];
+    invariant(new Set(ids).size === ids.length, 'INVALID_INPUT', 'List each item once, and not the kept one among those merged.');
+    invariant(!data.content || ids.includes(data.content), 'INVALID_INPUT', 'Take the text from one of the copies being consolidated.');
+    if (data.collection?.trim()) collectionPath(data.collection);
+    return this.mutate(() => {
+      const fresh = (id: string, expect: string) => {
+        const item = this.reconcileItem(id);
+        invariant(!item.deletedAt, 'ITEM_DELETED', `“${item.title}” is in the trash. Restore it first, or leave it out.`);
+        invariant(item.revision === expect, 'REVISION_CONFLICT', `“${item.title}” changed since you opened this. Review the copies again.`);
+        return item;
+      };
+      const kept = fresh(data.keep, data.expect), merged = data.merge.map(m => fresh(m.id, m.expect));
+      invariant(merged.every(m => m.kind === kept.kind), 'NOT_DUPLICATES', 'Only items of the same kind can be consolidated.');
+      invariant(kept.kind !== 'source', 'NOT_DUPLICATES', 'Sources cannot be consolidated: what was made from each points back at it.');
+      const approved = this.approvals().some(a => a.itemId === kept.id && a.revision === kept.revision && a.trust === 'local');
+      const from = data.content && data.content !== kept.id ? this.getRevision(data.content) : null;
+      const next = authoringSchema.parse({ ...this.authoring(kept.id), ...(from ? { content: from.content, files: from.files, description: from.description } : {}),
+        tags: data.tags ?? defaultTags(kept, merged, approved), collection: data.collection === undefined ? kept.collection : this.filedName(data.collection) });
+      validateContent(next);
+      const names = merged.map(m => `“${m.title}”`).join(', '), summary = data.summary || `Consolidated from ${names}`;
+      let current = kept, revised = false;
+      if (!this.matches(next, this.getRevision(kept.id))) { current = this.saveRevision(kept, next, summary); this.record('revised', summary, kept.id, current.revision); revised = true; }
+      else if (next.collection !== kept.collection) current = this.fileItems([kept], next.collection)[0];
+      const at = now(), favourite = kept.favourite || merged.some(m => m.favourite);
+      if (favourite !== current.favourite) { current = { ...current, favourite, updatedAt: at }; writeJson(this.itemFile(kept.id), current); this.itemCache.delete(kept.id); }
+      // Desired installs follow the kept item; what each copy had is returned so an undo can give it back.
+      const installs = this.installs(), before = installs[kept.id] ?? [], moved: Installs = {};
+      for (const m of merged) if (installs[m.id]) { moved[m.id] = installs[m.id]; installs[kept.id] = [...new Set([...(installs[kept.id] ?? []), ...installs[m.id]])].sort(); delete installs[m.id]; }
+      if (Object.keys(moved).length) writeJson(this.installsFile(), installs);
+      for (const m of merged) {
+        writeJson(this.itemFile(m.id), { ...m, deletedAt: at, mergedInto: kept.id, updatedAt: at }); this.itemCache.delete(m.id);
+        this.record('merged', `Merged into “${current.title}”; recoverable from Trash`, m.id, m.revision);
+      }
+      this.record('consolidated', `Consolidated ${names} into this item`, kept.id, current.revision);
+      return { kept: current, revised, merged: merged.map(m => m.id),
+        undo: { keep: kept.id, before: kept.revision, after: current.revision, status: kept.status, favourite: kept.favourite, collection: kept.collection, merged: merged.map(m => m.id), installs: { kept: before, moved } } };
+    });
+  }
+  /**
+   * Undoes a consolidation while nothing has changed since: the merged copies come back from the trash with their desired installs,
+   * and the kept item returns to its earlier revision (the same hash, so its approval applies again), collection and favourite.
+   * Copies changed since (restored by hand, merged elsewhere) are left alone and reported.
+   */
+  unconsolidate(input: unknown) {
+    const install = z.enum(['codex', 'claude', 'copilot', 'codex-native']);
+    const data = z.object({ keep: idSchema, before: hashSchema, after: hashSchema, status: statusSchema, favourite: z.boolean(), collection: z.string(), merged: z.array(idSchema).min(1).max(20),
+      installs: z.object({ kept: z.array(install), moved: z.record(idSchema, z.array(install)) }) }).parse(input);
+    return this.mutate(() => {
+      const kept = this.reconcileItem(data.keep);
+      invariant(!kept.deletedAt && kept.revision === data.after, 'REVISION_CONFLICT', `“${kept.title}” changed after the consolidation. Restore the merged copies from Trash instead.`);
+      const restored: string[] = [], skipped: string[] = [], at = now();
+      let current = kept;
+      if (data.before !== data.after) {
+        current = this.saveRevision(kept, authoringSchema.parse({ ...this.getRevision(kept.id, data.before), collection: data.collection ? this.filedName(data.collection) : '' }), 'Undid consolidation');
+        this.record('revised', 'Undid consolidation', kept.id, current.revision);
+        // Back on the earlier revision: its status returns too, approved only while an approval still names it.
+        const approvedAgain = this.approvals().some(a => a.itemId === kept.id && a.revision === data.before && a.trust === 'local');
+        if (data.status !== 'approved' || approvedAgain) current = { ...current, status: data.status };
+      } else if (data.collection !== kept.collection) current = this.fileItems([kept], data.collection)[0];
+      writeJson(this.itemFile(kept.id), { ...current, favourite: data.favourite, updatedAt: at }); this.itemCache.delete(kept.id);
+      const installs = this.installs();
+      if (data.installs.kept.length) installs[kept.id] = data.installs.kept; else delete installs[kept.id];
+      for (const id of data.merged) {
+        let item: Item; try { item = this.getItem(id); } catch { skipped.push(id); continue; }
+        if (!item.deletedAt || item.mergedInto !== kept.id) { skipped.push(id); continue; }
+        const { mergedInto: _gone, ...rest } = item;
+        writeJson(this.itemFile(id), { ...rest, deletedAt: null, updatedAt: at }); this.itemCache.delete(id);
+        if (data.installs.moved[id]) installs[id] = data.installs.moved[id];
+        this.record('restored', `Restored from Trash: undid its merge into “${kept.title}”`, id, item.revision); restored.push(id);
+      }
+      writeJson(this.installsFile(), installs);
+      return { kept: this.getItem(kept.id), restored, skipped };
+    });
   }
   setMeta(input: unknown) {
     this.dirty = true;
@@ -419,6 +561,8 @@ export class Workbench {
       // "approved" is only a status while a live approval names the current revision; that keeps undoing an archive honest without letting metadata edits grant approval.
       invariant(data.status !== 'approved' || this.approvals().some(a => a.itemId === item.id && a.revision === item.revision), 'APPROVAL_REQUIRED', 'Use Approve on the item; approval always names an exact revision.');
       const next = { ...item, ...(data.favourite === undefined ? {} : { favourite: data.favourite }), ...(data.order === undefined ? {} : { order: data.order }), ...(data.status ? { status: data.status } : {}), ...(data.deleted === undefined ? {} : { deletedAt: data.deleted ? now() : null }), updatedAt: now() };
+      // A merged copy that comes back from the trash is its own item again.
+      if (data.deleted === false) delete next.mergedInto;
       writeJson(this.itemFile(item.id), next); this.record(data.deleted ? 'deleted' : 'organised', data.deleted ? 'Moved to trash; recoverable' : 'Updated library organisation', item.id, item.revision); return next;
     });
   }
@@ -530,7 +674,7 @@ export class Workbench {
       if (trial.deletedAt) return trial;
       const deleted = { ...trial, deletedAt: now() };
       writeJson(path.join(this.canonical, 'experiments', `${id}.json`), deleted);
-      // A human judgement of this experiment (trialLoop) goes with it, so it no longer counts as approval evidence.
+      // A human judgement of this experiment goes with it, so it no longer counts as approval evidence.
       for (const review of this.trials().filter(t => t.outputReference === `review-of:${id}`)) writeJson(path.join(this.canonical, 'experiments', `${review.id}.json`), { ...review, deletedAt: deleted.deletedAt });
       this.record('trial_deleted', 'Experiment deleted from the trial lists; historical evidence retained', trial.itemId, trial.revision);
       return deleted;
@@ -552,12 +696,11 @@ export class Workbench {
     });
   }
   /**
-   * trialLoop: the user's own verdict on an agent experiment of the current revision. It is stored as a separate, completed manual
+   * The user's own verdict on an agent experiment of the current revision. It is stored as a separate, completed manual
    * trial (`outputReference: review-of:<agent trial>`), so the agent assessment stays untouched and the two remain distinct; it counts
    * as approval evidence like any manual trial. A newer verdict on the same experiment replaces the older one, which is kept as deleted.
    */
   judgeTrial(input: unknown) {
-    if (!experimentOn(this.settings(), 'trialLoop')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Turn on "Improve and re-test from experiments" in Settings to mark experiments as passed or failed.');
     const data = z.object({ id: idSchema, judgement: z.enum(['pass', 'fail']), note: z.string().trim().max(2000).default('') }).parse(input);
     return this.mutate(() => {
       const reviewed = this.trials().find(t => t.id === data.id); invariant(reviewed, 'TRIAL_NOT_FOUND', 'Experiment not found.');
@@ -615,8 +758,9 @@ export class Workbench {
   }
   settings(): Settings {
     const file = path.join(this.local, 'settings.json');
-    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), experiments: experimentsSchema }).parse(fs.existsSync(file) ? readJson(file) : {});
-    return { ...stored, experiments: { ...stored.experiments, ...environmentExperiments() } };
+    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(fs.existsSync(file) ? readJson(file) : {});
+    // Settings files from 0.22.0 may still hold an `experiments` map; those features are permanent now, so the key is ignored and dropped on the next save.
+    return stored;
   }
   /** Every collection in sidebar order, subfolders after their parent. Custom names come from workbench.json; the rest from the items filed in them. */
   collections(items = this.listItems()) {
@@ -770,16 +914,8 @@ export class Workbench {
     });
   }
   saveSettings(input: unknown) {
-    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), experiments: experimentsSchema }).parse(input);
-    // Flags turned on only by KILN_EXPERIMENTS are not written back; the file keeps what Settings chose.
-    const file = path.join(this.local, 'settings.json'), stored = fs.existsSync(file) ? readJson(file) as { experiments?: unknown } : {};
-    writeJson(file, { ...value, experiments: experimentsSchema.parse(stored.experiments) }); return this.settings();
-  }
-  /** Turns one experimental feature on or off on this machine; see experiments.ts. */
-  setExperiment(input: unknown) {
-    const { id, enabled } = z.object({ id: z.enum(experimentIds as [ExperimentId, ...ExperimentId[]]), enabled: z.boolean() }).parse(input);
-    const file = path.join(this.local, 'settings.json'), stored = fs.existsSync(file) ? readJson(file) as Record<string, unknown> : {};
-    writeJson(file, { ...stored, experiments: { ...experimentsSchema.parse(stored.experiments), [id]: enabled } }); return this.settings();
+    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(input);
+    writeJson(path.join(this.local, 'settings.json'), value); return this.settings();
   }
   invalidateGit() { this.gitCache = undefined; }
   /** A library can publish approvals only when it has the standard layout, is a Git repository, and has a GitHub remote. */
@@ -796,7 +932,7 @@ export class Workbench {
   snapshot(): Snapshot {
     if (this.dirty) this.refresh(false);
     const git = this.cachedGitStatus();
-    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.usage() };
+    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups() };
   }
   exportLibrary(destination: string) {
     invariant(path.isAbsolute(destination), 'INVALID_PATH', 'Export path must be absolute.'); noLinks(destination);

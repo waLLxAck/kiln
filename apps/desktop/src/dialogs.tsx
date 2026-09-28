@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, Copy, FolderOpen, ShieldCheck } from 'lucide-react';
-import type { ItemDetail, Plan, Provider, Snapshot, Target, Trial } from '../../../packages/protocol/schema';
+import type { ItemDetail, Plan, Provider, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, shortHash, variablesIn } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { Badge, Field, InlineError, Modal, Submit } from './components';
-import { machinesEnabled } from './features';
 
 type Common = { onClose: () => void; onDone: (id?: string) => void };
 const values = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); return Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; };
@@ -24,7 +23,7 @@ export function VariablesDialog({ detail, onClose, onDone }: Common & { detail: 
   </form></Modal>;
 }
 
-export function TrialDialog({ detail, providers, targets, initialWorkspace = '', knownProjects = false, onClose, onDone }: Common & { detail: ItemDetail; providers: Provider[]; targets: Target[]; initialWorkspace?: string; /** Experimental projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
+export function TrialDialog({ detail, providers, initialWorkspace = '', onClose, onDone }: Common & { detail: ItemDetail; providers: Provider[]; initialWorkspace?: string }) {
   const { busy, error, run } = useSubmit(); const [prepared, setPrepared] = useState<{ trial: Trial; folder: string; prompt: string } | null>(null);
   const [provider, setProvider] = useState('codex'), [workspace, setWorkspace] = useState(initialWorkspace);
   return <Modal title={prepared ? 'Your trial is ready' : 'Test this revision'} subtitle={`${detail.item.title} · ${shortHash(detail.item.revision)}`} onClose={onClose} wide>
@@ -33,7 +32,7 @@ export function TrialDialog({ detail, providers, targets, initialWorkspace = '',
       <p className="muted">{provider === 'manual' ? 'Use the agent you choose.' : providers.find(p => p.id === provider)?.available ? `${providers.find(p => p.id === provider)?.version} · authentication stays in the official client` : 'Client not detected on PATH. You can still hand off to your installed app.'}</p>
       {variablesIn(detail.revision.content).map(key => <Field label={`${key} (optional)`} hint={`Leave blank to keep {{${key}}} in the prompt.`} key={key}><textarea name={`var:${key}`} rows={2} /></Field>)}
       <Field label="Representative task"><textarea name="task" required rows={4} placeholder="What should this prompt accomplish? Include a realistic input." /></Field><Field label="Evaluation rubric" hint="One criterion per line."><textarea name="rubric" required rows={3} placeholder={'Produces a usable result\nDoes not invent facts\nHandles missing inputs clearly'} /></Field>
-      <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} known={knownProjects} />
+      <ExperimentProject value={workspace} onChange={setWorkspace} disabled={busy} />
       <label className="check-row"><input type="checkbox" name="retainInput" /><span>Include task inputs and variables in the Git-owned experiment summary</span></label><p className="muted small">By default, inputs and output transcripts remain only in this machine’s private run folder.</p>
       <InlineError error={error} /><div className="modal-actions"><span className="muted">No API key. No automatic execution.</span><Submit busy={busy}>Prepare trial <ArrowRight size={15} /></Submit></div>
     </form>}
@@ -47,11 +46,11 @@ export function ResultDialog({ trial, onClose, onDone }: Common & { trial: Trial
   </form></Modal>;
 }
 
-export function DeployDialog({ detail, snapshot, onClose, onDone }: Common & { detail: ItemDetail; snapshot: Snapshot }) {
+export function DeployDialog({ detail, snapshot, revision, onClose, onDone }: Common & { detail: ItemDetail; snapshot: Snapshot; /** Preselected approved revision, from a revision in History. */ revision?: string }) {
   const { busy, error, run } = useSubmit(); const [plan, setPlan] = useState<Plan | null>(null);
   const approved = detail.approvals.filter(a => a.trust === 'local').filter((a, i, all) => all.findIndex(b => b.revision === a.revision) === i);
-  return <Modal title="Install into an enrolled environment" subtitle="For project folders and earlier approved revisions. Personal skill folders use the one-click toggles instead." onClose={onClose} wide>
-    {!plan ? <form onSubmit={event => { const v = values(event); void run(async () => setPlan(await api('deploy.plan', { ...v, itemId: detail.item.id }))); }}><Field label="Approved revision"><select name="revision" required>{approved.map(a => <option key={a.id} value={a.revision}>{shortHash(a.revision)} · {a.scope}{a.revision === detail.item.revision ? ' · current' : ' · earlier revision'}</option>)}</select></Field><Field label="Environment"><select name="targetId" required>{snapshot.targets.map(t => <option value={t.id} key={t.id}>{t.name} · {t.provider} · {t.profile}</option>)}</select></Field>{!snapshot.targets.length && <p className="callout">{machinesEnabled ? 'Enroll a folder in Machines first, or turn on a skill location in Settings.' : 'Turn on a skill location in Settings first.'} Nothing is installed automatically.</p>}<InlineError error={error} /><div className="modal-actions"><span className="muted">Preview does not write to your agent folders.</span><Submit busy={busy || !snapshot.targets.length || !approved.length}>Preview install</Submit></div></form> : <>
+  return <Modal title="Install an approved revision" subtitle="An earlier revision, or an instruction file, into a folder Kiln manages. Skills go into projects with Install into project…." onClose={onClose} wide>
+    {!plan ? <form onSubmit={event => { const v = values(event); void run(async () => setPlan(await api('deploy.plan', { ...v, itemId: detail.item.id }))); }}><Field label="Approved revision"><select name="revision" required defaultValue={approved.some(a => a.revision === revision) ? revision : undefined}>{approved.map(a => <option key={a.id} value={a.revision}>{shortHash(a.revision)} · {a.scope}{a.revision === detail.item.revision ? ' · current' : ' · earlier revision'}</option>)}</select></Field><Field label="Environment"><select name="targetId" required>{snapshot.targets.map(t => <option value={t.id} key={t.id}>{t.name} · {t.provider} · {t.profile}</option>)}</select></Field>{!snapshot.targets.length && <p className="callout">Add a project in Machines first, or turn on a skill location in Settings. Nothing is installed automatically.</p>}<InlineError error={error} /><div className="modal-actions"><span className="muted">Preview does not write to your agent folders.</span><Submit busy={busy || !snapshot.targets.length || !approved.length}>Preview install</Submit></div></form> : <>
       <div className="plan-summary"><Badge status={plan.operation} /><code>{shortHash(plan.revision)}</code><span>→</span><code className="path-text">{plan.destination}</code></div>
       <div className="file-preview-list">{Object.entries(plan.files).map(([file, content]) => <div key={file}><span>{file === '.instruction' ? plan.destination.split(/[\\/]/).at(-1) : file}</span><span className="muted">{Math.round(content.length * .75).toLocaleString()} bytes</span></div>)}</div>
       {plan.files['SKILL.md'] && <pre className="prompt-preview">{new TextDecoder().decode(Uint8Array.from(atob(plan.files['SKILL.md']), c => c.charCodeAt(0)))}</pre>}
@@ -62,9 +61,3 @@ export function DeployDialog({ detail, snapshot, onClose, onDone }: Common & { d
   </Modal>;
 }
 
-export function TargetDialog({ onClose, onDone }: Common) {
-  const [root, setRoot] = useState(''); const { busy, error, run } = useSubmit();
-  return <Modal title="Enroll a project folder" subtitle="Kiln may then install skills and instructions inside this folder. Personal home folders are set up in Settings → Skill locations." onClose={onClose}><form onSubmit={event => { const v = values(event); void run(async () => { await api<Target>('targets.enroll', { ...v, root }); onDone(); }); }}>
-    <Field label="Name"><input name="name" required autoFocus placeholder="Personal Codex, Work Claude…" /></Field><div className="form-grid"><Field label="Agent"><select name="provider"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="copilot">GitHub Copilot</option></select></Field><Field label="Scope"><select name="scope"><option value="project">Project folder</option><option value="personal">Personal home folder</option></select></Field></div><Field label="Profile"><input name="profile" defaultValue="Personal" required /></Field><Field label="Allowed root"><div className="input-button"><input value={root} onChange={e => setRoot(e.target.value)} required placeholder="Choose an existing folder" /><button type="button" className="button" onClick={() => void run(async () => { const picked = await api<string | null>('desktop.chooseDirectory'); if (picked) setRoot(picked); })}><FolderOpen size={16} />Browse</button></div></Field><div className="callout">Codex skills use .agents/skills; Claude skills use .claude/skills. Copilot uses .copilot/skills personally and .github/skills in projects. Instructions preserve the selected agent and scope. Existing unmanaged files block replacement.</div><InlineError error={error} /><div className="modal-actions"><span className="muted">Local machine · no files deployed yet</span><Submit busy={busy}>Enroll environment</Submit></div>
-  </form></Modal>;
-}

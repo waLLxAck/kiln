@@ -1,0 +1,2 @@
+/* ---------- Query bar extras for free-text search (the bar itself is styled in library.css) ---------- */
+.query-note { margin: 6px 0 0; padding-left: 2px; font-size: 12px; color: var(--muted); }

@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { desktopEnv } from './fixture';
+import { desktopEnv, showKind } from './fixture';
 
 test('rows keep their height while held in a swipe in a long library', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-swipe-'));
@@ -18,8 +18,10 @@ test('rows keep their height while held in a swipe in a long library', async () 
       }
     });
     await page.getByRole('button', { name: 'Refresh library' }).click();
-    for (const tab of ['All', 'Prompts', 'Skills', 'Links', 'Instructions', 'Images', 'Files', 'References']) {
-      await page.getByRole('tab', { name: new RegExp(`^${tab}`) }).click();
+    // Every kind's rows, then all of them together: the kind tokens replace the old kind tabs.
+    for (const tab of ['prompt', 'skill', 'link', 'instruction', 'image', 'file', 'reference', 'all']) {
+      await page.getByRole('button', { name: 'All', exact: true }).click();
+      if (tab !== 'all') await showKind(page, tab);
       const row = page.locator('.swipe-row').first();
       await row.scrollIntoViewIfNeeded();
       const before = (await row.boundingBox())!;

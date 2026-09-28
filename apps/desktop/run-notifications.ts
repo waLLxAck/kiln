@@ -5,12 +5,12 @@ import { runNotice, type RunFinished } from '../../packages/agent/run-notice';
 const shown = new Set<Notification>();
 
 /**
- * runNotifications: a desktop notification when an agent run ends while Kiln is not in front (hidden in the tray, minimised or
+ * A desktop notification when an agent run ends while Kiln is not in front (hidden in the tray, minimised or
  * behind another window). In front, the in-app toast is enough. Clicking it brings Kiln back and opens the run's result.
  */
-export async function notifyRunFinished(event: RunFinished, options: { window: () => BrowserWindow | undefined; enabled: () => Promise<boolean>; open: (event: RunFinished) => Promise<void>; log: (event: string, fields?: Record<string, unknown>) => void }) {
+export async function notifyRunFinished(event: RunFinished, options: { window: () => BrowserWindow | undefined; open: (event: RunFinished) => Promise<void>; log: (event: string, fields?: Record<string, unknown>) => void }) {
   const notice = runNotice(event);
-  if (!notice || !(await options.enabled())) return;
+  if (!notice) return;
   const window = options.window();
   if (!window || window.isDestroyed() || (window.isVisible() && !window.isMinimized() && window.isFocused())) return;
   if (!Notification.isSupported()) return;
@@ -23,8 +23,8 @@ export async function notifyRunFinished(event: RunFinished, options: { window: (
 }
 
 /**
- * Script for the main window that opens a finished run: the runs list (src/Runs.tsx) opens the item on the tab that holds the
- * result and cancels the event; without it (flag just turned off, or setup is showing) the item opens the ordinary way.
+ * Script for the main window that opens a finished run: the status bar's runs list (src/Runs.tsx) opens the item on the view that holds the
+ * result and cancels the event; while setup is showing (no status bar) the item opens the ordinary way.
  */
 export function openRunScript(event: RunFinished) {
   const detail = JSON.stringify({ id: event.id, itemId: event.itemId, kind: event.kind });

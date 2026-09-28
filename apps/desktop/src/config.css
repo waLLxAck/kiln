@@ -1,0 +1,159 @@
+/* Config files: a grouped tree on the left, the selected file on the right. */
+.cfg-tree { flex-shrink: 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.cfg-treehead { display: flex; align-items: baseline; gap: 10px; padding: 18px 12px 10px 18px; }
+.cfg-treehead h2 { font-size: 18px; }
+.cfg-treehead .icon-button { margin-left: auto; align-self: center; }
+.cfg-filter { display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 14px; padding: 0 4px 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); flex-shrink: 0; }
+.cfg-filter:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+.cfg-filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--text); }
+.cfg-filter .icon-button { width: 22px; height: 22px; }
+.cfg-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.cfg-chips .chip { height: 24px; padding: 0 8px; gap: 5px; text-transform: none; }
+.cfg-chips .chip svg { color: var(--muted); }
+.cfg-chips .chip.active svg { color: inherit; }
+
+.cfg-list { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px 12px; }
+.cfg-group + .cfg-group { margin-top: 2px; }
+.cfg-agent { display: flex; align-items: center; gap: 6px; width: 100%; height: 30px; padding: 0 8px 0 4px; border-radius: var(--r-sm); color: var(--text); text-align: left; font-size: 13px; }
+.cfg-agent:hover { background: var(--subtle-2); }
+.cfg-agent > svg { color: var(--faint); flex-shrink: 0; }
+.cfg-agent b { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-count { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.cfg-children { padding: 0 0 4px 18px; }
+.cfg-scopename { display: flex; align-items: center; gap: 5px; height: 22px; padding: 4px 8px 0; font-size: 11px; font-weight: 600; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cfg-scopename svg { flex-shrink: 0; }
+.cfg-row { display: flex; align-items: center; gap: 4px; border-radius: var(--r-sm); padding-right: 4px; }
+.cfg-row:hover { background: var(--subtle-2); }
+.cfg-row.active { background: var(--accent-tint-2); }
+.cfg-file { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 8px; text-align: left; color: var(--text-2); font-size: 13px; border-radius: var(--r-sm); }
+.cfg-row.active .cfg-file, .cfg-row.active .cfg-ficon, .cfg-row.active .cfg-fmeta { color: var(--accent-text); }
+.cfg-ficon { color: var(--muted); flex-shrink: 0; }
+.cfg-row.blocked .cfg-ficon { color: var(--warn); }
+.cfg-fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.cfg-fname small { font-size: 11px; color: var(--faint); margin-left: 6px; font-weight: 400; }
+.cfg-row.active .cfg-fname { font-weight: 600; }
+.cfg-fmeta { font-size: 11px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cfg-dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+.cfg-missingtoggle { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 4px; font-size: 12px; color: var(--faint); border-radius: var(--r-sm); }
+.cfg-missingtoggle:hover { color: var(--text-2); background: var(--subtle-2); }
+.cfg-row.ghost .cfg-file { color: var(--muted); }
+.cfg-row.ghost .cfg-fname { font-weight: 400; }
+.cfg-row.ghost.active .cfg-file { color: var(--accent-text); }
+.cfg-create { display: none; align-items: center; gap: 4px; height: 22px; padding: 0 7px; font-size: 11.5px; font-weight: 500; color: var(--accent-text); border: 1px solid var(--accent-tint-2); border-radius: var(--r-sm); background: var(--panel); white-space: nowrap; }
+.cfg-row:hover .cfg-create, .cfg-row.active .cfg-create, .cfg-create:focus-visible { display: inline-flex; }
+.cfg-create:hover { background: var(--accent-tint); }
+.cfg-none { padding: 16px 10px; color: var(--muted); font-size: 12.5px; }
+.cfg-treefoot { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+.cfg-treefoot .button { flex: 1; height: 30px; padding: 0 10px; font-size: 12.5px; }
+
+/* The selected file */
+.cfg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px 28px 20px; background: var(--panel); animation: rise .18s ease-out; overflow: hidden; }
+.cfg-head { display: flex; align-items: flex-start; gap: 16px; flex-shrink: 0; }
+.cfg-headtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cfg-dot { color: var(--faint); }
+.cfg-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cfg-title h1 { font-size: 20px; overflow-wrap: anywhere; }
+.cfg-lede { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-top: 2px; max-width: 80ch; }
+.cfg-headactions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; max-width: 55%; }
+.cfg-main .cfg-notice { margin: 0; display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; flex-shrink: 0; }
+.cfg-notice svg { flex-shrink: 0; margin-top: 2px; }
+.cfg-notice > b { flex-basis: 100%; }
+.cfg-imports { margin-top: 0; flex-shrink: 0; }
+.cfg-grow { flex: 1; }
+
+.cfg-backups { position: relative; }
+.cfg-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; width: 320px; padding: 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-md); animation: pop .1s ease-out; }
+.cfg-menulabel { padding: 4px 8px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.cfg-menuempty { padding: 4px 8px 8px; line-height: 1.5; }
+.cfg-backuplist { max-height: 340px; overflow: auto; }
+.cfg-backup { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 0 8px; border-radius: var(--r-sm); font-size: 12.5px; }
+.cfg-backup:hover, .cfg-backup.active { background: var(--subtle-2); }
+.cfg-backup > span { flex: 1; display: flex; align-items: baseline; gap: 8px; }
+.cfg-backup small { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cfg-backup .text-button { font-size: 12px; padding: 0; }
+.cfg-backup .text-button:disabled { color: var(--faint); cursor: default; }
+
+.cfg-unsaved { display: flex; align-items: center; gap: 10px; flex-shrink: 0; padding: 6px 8px 6px 12px; border-radius: var(--r-md); background: var(--accent-tint); border: 1px solid var(--accent-tint-2); font-size: 12.5px; animation: pop .12s ease-out; }
+.cfg-unsaved b { font-weight: 600; white-space: nowrap; }
+.cfg-unsavedtext { flex: 1; min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.cfg-unsaved .button { height: 28px; padding: 0 12px; font-size: 12.5px; }
+.cfg-unsaved.invalid { background: var(--bad-bg); border-color: var(--bad-line); }
+.cfg-unsaved.invalid .cfg-unsavedtext { color: var(--bad); }
+.cfg-unsaveddot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+.cfg-unsaved.invalid .cfg-unsaveddot { background: var(--bad); }
+
+.cfg-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.cfg-tabs { display: inline-flex; align-self: flex-start; gap: 2px; padding: 3px; border-radius: var(--r-md); background: var(--subtle-2); flex-shrink: 0; }
+.cfg-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: var(--r-sm); color: var(--muted); font-size: 13px; font-weight: 500; }
+.cfg-tabs button:hover:not(:disabled) { color: var(--text); }
+.cfg-tabs button.active { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: var(--shadow-sm); }
+.cfg-tabs button:disabled { opacity: .45; cursor: not-allowed; }
+.cfg-tabs button span { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--subtle); color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cfg-note { line-height: 1.5; margin-top: 10px; }
+
+/* Permissions: Allow / Ask / Deny */
+.cfg-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.cfg-col { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-sm); min-width: 0; }
+.cfg-col.allow { border-top: 3px solid var(--ok-line); }
+.cfg-col.ask { border-top: 3px solid var(--warn-line); }
+.cfg-col.deny { border-top: 3px solid var(--bad-line); }
+.cfg-colhead { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px; min-width: 0; }
+.cfg-colhead b { font-weight: 650; font-size: 13.5px; }
+.cfg-colhead .muted { margin-left: auto; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cfg-coldot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.cfg-col.allow .cfg-coldot { background: var(--ok); }
+.cfg-col.ask .cfg-coldot { background: var(--warn); }
+.cfg-col.deny .cfg-coldot { background: var(--bad); }
+.cfg-colcount { font-size: 11px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cfg-rules { display: flex; flex-direction: column; gap: 6px; padding: 10px; min-height: 58px; }
+.cfg-rule { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 6px 4px 10px; text-align: left; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--subtle); }
+.cfg-rule code { flex: 1; background: none; padding: 0; font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+.cfg-rule svg { color: var(--faint); flex-shrink: 0; }
+.cfg-rule:hover, .cfg-rule.open { border-color: var(--line-strong); background: var(--panel); }
+.cfg-rule:hover svg, .cfg-rule.open svg { color: var(--text-2); }
+.cfg-rule.new { border-style: dashed; border-color: var(--accent); background: var(--accent-tint); }
+.cfg-emptycol { padding: 11px; text-align: center; font-size: 12px; color: var(--faint); border: 1px dashed var(--line); border-radius: var(--r-sm); }
+.cfg-add { display: flex; align-items: center; gap: 6px; margin: 0 10px 10px; padding: 0 8px; height: 30px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); color: var(--faint); }
+.cfg-add:focus-within { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); color: var(--accent-text); }
+.cfg-add input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font-family: var(--mono); font-size: 12px; color: var(--text); }
+.cfg-add input::placeholder { font-family: var(--font); color: var(--faint); }
+.cfg-add .text-button { font-size: 12px; padding: 0; }
+.cfg-adderror { margin: -4px 12px 10px; font-size: 11.5px; color: var(--bad); }
+
+/* Hooks table */
+.cfg-hooks table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-sm); overflow: hidden; table-layout: fixed; }
+.cfg-hooks th { height: 34px; padding: 0 12px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); background: var(--subtle); border-bottom: 1px solid var(--line); }
+.cfg-hooks td { height: 42px; padding: 4px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px; vertical-align: middle; overflow-wrap: anywhere; }
+.cfg-hooks tr:last-child td { border-bottom: 0; }
+.cfg-hooks th:first-child { width: 170px; }
+.cfg-hooks th:nth-child(2) { width: 26%; }
+.cfg-hooks th:last-child { width: 84px; }
+.cfg-hooks td:last-child { text-align: right; white-space: nowrap; }
+.cfg-hooks td code { font-size: 12px; }
+.cfg-event { display: inline-flex; height: 22px; align-items: center; padding: 0 8px; border-radius: 999px; background: var(--accent-tint); color: var(--accent-text); font-size: 12px; font-weight: 600; }
+.cfg-hooktype { font-size: 11px; font-weight: 600; color: var(--muted); margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.cfg-hooksnone { text-align: center; }
+.cfg-hookadd td, .cfg-hookedit td { background: var(--subtle); }
+.cfg-hookadd input, .cfg-hookedit input { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--text); font-family: var(--mono); font-size: 12px; outline: 0; }
+.cfg-hookadd input::placeholder, .cfg-hookedit input::placeholder { font-family: var(--font); color: var(--faint); }
+.cfg-hookadd input:focus, .cfg-hookedit input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+.cfg-hookadd .button { height: 30px; padding: 0 10px; font-size: 12.5px; }
+
+/* Text editor with line numbers */
+.cfg-code { flex: 1; min-height: 280px; display: flex; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--subtle); overflow: hidden; }
+.cfg-code:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); background: var(--panel); }
+.cfg-gutter { flex-shrink: 0; display: flex; flex-direction: column; min-width: 44px; padding: 12px 10px 40px 12px; overflow: hidden; font-family: var(--mono); font-size: 11px; line-height: 20px; color: var(--faint); text-align: right; border-right: 1px solid var(--line); user-select: none; background: var(--subtle); }
+.cfg-code textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: none; padding: 12px 16px; font-size: 12.5px; line-height: 20px; color: var(--text); tab-size: 4; white-space: pre; overflow: auto; }
+.cfg-status { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 0 4px; font-size: 11.5px; color: var(--muted); }
+
+.cfg-compare { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.cfg-comparehead { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.cfg-comparehead svg { color: var(--muted); }
+.cfg-diff { margin: 0; max-height: none; }
+
+.cfg-template { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); overflow: hidden; }
+.cfg-templatehead { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.cfg-templatehead b { font-weight: 600; }
+.cfg-template pre { margin: 0; padding: 14px 16px; font-size: 12.5px; line-height: 1.65; background: var(--subtle); min-height: 120px; white-space: pre-wrap; }
+
+@media (max-width: 1100px) { .cfg-columns { grid-template-columns: minmax(0, 1fr); } }

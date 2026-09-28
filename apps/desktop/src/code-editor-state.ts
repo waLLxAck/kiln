@@ -1,11 +1,9 @@
-import { useLayoutEffect, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 
 /**
- * Shared state for the `codeEditor` experiment, so views without the settings (Config files, list rows) can follow the
- * switch live. App sets it from `snapshot.settings`; list rows read which items have a private draft. The draft ids are
- * read from localStorage once when needed and then updated only when an item gains or loses a draft, never per keystroke.
+ * Which items have a private draft, for the marks on list rows. The draft ids are read from localStorage once when needed
+ * and then updated only when an item gains or loses a draft, never per keystroke.
  */
-let enabled = false;
 let drafted: Set<string> | null = null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach(listener => listener());
@@ -18,14 +16,8 @@ function draftIds() {
   return drafted;
 }
 
-/** Called once by App with whether the experiment is on. */
-export function useCodeEditorFlag(on: boolean) {
-  useLayoutEffect(() => { if (on === enabled) return; enabled = on; drafted = null; emit(); }, [on]);
-}
-/** Whether the code editor experiment is on, for components that do not receive the settings. */
-export const useCodeEditorOn = () => useSyncExternalStore(subscribe, () => enabled);
-/** Whether an item has a private draft, while the experiment is on. */
-export const useDraftMark = (id: string) => useSyncExternalStore(subscribe, () => enabled && draftIds().has(id));
+/** Whether an item has a private draft. */
+export const useDraftMark = (id: string) => useSyncExternalStore(subscribe, () => draftIds().has(id));
 /** Records that an item gained or lost its private draft; list rows update only when that changes. */
 export function noteDraft(id: string, present: boolean) {
   if (!drafted || drafted.has(id) === present) return;

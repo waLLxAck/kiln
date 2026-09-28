@@ -17,35 +17,44 @@ import { applyInfrastructure, defaultParent, infrastructurePlan, initialiseRepos
 import { importLocalSkills, scanLocalSkills } from './skills-import';
 import { applyMigration, migrationPlan } from '../git/migration';
 import { HomeFiles } from '../home/service';
+import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
 
-import { BackgroundFetch, pullFetched, requireAutoSync } from '../git/sync';
-import { experimentOn } from '../protocol/experiments';
+import { BackgroundFetch, pullFetched } from '../git/sync';
+import { GitQueue } from '../git/queue';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 /** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
-const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
-export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles };
+const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'items.consolidate', 'items.unconsolidate', 'items.distinct', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
+export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles; /** Machine reports: app version, publish timing. Reporting after changes starts only with `fleet.start`. */ fleet?: Omit<FleetOptions, 'log'> };
+/** Calls that change what this machine's report says; each schedules a publish once reporting has started. */
+const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore', 'items.consolidate', 'items.unconsolidate']);
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
-  /** Background fetch for the autoSync experiment; idle unless the desktop app asks for it. */
+  /**
+   * Every Git job that touches refs or the network, one at a time: approval and organisation commits and pushes, background
+   * fetches, pulls and merges, machine reports, and the Settings buttons. See packages/git/queue.ts.
+   */
+  readonly gitQueue = new GitQueue();
+  /** Background fetch with GitHub; idle unless the desktop app asks for it. Machine reports ride it instead of fetching again. */
   readonly fetcher: BackgroundFetch;
   private organiseTimer?: ReturnType<typeof setTimeout>;
   /** Items whose desired installs changed since the last organisation job was queued. */
   private installsChanged = new Set<string>();
   readonly home: HomeFiles;
-  /** Experimental projectInstalls: install into any project folder, enrolling it on first use. */
+  readonly fleet: FleetService;
+  /** Install into any project folder, enrolling it on first use. */
   readonly projects: ProjectInstalls;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
     this.deployments = new DeploymentService(wb);
-    this.publisher = new Publisher(wb, options.log, options.composer);
-    this.fetcher = new BackgroundFetch(wb, () => this.publisher.busy);
-    this.publisher.beforePush = () => this.fetcher.idle();
+    this.publisher = new Publisher(wb, options.log, options.composer, this.gitQueue);
+    this.fetcher = new BackgroundFetch(wb, this.gitQueue);
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
+    this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
     this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
   }
@@ -69,15 +78,22 @@ export class Router {
     const watch = organisingMethods.has(method) && this.autoSyncReady();
     const before = watch ? this.wb.installs() : null;
     const result = this.route(method, args);
-    if (before) {
-      const after = this.wb.installs();
-      for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
-      this.organiseSoon();
-    }
+    const settled = () => {
+      if (before) {
+        const after = this.wb.installs();
+        for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
+        this.organiseSoon();
+      }
+      if (reportTriggers.has(method)) this.fleet.changed();
+      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
+    };
+    // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
+    if (result instanceof Promise) return result.then(value => { settled(); return value; });
+    settled();
     return result;
   }
-  private autoSyncReady() { return experimentOn(this.wb.settings(), 'autoSync') && this.wb.repositoryState().ready; }
-  /** autoSync: organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
+  private autoSyncReady() { return this.wb.repositoryState().ready; }
+  /** Organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
   private organiseSoon() {
     clearTimeout(this.organiseTimer);
     this.organiseTimer = setTimeout(() => this.flushOrganisation(), Number(process.env.KILN_ORGANISE_DELAY_MS) || 1500);
@@ -138,6 +154,10 @@ export class Router {
       case 'items.move': return this.wb.moveItems(args);
       case 'items.restore': return this.wb.restore(args);
       case 'items.purge': return this.wb.purge(args);
+      case 'items.duplicates': return this.duplicates();
+      case 'items.consolidate': return this.consolidate(args);
+      case 'items.unconsolidate': return this.unconsolidate(args);
+      case 'items.distinct': return this.wb.markDistinct(args);
       case 'agents.scan': return scanAgents(this.wb, args);
       case 'agents.import': return importAgents(this.wb, args);
       case 'skills.install': return this.installSkill(args);
@@ -147,8 +167,17 @@ export class Router {
       case 'skills.scan': return this.deployments.scan(z.object({ targetId: idSchema }).parse(args).targetId);
       case 'skills.cleanEntry': return this.deployments.cleanScanEntry(args);
       case 'skills.import': return this.deployments.importExternal(args);
-      case 'skills.sync': return this.deployments.syncInstalls();
+      case 'skills.sync': return this.fleet.sync();
+      // This machine's id and name only: no Git, nothing published (Machines while it manages this machine alone).
+      case 'fleet.identity': return this.fleet.identity();
+      case 'fleet.view': return this.fleet.view(args);
+      case 'fleet.live': return this.fleet.live();
+      case 'fleet.report': return this.fleet.report();
+      case 'fleet.start': return this.fleet.start();
+      case 'fleet.rename': return this.fleet.rename(args);
+      case 'fleet.mark': return this.fleet.mark(args);
       case 'skills.update': return this.published(this.deployments.updateInstalls(args));
+      case 'skills.updateOutdated': return this.deployments.updateOutdated(args);
       case 'deploy.keepCopy': return this.deployments.keepCopy(args);
       case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
       case 'projects.known': return this.projects.known(args);
@@ -184,16 +213,33 @@ export class Router {
       case 'git.inventory': return inventory(z.object({ root: z.string().min(1) }).parse(args).root);
       case 'git.diff': return gitDiff(this.wb.root);
       case 'git.conflicts': return conflicts(this.wb);
-      case 'git.merge': return mergeFetched(this.wb);
+      case 'git.merge': return this.gitQueue.run(() => mergeFetched(this.wb));
       case 'git.resolve': return resolveItemConflict(this.wb, args);
-      case 'git.finishMerge': return finishMerge(this.wb);
+      case 'git.finishMerge': return this.gitQueue.run(() => finishMerge(this.wb));
       case 'git.checkpoint': return checkpoint(this.wb.root, this.wb.canonical, z.object({ message: z.string().trim().min(1).max(300) }).parse(args).message);
-      case 'sync.status': requireAutoSync(this.wb); return this.fetcher.status();
+      case 'sync.status': return this.fetcher.status();
       case 'sync.fetch': return this.fetcher.fetch(z.object({ maxAgeMs: z.number().int().min(0).default(0) }).parse(args).maxAgeMs);
-      case 'sync.pull': return this.pull();
-      case 'git.sync': return sync(this.wb.root, this.wb.canonical, z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args).action);
+      case 'sync.pull': return this.gitQueue.run(() => this.pull());
+      case 'git.sync': { const { action } = z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args); return this.gitQueue.run(() => sync(this.wb.root, this.wb.canonical, action)); }
       default: throw new WorkbenchError('CAPABILITY_UNSUPPORTED', `Unsupported operation: ${method}`);
     }
+  }
+  /** Groups of likely copies, each copy with enough to tell them apart (the CLI prints this as it is). */
+  duplicates() {
+    const byId = new Map(this.wb.snapshot().items.map(i => [i.id, i]));
+    return { groups: this.wb.duplicateGroups().map(group => ({ ...group, items: group.ids.flatMap(id => { const i = byId.get(id); return i ? [{ id, title: i.title, kind: i.kind, collection: i.collection, status: i.status, revision: i.revision, source: i.source, updatedAt: i.updatedAt }] : []; }) })) };
+  }
+  /** Consolidation (Workbench.consolidate), plus marks for other machines moved from the merged copies to the kept one. */
+  consolidate(args: unknown) {
+    const result = this.wb.consolidate(args);
+    const marks = this.fleet.repoint(result.merged, result.kept.id);
+    return { ...result, undo: { ...result.undo, marks } };
+  }
+  unconsolidate(args: unknown) {
+    const { marks } = z.object({ keep: idSchema, marks: z.array(z.object({ machineId: idSchema, itemId: idSchema, location: z.string(), had: z.boolean() })).max(2000).default([]) }).passthrough().parse(args);
+    const result = this.wb.unconsolidate(args);
+    this.fleet.unpoint(marks.filter(m => result.restored.includes(m.itemId)), result.kept.id);
+    return result;
   }
   /** Approval is recorded at once; the commit and push to GitHub follow in the background and show up under `publish`. */
   approve(args: unknown) {
@@ -206,7 +252,7 @@ export class Router {
     if (this.wb.repositoryState().ready) this.publisher.enqueue('unapprove', item.id, item.revision);
     return item;
   }
-  /** Experimental update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
+  /** Update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
   private published<T extends { itemId: string; approved: boolean; revision: string }>(result: T) {
     if (result.approved && this.wb.repositoryState().ready) this.publisher.enqueue('approve', result.itemId, result.revision);
     return result;

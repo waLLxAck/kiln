@@ -1,0 +1,75 @@
+/* ---------- Capture dialog: the composer and recent captures ---------- */
+.modal.capture-dialog { width: 720px; padding: 18px 20px 20px; }
+.capture-dialog .capture-head { margin-bottom: 14px; }
+.capture-composer { position: relative; border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-sm); transition: border-color .12s, box-shadow .15s; }
+.capture-composer:hover { border-color: var(--faint); }
+.capture-composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring), var(--shadow-sm); }
+.capture-composer.drag { border-style: dashed; border-color: var(--accent); background: var(--accent-tint); }
+.capture-input { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px 7px 10px; }
+.capture-icon { width: 26px; height: 26px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: var(--accent-tint); color: var(--accent-text); }
+.capture-input textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: none; font: inherit; font-size: 13.5px; line-height: 1.55; color: var(--text); padding: 3px 0 0; box-shadow: none; field-sizing: content; min-height: 26px; max-height: 40vh; }
+/* Grows with what is typed; room for a few lines while empty or holding text, one line for a link. */
+.capture-input textarea.roomy { min-height: calc(3 * 1.55em + 3px); }
+.capture-input textarea::placeholder { color: var(--faint); }
+.capture-input .icon-button { width: 26px; height: 26px; }
+.capture-detected { align-self: flex-start; margin-top: 2px; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; background: var(--subtle); color: var(--text-2); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.capture-detected-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.capture-dropzone { display: flex; align-items: center; justify-content: center; gap: 8px; height: 64px; color: var(--accent-text); font-weight: 600; }
+.capture-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 12px 8px 46px; }
+.capture-file { display: inline-flex; align-items: center; gap: 7px; height: 32px; margin: 0; padding: 0 4px 0 8px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--bg); font-size: 12.5px; }
+.capture-file.has-thumb { padding-left: 3px; }
+.capture-file svg { color: var(--muted); }
+.capture-thumb { width: 26px; height: 26px; flex-shrink: 0; padding: 0; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); overflow: hidden; cursor: zoom-in; transition: border-color .12s, transform .12s; }
+.capture-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.capture-thumb:hover { border-color: var(--accent); transform: scale(1.06); }
+.capture-file-name { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-file > button { display: inline-flex; padding: 3px; border-radius: 4px; color: var(--muted); }
+.capture-file > button:hover { color: var(--text); background: var(--subtle-2); }
+.capture-info { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0 12px 8px 46px; font-size: 12px; }
+.capture-sep { width: 1px; height: 14px; background: var(--line-strong); margin: 0 3px; }
+.capture-var { font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--accent-tint); color: var(--accent-text); border: 1px solid var(--accent-tint-2); }
+.capture-guess { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text-2); }
+.capture-note { margin: 0 12px 8px 46px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.capture-error { margin: 0 12px 8px 46px; display: flex; gap: 8px; align-items: flex-start; }
+.capture-bar { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 12px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--subtle) 55%, var(--panel)); border-radius: 0 0 var(--r-lg) var(--r-lg); flex-wrap: wrap; }
+.capture-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--panel); font-size: 12.5px; color: var(--text); white-space: nowrap; }
+.capture-chip:hover:not(:disabled) { border-color: var(--faint); }
+.capture-chip:disabled { opacity: .45; }
+.capture-chip svg { color: var(--muted); }
+.capture-switch { width: 24px; height: 14px; border-radius: 999px; background: var(--line-strong); position: relative; transition: background .12s; }
+.capture-switch::after { content: ''; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--panel); transition: left .12s; }
+.capture-chip.toggle.on { border-color: var(--accent); color: var(--accent-text); background: var(--accent-tint); }
+.capture-chip.toggle.on .capture-switch { background: var(--accent); }
+.capture-chip.toggle.on .capture-switch::after { left: 12px; }
+.capture-grow { flex: 1; }
+.capture-bar .button { height: 30px; }
+.capture-recent { margin-top: 16px; }
+.capture-recent-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.capture-recent-head h3 { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.capture-recent-head .small { display: inline-flex; align-items: center; gap: 5px; }
+.capture-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.capture-card { display: flex; flex-direction: column; gap: 7px; padding: 9px 10px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel); min-width: 0; animation: rise .2s ease-out; }
+.capture-card.running { border-color: var(--accent-tint-2); }
+.capture-card-top { display: flex; gap: 8px; min-width: 0; align-items: flex-start; }
+.capture-card-top .icon-button { width: 20px; height: 20px; margin-left: auto; }
+.capture-card-icon { width: 24px; height: 24px; flex-shrink: 0; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: var(--subtle-2); color: var(--text-2); }
+.capture-card-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.35; }
+.capture-card-text b { font-weight: 600; font-size: 12.5px; }
+.capture-card-text small { color: var(--muted); font-size: 11.5px; }
+.capture-progress { height: 3px; border-radius: 999px; background: var(--subtle-2); overflow: hidden; }
+.capture-progress i { display: block; height: 100%; width: 100%; border-radius: 999px; background: var(--ok); }
+.capture-progress.running i { width: 35%; background: var(--accent); animation: capture-slide 1.4s ease-in-out infinite; }
+.capture-progress.failed i, .capture-progress.interrupted i, .capture-progress.cancelled i { background: var(--bad); }
+@keyframes capture-slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.capture-card-foot { display: flex; align-items: center; min-height: 20px; gap: 6px; font-size: 12px; min-width: 0; }
+.capture-card-foot .text-button { font-size: 12px; padding: 0; white-space: nowrap; }
+.capture-done { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; white-space: nowrap; }
+.capture-failed { display: inline-flex; align-items: center; gap: 5px; color: var(--bad); font-weight: 600; white-space: nowrap; }
+.capture-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); min-width: 0; }
+.capture-state svg { color: var(--accent-text); flex-shrink: 0; }
+
+/* The status bar's run list: a finished capture offers where its results went. Rows are wrapped so the action can sit beside them. */
+.run-line { position: relative; }
+.run-line + .run-line { border-top: 1px solid var(--line); }
+.run-line.has-action .run-text .muted { padding-right: 104px; }
+.run-go { position: absolute; right: 8px; bottom: 7px; font-size: 12px; line-height: 18px; padding: 0; white-space: nowrap; }

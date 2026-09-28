@@ -49,134 +49,121 @@ function useClaude(root: string) {
   const file = path.join(local, 'settings.json'), previous = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   fs.writeFileSync(file, JSON.stringify({ ...previous, agentProvider: 'claude' }));
 }
-const open = async (page: Page, title: string) => { await page.getByRole('button', { name: 'Refresh library', exact: true }).click(); await page.getByText(title, { exact: true }).first().click(); await expect(page.locator('.detail-pane h1')).toContainText(title); };
+const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+/** Opens an item from the library list, going back to the list first when an item is open. */
+async function open(page: Page, title: string) {
+  const bar = page.getByRole('toolbar', { name: 'Item navigation' });
+  if (await bar.count()) await bar.getByRole('button').first().click();
+  await page.getByRole('button', { name: 'Refresh library', exact: true }).first().click();
+  await page.locator('.item-card').filter({ has: page.locator('.item-title', { hasText: exact(title) }) }).first().click();
+  await expect(page.locator('.detail-pane h1')).toContainText(title);
+}
 
-test('chatHistory: docked chat keeps conversations per item, renders Markdown, shows and undoes agent changes, asks consent once', async () => {
+test('docked chat keeps each item’s conversation, lists sessions, resizes, renders Markdown, shows agent changes with View changes and Undo, asks consent once per start', async () => {
   test.skip(process.platform === 'win32', 'The fake Claude Code CLI is a POSIX script');
   test.setTimeout(180_000);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-chat-history-ui-'));
-  const env = { ...desktopEnv(root), KILN_DESKTOP_DATA: path.join(root, 'desktop'), KILN_EXPERIMENTS: 'chatHistory,trialLoop', PATH: `${fakeClaude(root)}${path.delimiter}${process.env.PATH}` };
+  const env = { ...desktopEnv(root), KILN_DESKTOP_DATA: path.join(root, 'desktop'), PATH: `${fakeClaude(root)}${path.delimiter}${process.env.PATH}` };
   let app = await electron.launch({ args: ['.'], env });
   try {
     let page = await app.firstWindow();
-    await expect(page.getByRole('button', { name: 'Refresh library', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh library', exact: true }).first()).toBeVisible();
     await consent(app); useClaude(root);
     const main = await api<{ id: string; revision: string }>(page, 'items.create', { title: 'Chat fixture', kind: 'prompt', content: 'Summarise the change.' });
     const second = await api<{ id: string }>(page, 'items.create', { title: 'Second fixture', kind: 'prompt', content: 'Another prompt.' });
     const side = await api<{ id: string }>(page, 'items.create', { title: 'Side item', kind: 'prompt', content: 'Side content.' });
     await open(page, 'Chat fixture');
 
-    // Docked beside the detail pane, not over it.
+    // Docked beside the item page, pushing it aside rather than covering it; the edge drags to resize and the width is kept.
     await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
-    let dock = page.locator('aside.chat-dock');
+    let dock = page.getByRole('complementary', { name: 'Ask the agent' });
     await expect(dock).toBeVisible();
-    await expect(page.locator('.chat-popover')).toHaveCount(0);
-    const detail = page.locator('.detail-pane');
-    await expect(detail).toBeVisible();
-    const [paneBox, dockBox] = [await detail.boundingBox(), await dock.boundingBox()];
+    const [paneBox, dockBox] = [await page.locator('.detail-pane').boundingBox(), await dock.boundingBox()];
     expect(paneBox!.width).toBeGreaterThan(300);
     expect(dockBox!.x).toBeGreaterThanOrEqual(paneBox!.x + paneBox!.width - 1);
-    await expect(page.locator('.library-list')).toBeVisible();
+    await expect(dock.getByRole('button', { name: 'Sessions' })).toBeDisabled();
+    const edge = page.getByRole('separator', { name: 'Resize chat' });
+    const grip = (await edge.boundingBox())!;
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + 200); await page.mouse.down();
+    await page.mouse.move(grip.x - 100, grip.y + 200, { steps: 4 }); await page.mouse.up();
+    const widened = (await dock.boundingBox())!.width;
+    expect(widened).toBeGreaterThan(dockBox!.width + 80);
 
     // A reply renders as Markdown.
     await dock.getByLabel('Your message').fill('Give me a list');
     await dock.getByRole('button', { name: 'Send' }).click();
-    await expect(dock.locator('.chat-markdown li')).toHaveCount(2, { timeout: 60_000 });
-    await expect(dock.locator('.chat-markdown li').first()).toHaveText('first point');
-    await expect(dock.locator('pre.chat-text')).toHaveCount(0);
+    await expect(dock.locator('.chat-reply-text li')).toHaveCount(2, { timeout: 60_000 });
+    await expect(dock.locator('.chat-reply-text li').first()).toHaveText('first point');
     expect(await consentCalls(app)).toBe(1);
 
     // Closing and reopening, Esc from inside, and switching items all bring the same conversation back.
     await dock.getByRole('button', { name: 'Close chat' }).click();
     await expect(dock).toHaveCount(0);
     await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
-    await expect(dock.locator('.chat-question')).toContainText('Give me a list');
+    await expect(dock.locator('.chat-you')).toContainText('Give me a list');
     await dock.getByLabel('Your message').focus(); await page.keyboard.press('Escape');
     await expect(dock).toHaveCount(0);
     await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
-    await page.getByText('Second fixture', { exact: true }).first().click();
+    await open(page, 'Second fixture');
     await expect(dock.locator('.chat-context')).toContainText('Second fixture');
     await expect(dock.locator('.chat-turns')).toHaveCount(0);
-    await page.getByText('Chat fixture', { exact: true }).first().click();
+    await open(page, 'Chat fixture');
     await expect(dock.locator('.chat-context')).toContainText('Chat fixture');
-    await expect(dock.locator('.chat-markdown li')).toHaveCount(2);
+    await expect(dock.locator('.chat-reply-text li')).toHaveCount(2);
 
-    // The agent edits this item and another through the CLI: a card names both, shows the diff and undoes the change.
+    // The agent edits this item and another through the CLI: one card per item, with the revision note, View changes and Undo.
     await dock.getByLabel('Your message').fill(`EDIT this prompt, ALSO ${side.id}`);
     await dock.getByRole('button', { name: 'Send' }).click();
-    const changes = dock.getByRole('group', { name: 'Changes the agent made' });
-    await expect(changes).toContainText('Changed Chat fixture: Agent made it clearer', { timeout: 60_000 });
-    await expect(changes).toContainText('Changed Side item: Agent tidied the side item');
-    await expect(dock.locator('.chat-markdown strong')).toHaveText('changed');
+    const card = dock.getByRole('region', { name: 'Changed by the agent: Chat fixture' });
+    await expect(card).toContainText('Agent made it clearer', { timeout: 60_000 });
+    await expect(dock.getByRole('region', { name: 'Changed by the agent: Side item' })).toContainText('Agent tidied the side item');
+    await expect(dock.locator('.chat-reply-text strong')).toHaveText('changed');
     expect(await consentCalls(app)).toBe(1);
-    const card = changes.locator('.chat-change', { hasText: 'Chat fixture' });
     await card.getByRole('button', { name: 'View changes' }).click();
     const diff = page.getByRole('dialog', { name: 'Changes to Chat fixture' });
     await expect(diff.locator('.diff')).toContainText('Summarise the change in three bullets.');
     await expect(diff.locator('.diff')).toContainText('Summarise the change.');
     await diff.getByRole('button', { name: 'Close dialog' }).click();
-    await card.getByRole('button', { name: 'Undo change' }).click();
-    const confirm = page.getByRole('dialog', { name: 'Undo this change?' });
-    await confirm.getByRole('button', { name: 'Undo change' }).click();
-    await expect(confirm).toHaveCount(0);
-    await expect.poll(async () => (await api<{ revision: { content: string }; item: { revision: string } }>(page, 'items.read', { id: main.id })).item.revision).toBe(main.revision);
-    await expect(card).toContainText('Undone');
-    await expect(card.getByRole('button', { name: 'Undo change' })).toHaveCount(0);
+    await expect(dock).toBeVisible();
+    await card.getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(async () => (await api<{ revision: { content: string } }>(page, 'items.read', { id: main.id })).revision.content).toBe('Summarise the change.');
+    await expect(dock.locator('.chat-change-done', { hasText: 'Chat fixture' })).toContainText('Undone');
     expect((await api<{ revision: { content: string } }>(page, 'items.read', { id: side.id })).revision.content).toBe('Side content, rewritten.');
+    await dock.getByRole('region', { name: 'Changed by the agent: Side item' }).getByRole('button', { name: 'Keep' }).click();
+    await expect(dock.locator('.chat-change-done', { hasText: 'Side item' })).toContainText('Kept');
     await page.screenshot({ path: 'artifacts/chat-history-dock.png', animations: 'disabled' });
 
-    // New session starts empty; Sessions lists the earlier one and reopens it.
+    // New session starts empty; Sessions lists the earlier one by its first message, date and agent, and reopens it.
     await dock.getByRole('button', { name: 'New session' }).click();
     await expect(dock.locator('.chat-turns')).toHaveCount(0);
     await dock.getByRole('button', { name: /^Sessions/ }).click();
-    const earlier = page.getByRole('menuitem', { name: /Give me a list/ });
+    const earlier = page.getByRole('menuitemradio', { name: /Give me a list/ });
     await expect(earlier).toBeVisible();
     await expect(earlier).toContainText('Claude Code');
     await earlier.click();
     await expect(dock.locator('.chat-turns > li')).toHaveCount(2);
 
-    // trialLoop's kiln:ask-agent still opens the chat about an item with the message typed in, unsent.
+    // kiln:ask-agent (Improve with agent) opens the chat about an item with the message typed in, unsent.
     await page.evaluate(detail => window.dispatchEvent(new CustomEvent('kiln:ask-agent', { detail })), { itemId: second.id, message: 'Improve this, please' });
     await expect(dock.locator('.chat-context')).toContainText('Second fixture');
     await expect(dock.getByLabel('Your message')).toHaveValue('Improve this, please');
 
-    // After a restart the conversation is still there (and consent is asked again, once).
+    // After a restart the conversation, the decisions on its cards and the panel width are still there; consent is asked again, once.
     await app.close();
     app = await electron.launch({ args: ['.'], env });
-    page = await app.firstWindow(); dock = page.locator('aside.chat-dock');
+    page = await app.firstWindow(); dock = page.getByRole('complementary', { name: 'Ask the agent' });
+    await expect(page.getByRole('button', { name: 'Ask the agent', exact: true })).toBeVisible();
     await consent(app);
-    await page.getByRole('button', { name: 'Library', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await open(page, 'Chat fixture');
     await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
-    await expect(dock.locator('.chat-markdown li')).toHaveCount(2);
-    await expect(dock.getByRole('group', { name: 'Changes the agent made' })).toContainText('Undone');
+    await expect(dock.locator('.chat-reply-text li')).toHaveCount(2);
+    await expect(dock.locator('.chat-change-done', { hasText: 'Chat fixture' })).toContainText('Undone');
+    expect(Math.round((await dock.boundingBox())!.width)).toBe(Math.round(widened));
     await dock.getByLabel('Your message').fill('One more');
     await dock.getByRole('button', { name: 'Send' }).click();
     await expect(dock.locator('.chat-turns > li')).toHaveCount(3, { timeout: 60_000 });
-    await expect(dock.locator('.chat-turns > li').last().locator('.chat-markdown li')).toHaveCount(2, { timeout: 60_000 });
+    await expect(dock.locator('.chat-turns > li').last().locator('.chat-reply-text li')).toHaveCount(2, { timeout: 60_000 });
     expect(await consentCalls(app)).toBe(1);
-
-    // Flag off: the popover overlay, plain-text replies and a warning before every message, as before.
-    await app.close();
-    app = await electron.launch({ args: ['.'], env: { ...env, KILN_EXPERIMENTS: '' } });
-    page = await app.firstWindow();
-    await consent(app);
-    await page.getByRole('button', { name: 'Library', exact: true }).click();
-    await open(page, 'Chat fixture');
-    await page.getByRole('button', { name: 'Ask the agent', exact: true }).click();
-    const popover = page.locator('aside.chat-popover');
-    await expect(popover).toBeVisible();
-    await expect(page.locator('.chat-dock')).toHaveCount(0);
-    await expect(popover.locator('.chat-turns')).toHaveCount(0);
-    await expect(popover.getByRole('button', { name: /^Sessions/ })).toHaveCount(0);
-    for (const n of [1, 2]) {
-      await popover.getByLabel('Your message').fill(`Plain ${n}`);
-      await popover.getByRole('button', { name: 'Send' }).click();
-      await expect(popover.locator('pre.chat-text')).toHaveCount(n, { timeout: 60_000 });
-    }
-    await expect(popover.locator('pre.chat-text').first()).toContainText('- first point');
-    await expect(popover.locator('.chat-markdown, .chat-changes')).toHaveCount(0);
-    expect(await consentCalls(app)).toBe(2);
-    expect(await page.evaluate(() => window.kiln.call('agent.chatHistory', { itemId: '00000000-0000-4000-8000-000000000000' }).then(() => 'listed', e => String(e)))).toContain('Experimental features');
   } finally { await app.close().catch(() => {}); fs.rmSync(root, { recursive: true, force: true }); }
 });

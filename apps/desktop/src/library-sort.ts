@@ -54,3 +54,22 @@ export function moveInOrder(shown: Item[], id: string, direction: number, pinSou
   if (at < 0 || to < 0 || to >= shown.length || (pinSources && (shown[at].kind === 'source') !== (shown[to].kind === 'source'))) return null;
   const ids = shown.map(i => i.id); [ids[at], ids[to]] = [ids[to], ids[at]]; return ids;
 }
+
+/** Every kind, in the order kind groups and suggestions list them. */
+export const KINDS: Item['kind'][] = ['source', 'prompt', 'skill', 'agent', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
+export const kindPlural: Record<Item['kind'], string> = { source: 'Sources', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References' };
+export type GroupKey = 'none' | 'collection' | 'kind' | 'status';
+const statusGroup: Record<Item['status'], string> = { captured: 'Drafts', testing: 'Testing', approved: 'Approved', rejected: 'Rejected', archived: 'Archived' };
+/**
+ * The shown list cut into groups, each keeping the list's order inside it. Collections sort by name with unfiled items last;
+ * kinds and statuses follow their usual order. `none` is one unlabelled group.
+ */
+export function groupItems(items: Item[], key: GroupKey): { key: string; label: string; items: Item[] }[] {
+  if (key === 'none') return [{ key: '', label: '', items }];
+  const keyOf = (i: Item) => key === 'collection' ? i.collection : key === 'kind' ? i.kind : i.status;
+  const groups = new Map<string, Item[]>();
+  for (const item of items) { const k = keyOf(item); groups.set(k, [...(groups.get(k) ?? []), item]); }
+  const rank = (k: string) => key === 'kind' ? KINDS.indexOf(k as Item['kind']) : statusRank[k] ?? 9;
+  const order = [...groups.keys()].sort((a, b) => key === 'collection' ? (!a ? 1 : !b ? -1 : a.localeCompare(b)) : rank(a) - rank(b));
+  return order.map(k => ({ key: k, label: key === 'collection' ? k.replaceAll('/', ' / ') || 'No collection' : key === 'kind' ? kindPlural[k as Item['kind']] : statusGroup[k as Item['status']], items: groups.get(k)! }));
+}

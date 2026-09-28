@@ -6,12 +6,12 @@ import type { Installation, Item, Provider, ProviderId, Snapshot, Target } from 
 import { api } from './api';
 import { Badge, InlineError, Modal, providerName } from './components';
 import { FolderComparison } from './Compare';
-import { experimentOn } from './Experiments';
-import { KeepButton, KeptDialog, keepExplanation, updateMessage, type KeepResult, type UpdateResult } from './InstallUpdates';
+import { updateMessage, type UpdateResult } from './InstallUpdates';
+import { KeepButton, KeptDialog, keepExplanation, type KeepResult } from './KeepChanges';
 
 import { personalTarget } from './skill-folders';
 export { personalTarget };
-/** `outdated` only appears while the experimental installUpdates flag is on: the backend marks such copies only then. */
+/** `outdated`: Kiln installed the copy, it is unchanged since, and a newer revision is approved. */
 export type SkillState = 'off' | 'on' | 'outdated' | 'linked' | 'found' | 'differs' | 'drifted';
 export function skillState(item: Item, target: Target, installations: Installation[]): { state: SkillState; installation?: Installation } {
   const installation = installations.find(i => i.itemId === item.id && i.targetId === target.id);
@@ -30,10 +30,17 @@ const stateHint: Record<SkillState, string> = {
   differs: 'The installed copy differs from the approved version. Click to replace or remove it.',
   drifted: 'Installed by Kiln, then edited outside Kiln. Click to reinstall the approved version or remove.',
 };
+/** The personal locations an item gets a toggle for: Agents and Claude for a skill, its own client for an agent definition. */
+function toggleLocations(item: Item, providers: Provider[], targets: Target[]) {
+  return providers.filter(p => item.kind === 'agent' ? p.id === item.agent?.provider : p.id !== 'copilot').map(p => ({ provider: p, target: personalTarget(targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: Target }[];
+}
+export const toggleTargets = (item: Item, providers: Provider[], targets: Target[]) => toggleLocations(item, providers, targets).map(l => l.target);
+/** Personal copies in the client-specific Codex or Copilot folders, listed in their own disclosure under the toggles. */
+export const clientSpecific = (item: Item, copy: Installation) => item.kind === 'skill' && copy.scope !== 'project' && (copy.location === 'codex' || copy.location === 'copilot');
 /** Primary folders stay visible; client-specific copies are available on demand. */
 export function SkillToggles({ item, providers, snapshot, installations, onToggle, onSetup }: { item: Item; providers: Provider[]; snapshot: Snapshot; installations: Installation[]; onToggle: (provider: ProviderId, targetId?: string) => void; onSetup: () => void }) {
-  const locations = providers.filter(p => item.kind === 'agent' ? p.id === item.agent?.provider : p.id !== 'copilot').map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: Target }[];
-  const extras = item.kind === 'skill' ? installations.filter(i => i.itemId === item.id && (i.location === 'codex' || i.location === 'copilot')) : [];
+  const locations = toggleLocations(item, providers, snapshot.targets);
+  const extras = installations.filter(i => i.itemId === item.id && clientSpecific(item, i));
   const extraTargets = item.kind === 'skill' ? snapshot.targets.filter(t => t.scope === 'personal' && (t.provider === 'copilot' || t.skillFolder)) : [];
   const toggle = (provider: Provider, target: Target) => {
     const { state } = skillState(item, target, installations);
@@ -56,9 +63,9 @@ export function SkillLocationSettings({ providers, targets, onSet, onScan }: { p
   return <><p>Install skills into shared Agents or Claude folders. Agent definitions keep their client’s format and folder. Removing an installation keeps the library item and its history.</p>{providers.filter(p => p.id !== 'copilot').map(p => row(p))}<p className="small muted">Agents is shared by Codex, Copilot, Cursor and other clients. Claude folders can also be read by some other clients. These labels describe locations, not exclusive access.</p><details><summary>Clients that read .agents/skills</summary><p className="small muted">Checked {compatibilityChecked}. Client versions, disabled skills, workspace trust and folder precedence affect what is loaded.</p><ul>{sharedSkillReaders.map(reader => <li key={reader.name}><a href={reader.url} target="_blank" rel="noreferrer">{reader.name}</a> — {reader.note}</li>)}</ul><p className="small muted">The <a href="https://github.com/vercel-labs/skills/blob/main/src/agents.ts" target="_blank" rel="noreferrer">skills installer registry</a> also uses this project convention for Antigravity, Antigravity CLI, Cline, Deep Agents, Dexto, Firebender, Loaf, Replit and PromptScript. Their personal-folder loading is not verified here.</p></details><details><summary>Client-specific locations</summary><p className="small muted">Optional separate copies. A missing folder does not mean skills are unavailable to that client. Codex’s .codex/skills folder is also used by older clients and installers.</p>{providers.filter(p => p.id === 'codex').map(p => row(p, true))}{providers.filter(p => p.id === 'copilot').map(p => row(p))}</details></>;
 }
 /** Explains exactly what will happen in the agent folder before installing or removing. */
-export function SkillInstallDialog({ item, provider, target, installations, approved, settings, onClose, onDone }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; /** Experimental flags: installUpdates adds Update, keepOutsideEdits adds Keep these changes. */ settings?: Snapshot['settings']; onClose: () => void; onDone: (message: string) => void }) {
+export function SkillInstallDialog({ item, provider, target, installations, approved, settings, onClose, onDone, reload }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; settings?: Snapshot['settings']; onClose: () => void; onDone: (message: string) => void; /** Re-reads the library when Keep finds the item changed meanwhile. */ reload?: () => Promise<void> }) {
   const { state, installation } = skillState(item, target, installations);
-  // Project copies (experimental projectInstalls) name their project, since every project has its own Claude or Agents folder.
+  // Project copies name their project, since every project has its own Claude or Agents folder.
   const label = `${target.scope === 'project' ? `${target.name} · ` : ''}${item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)]}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   // A "differs" or "drifted" verdict opens with the file comparison visible, so the decision is made on evidence rather than a label.
@@ -69,9 +76,9 @@ export function SkillInstallDialog({ item, provider, target, installations, appr
   const remove = (force = false) => run(() => api('skills.remove', { itemId: item.id, targetId: target.id, force, confirm: true }), `${item.title} removed from ${label} ({method}). The item stays in your library.`);
   const reveal = () => void api('desktop.revealPath', { path: destination }).catch(e => setError(String(e)));
   const update = () => run(async () => ({ destination, method: updateMessage(item.title, await api<UpdateResult>('skills.update', { itemId: item.id, targetId: target.id })) }), '{method}');
-  const keeping = experimentOn(settings, 'keepOutsideEdits') && (state === 'differs' || state === 'drifted');
+  const keeping = state === 'differs' || state === 'drifted';
   const [kept, setKept] = useState<KeepResult | null>(null);
-  if (kept) return <KeptDialog item={item} targetId={target.id} result={kept} settings={settings} onDone={onDone} />;
+  if (kept) return <KeptDialog item={item} targetId={target.id} result={kept} installations={installations} onDone={onDone} />;
   const titles: Record<SkillState, string> = { off: `Install for ${label}`, on: `Remove from ${label}`, outdated: `Update available in ${label}`, linked: `Linked copy in ${label}`, found: `Existing copy in ${label}`, differs: `Different version in ${label}`, drifted: `Edited copy in ${label}` };
   return <Modal title={titles[state]} subtitle={item.title} onClose={onClose} wide={comparing}>
     <code className="path-text">{destination}</code>
@@ -94,7 +101,7 @@ export function SkillInstallDialog({ item, provider, target, installations, appr
       {state === 'outdated' && <><button className="button danger-text" disabled={busy} onClick={() => void remove()}>Remove</button><button className="button primary" disabled={busy} onClick={() => void update()}><CircleArrowUp size={14} />Update</button></>}
       {state === 'linked' && <><button className="button danger-text" disabled={busy} onClick={() => void remove()}>Remove link</button><button className="button primary" disabled={busy} onClick={() => void install()}>Replace with a copy</button></>}
       {state === 'found' && <><button className="button danger-text" disabled={busy} onClick={() => void remove()}>Remove</button><button className="button primary" disabled={busy} onClick={() => void install()}>Let Kiln manage it</button></>}
-      {keeping && <KeepButton item={item} targetId={target.id} disabled={busy} onKept={setKept} onError={setError} />}
+      {keeping && <KeepButton item={item} targetId={target.id} disabled={busy} onKept={setKept} onError={setError} reload={reload} />}
       {(state === 'differs' || state === 'drifted') && <><button className="button danger-text" disabled={busy} onClick={() => void remove(true)}>Remove anyway</button><button className="button primary" disabled={busy} onClick={() => void install(true)}>{state === 'drifted' ? 'Reinstall approved version' : 'Replace with approved version'}</button></>}
     </div>
   </Modal>;

@@ -1,4 +1,4 @@
-/** Pure helpers for the experimental code editor (the `codeEditor` flag): which language a file is, and its line breaks. */
+/** Pure helpers for the code editor: which language a file is, and its line breaks. */
 
 export type CodeLanguage = 'markdown' | 'json' | 'jsonc' | 'yaml' | 'toml' | 'shell' | 'powershell' | 'python' | 'javascript' | 'typescript' | 'plain';
 

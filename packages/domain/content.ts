@@ -18,7 +18,5 @@ export function skillName(value: Revision) {
   const match = value.content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   return String(parse(match?.[1] ?? '')?.name ?? '');
 }
-/** Every variable is optional: a missing or blank value leaves its `{{name}}` placeholder exactly as written, so the reader sees what was not filled. */
-export function resolveVariables(content: string, variables: Record<string, string>) {
-  return content.replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (placeholder, key: string) => Object.hasOwn(variables, key) && variables[key].trim() ? variables[key] : placeholder);
-}
+// Lives in text.ts so quick search can fill its preview with exactly what `desktop.copy` will put on the clipboard.
+export { resolveVariables } from './text';

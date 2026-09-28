@@ -88,7 +88,7 @@ const problemLines = StateField.define<DecorationSet>({
 });
 
 /** The CodeMirror editor behind `CodeEditor`; loaded on demand. */
-export default function CodeMirrorView({ value, onChange, language, ariaLabel, readOnly = false, onSave, diagnostics, diagnosticsTitle }: CodeEditorProps) {
+export default function CodeMirrorView({ value, onChange, language, ariaLabel, readOnly = false, onSave, diagnostics, diagnosticsTitle, autoFocus = false }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null);
   const last = useRef(value), separator = useRef(lineSeparatorFor(value));
   const change = useRef(onChange), save = useRef(onSave);
@@ -113,9 +113,11 @@ export default function CodeMirrorView({ value, onChange, language, ariaLabel, r
   useEffect(() => {
     const editor = new EditorView({ state: createState(value), parent: host.current! });
     view.current = editor;
-    // Find, replace and save belong to the editor: the library's Ctrl+F (search the library) and outer Ctrl+S handlers must not also run.
-    const keep = (event: KeyboardEvent) => { if (!(event.ctrlKey || event.metaKey) || event.altKey) return; const key = event.key.toLowerCase(); if (key === 'f' || key === 'h' || (key === 's' && save.current)) event.stopPropagation(); };
+    // Find, replace, undo and save belong to the editor: the app's Ctrl+F (the query bar), Ctrl+Z (its undo stack) and outer
+    // Ctrl+S handlers must not also run. Without onSave, Ctrl+S goes on to the surrounding view, which saves.
+    const keep = (event: KeyboardEvent) => { if (!(event.ctrlKey || event.metaKey) || event.altKey) return; const key = event.key.toLowerCase(); if (['f', 'h', 'z', 'y'].includes(key) || (key === 's' && save.current)) event.stopPropagation(); };
     editor.dom.addEventListener('keydown', keep);
+    if (autoFocus) editor.focus();
     return () => { editor.dom.removeEventListener('keydown', keep); editor.destroy(); view.current = null; };
   }, []);
   useEffect(() => {

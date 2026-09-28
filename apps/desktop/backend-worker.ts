@@ -12,7 +12,7 @@ let wb = new Workbench(workerData.root, workerData.local);
 let router = new Router(wb, routerOptions);
 const newAgentService = (workbench: Workbench) => {
   const service = new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
-  // runNotifications: main decides whether to show a desktop notification; the event is sent for every finished run.
+  // main.ts shows a desktop notification only while Kiln is not in front; the event is sent for every finished run.
   service.onFinished = job => parentPort!.postMessage({ agentFinished: runFinished(job, id => { try { return workbench.getItem(id).title; } catch { return undefined; } }) });
   return service;
 };
@@ -28,7 +28,7 @@ parentPort!.on('message', request => {
         if (agent.running || agent.queued) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
         const next = new Workbench(request.args[0], workerData.local);
-        wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
+        router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
         data = { local: wb.local, canonical: wb.canonical };
       } else if (request.method === 'paths') data = { local: wb.local, canonical: wb.canonical };
       else if (request.method === 'rpc' && request.args[0] === 'agent.capture') data = agent.capture(request.args[1]);
@@ -42,7 +42,7 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'trials.delete') data = agent.deleteTrial(request.args[1]);
       else if (request.method === 'rpc') data = await router.call(...request.args as [string, unknown]);
       else {
-        const allowed = ['settings', 'saveSettings', 'setExperiment', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
+        const allowed = ['settings', 'saveSettings', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];
         if (!allowed.includes(request.method)) throw new Error('Unsupported worker operation');
         data = await (wb as any)[request.method](...request.args);
       }
@@ -52,6 +52,6 @@ parentPort!.on('message', request => {
       parentPort!.postMessage({ id: request.id, error: { code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) } });
     }
   };
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view'].includes(request.args[0])) void run();
   else queue = queue.then(run);
 });

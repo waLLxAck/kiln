@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Trial } from '../protocol/schema';
 
-/** trialLoop: experiments and skill drafts get this long on either provider, instead of the runners' 3 (Codex) and 5 (Claude Code) minute defaults. */
+/** Experiments and skill drafts get this long on either provider, instead of the runners' 3 (Codex) and 5 (Claude Code) minute defaults. */
 export const TRIAL_LOOP_TIMEOUT_MS = 15 * 60_000;
 /** How much of the item's experiment history goes into the chat's context.md, so "Improve with agent" has the evidence without flooding the context. */
 export const CONTEXT_TRIALS = 5, CONTEXT_NOTE = 800, CONTEXT_OUTPUT = 2000;

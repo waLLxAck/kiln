@@ -1,84 +1,90 @@
-import { useViewMemory, useScrollMemory } from './view-memory';
-import { UndoToast } from './UndoToast';
+import { useViewMemory, useScrollMemory, useGroupBy, useSavedViews } from './view-memory';
 import { BulkRemovalDialog } from './BulkLibrary';
-import { activeFilterCount, emptyLibraryFilters, filterDimensions, matchesLibraryFilters, type LibraryFilterKey, type LibraryFilters } from './library-filters';
+import { inStage, matchesQuery, narrowest, parseTyped, sameToken, stages, statusLabel, tokenLabel, type QueryToken, type Stage } from './library-filters';
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { SkillLocationSettings } from './Skills';
 import { useCallback, useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
-import { Activity, Archive, ArrowDown, ChevronDown, FolderInput, FolderPlus, Inbox, ArrowRight, ArrowUp, Check, ChevronRight, Copy, Download, ExternalLink, FileCog, FileText, FlaskConical, Folder, FolderGit2, FolderOpen, FolderX, Github, MessageSquare, Pencil, Layers3, Loader2, Monitor, Moon, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Sun, Terminal, Trash2, Undo2, Upload, X } from 'lucide-react';
+import { Activity, ArrowRight, ChevronRight, Copy, Download, ExternalLink, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, Loader2, MessageSquare, Pencil, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
 import { Setup, type PreviousLibrary } from './Setup';
 import { ChatPopover } from './Chat';
-import { ChatDock } from './ChatDock';
-import { CollectionNameInput, CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog, useCollectionDrag } from './Collections';
-import { ancestorsOf, depthOf, isWithin, leafOf, relocate, untitledName } from '../../../packages/domain/collections';
+import { useKilnCommands } from './commands';
+import { trialPlace, trialPlaces } from './trial-place';
+import { CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog, useCollectionDrag } from './Collections';
+import { isWithin, relocate, untitledName } from '../../../packages/domain/collections';
 import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
 import { sharedTitleIds, titleCollisions } from './item-source';
-import { machinesEnabled } from './features';
-import { MachinesSoon } from './MachinesSoon';
-import { ExperimentsPanel, experimentOn } from './Experiments';
-import { requestSync, SyncIndicator, SyncSummary } from './Sync';
-import { ASK_AGENT_EVENT, ExperimentsByItem, type AskAgentDetail } from './TrialLoop';
-import { arrangeItems, columns, defaultSort, inTab, ItemRow, KINDS, LibraryTabs, LibraryTools, moveInOrder, nextSort, passesInstallFilter, RowHead, type FilterOption, type InstallFilter, type LibraryTab, type Sort } from './Library';
+import { multiMachine } from './features';
+import { MachinesView } from './Machines';
+import { arrangeItems, defaultSort, groupItems, ItemBar, locationName, locationsFor, moveInOrder, nextSort, type Location } from './Library';
+import { BulkBar, LibraryTable } from './LibraryTable';
+import { QueryBar } from './QueryBar';
 import { useLibrarySearch } from './library-search';
 import { rankItems } from './library-sort';
-import { usePaletteCommands } from './palette-commands';
-import { setKeyboardUndo } from './keyboard-undo';
-import { useGlobalKeys, useListKeys } from './keyboard';
+import { CaptureDialog, type CaptureRequest, type CaptureSeed } from './CaptureComposer';
+import { Rail, tools, UNFILED } from './Rail';
+import { repoName, StatusBar } from './StatusBar';
+import { OPEN_RESULT_TAB_EVENT, resultTarget, type RunRef } from './Runs';
+import { requestSync, SyncSummary } from './Sync';
+import { activeRun } from '../../../packages/agent/run-notice';
+import type { DuplicateGroup, Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
+import { api, date, platform, shortHash, variablesIn } from './api';
+import { Badge, ContextMenu, Empty, Field, KilnMark, menuPoint, Modal, shortcutEntry, statusHelp, type MenuEntry } from './components';
+import { useGlobalKeys } from './keyboard';
 import { useUndoStack } from './UndoStack';
 import { useItemDrag } from './ItemDrag';
 import { ShortcutSheet } from './ShortcutSheet';
-import type { Installation, Item, ItemDetail, Provider, ProviderId, Receipt, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
-import { api, date, platform, shortHash, variablesIn } from './api';
-import { Badge, ContextMenu, Empty, Field, KilnMark, KindIcon, Modal, providerName, shortcutEntry, statusHelp, type MenuEntry } from './components';
-import { SwipeToArchive } from './Swipe';
-import { DeployDialog, ResultDialog, TargetDialog, TrialDialog, VariablesDialog } from './dialogs';
+import { DeployDialog, ResultDialog, TrialDialog, VariablesDialog } from './dialogs';
 import { ProjectInstallDialog } from './ProjectInstalls';
+import type { ProjectLocation } from '../../../packages/deployment/projects';
 import { Detail } from './Detail';
 import { RepositoryPanel } from './RepositoryPanel';
-import { Installations } from './Installations';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
-import { QuickCapture, type CaptureSeed } from './QuickCapture';
 import { AgentTrialDialog, CreateSkillDialog } from './AgentPanel';
 import { personalTarget, ScanDialog, SkillInstallDialog, skillState } from './Skills';
 import { CompareDialog } from './Compare';
-import { canKeep, updateInstalls } from './InstallUpdates';
+import { ConsolidateDialog } from './Consolidate';
+import { duplicateIds, groupOf } from './consolidate-model';
+import { updateInstalls } from './InstallUpdates';
+import { canKeep, useKeepChanges } from './KeepChanges';
 import { HomeFilesView } from './HomeFiles';
-import { UpdateAction, UpdatesPanel } from './Updates';
-import { RunsButton } from './Runs';
+import { UpdatesPanel } from './Updates';
+import { ASK_AGENT_EVENT, reviewOf, type AskAgentDetail } from './TrialLoop';
+import { ExperimentsPage } from './ExperimentsPage';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
-import { useCodeEditorFlag } from './code-editor-state';
 
-type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string } | null;
-const navItems = [{ id: 'library', label: 'Library', icon: Layers3 }, { id: 'experiments', label: 'Experiments', icon: FlaskConical }, { id: 'home', label: 'Config files', icon: FileCog }, { id: 'machines', label: 'Machines', icon: Monitor }, { id: 'activity', label: 'Activity', icon: Activity }];
+type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation } | null;
 const hidden = ['archived', 'rejected'];
-/** Collection filter for items outside every collection. Not a valid collection name, so it cannot clash with one. */
-const UNFILED = '\u0000unfiled';
 /** Whether an item shows under a collection filter: everything for none, the collection with its subfolders, or only unfiled items. */
 const inCollection = (item: Item, collection: string) => !collection || (collection === UNFILED ? !item.collection : isWithin(item.collection, collection));
-/** "owner/name" from a GitHub remote URL, for display. */
-const repoName = (remote: string) => remote.replace(/^(https:\/\/github\.com\/|git@github\.com:)/, '').replace(/\.git$/, '') || 'GitHub remote';
+const sectionLabel: Record<string, string> = { library: 'Library', settings: 'Settings', archive: 'Archive', trash: 'Trash', ...Object.fromEntries(tools.map(t => [t.id, t.label])) };
 
 export default function App() {
   const sidebar = usePanelWidth('kiln-sidebar-width', 250, 180, 360);
-  // The list column keeps a fixed share of the window; the detail pane always has the rest, so selecting never reflows the rows.
-  const skillList = usePanelWidth('kiln-list-width', 620, 380, 1100);
-  const [captureSeed, setCaptureSeed] = useState<CaptureSeed>();
+  // Paste, drop, the Capture button, Ctrl+N and the palette all open the capture dialog with their material.
+  const [capture, setCapture] = useState<CaptureRequest>(); const captureCount = useRef(0);
   const [jobs,setJobs] = useState<AgentJob[]>([]);
   const [agentSyncError, setAgentSyncError] = useState('');
   const knownJobs = useRef<Map<string,string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [installations, setInstallations] = useState<Installation[]>([]);
-  const { section, tab, selected, query, filter, collection, sort, installFilter, advancedFilters, key: viewKey,
-    setSection, setTab, setSelected, setQuery, setFilter, setCollection, setSort, setInstallFilter, setAdvancedFilters } = useViewMemory();
+  const { section, collection, stage, selected, open: itemOpen, query, tokens, sort, key: viewKey,
+    setSection, setCollection, setStage, setSelected, setOpen, setQuery, setTokens, setSort } = useViewMemory();
+  const [group, setGroup] = useGroupBy();
+  const savedViews = useSavedViews();
   const [detail, setDetail] = useState<ItemDetail | null>(null);
-  const { better: betterSearch, searchIds, close: closeMatches, searching, searchSort, setSearchSort } = useLibrarySearch(query, snapshot, message => setError(message));
+  // "kind:" being typed is a filter on its way, not text to search for.
+  const searchText = parseTyped(query).facet ? '' : query.trim();
+  const { searchIds, close: closeMatches, searching, searchSort, setSearchSort } = useLibrarySearch(searchText, snapshot, message => setError(message));
   const searchSet = useMemo(() => searchIds && new Set(searchIds), [searchIds]);
-  const listScroll = useScrollMemory(`list:${viewKey}`, Boolean(snapshot) && (!query.trim() || searchIds !== null), `${snapshot?.items.length}:${searchIds?.join(',') ?? ''}`);
+  const libraryView = ['library', 'archive', 'trash'].includes(section);
+  // An open item replaces the list; coming back puts the list where it was.
+  const listShown = libraryView && !itemOpen;
+  const listScroll = useScrollMemory(`list:${viewKey}`, Boolean(snapshot) && listShown && (!searchText || searchIds !== null), `${snapshot?.items.length}:${searchIds?.join(',') ?? ''}:${listShown}`);
   /** Rows picked with Ctrl-click, Shift-click or Ctrl+A. `selected` stays the focused row; two or more picked rows make right-click act on all of them. */
   const [bulkIds, setBulkIds] = useState<string[]>([]); const bulkRef = useRef<string[]>([]); bulkRef.current = bulkIds;
   const [bulkReview, setBulkReview] = useState<string[] | null>(null);
-  useEffect(() => { setBulkIds([]); }, [query, filter, collection, tab, section, installFilter, advancedFilters, snapshot?.root]);
+  useEffect(() => { setBulkIds([]); }, [query, tokens, collection, stage, section, snapshot?.root]);
   useEffect(() => { setBulkReview(null); }, [snapshot?.root]);
   const [dialog, setDialog] = useState<Dialog>(null); const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<CodexModel[] | null>(null);
@@ -94,15 +100,17 @@ export default function App() {
   const [chatSeed, setChatSeed] = useState<{ itemId: string; text: string; nonce: number } | null>(null); const askAgentRef = useRef<(detail: AskAgentDetail) => void>(() => {});
   useEffect(() => { const ask = (event: Event) => askAgentRef.current((event as CustomEvent<AskAgentDetail>).detail); window.addEventListener(ASK_AGENT_EVENT, ask); return () => window.removeEventListener(ASK_AGENT_EVENT, ask); }, []);
   useEffect(() => { if (!chatOpen) setChatSeed(null); }, [chatOpen]);
+  /** The item whose experiments grid was asked for from outside its page (the list's Test, quick search). */
+  const [testRequest, setTestRequest] = useState<{ id: string; at: number }>();
+  // Duplicates: the group being consolidated (held here, since consolidating removes it from the snapshot), and every id in a group.
+  const [consolidating, setConsolidating] = useState<DuplicateGroup | null>(null);
+  const duplicateSet = useMemo(() => duplicateIds(snapshot?.duplicates ?? []), [snapshot?.duplicates]);
   // Right-click menu on a collection in the sidebar.
   const [collectionMenu, setCollectionMenu] = useState<{ x: number; y: number; name: string } | null>(null);
   // Collapsed sidebar folders, remembered across restarts.
   const [collapsed, setCollapsed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('kiln-collapsed-collections') ?? '[]'); } catch { return []; } });
   const toggleCollapsed = (name: string) => setCollapsed(current => { const next = current.includes(name) ? current.filter(n => n !== name) : [...current, name]; localStorage.setItem('kiln-collapsed-collections', JSON.stringify(next)); return next; });
-  // The last archive that can still be undone. Replaced by the next archive, dropped after a short pause.
-  const [undo, setUndo] = useState<{ item: Item; previous: Item['status'] } | null>(null);
   const [message, setMessage] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const [drift, setDrift] = useState<(Receipt & { drifted: boolean; checkedAt: string; error?: string })[]>([]);
   const [inventory, setInventory] = useState<{ root: string; resources: string[]; totalFiles: number; branch: string; changes: string[] } | null>(null);
   const [gitPreview, setGitPreview] = useState('');
   const [syncReport, setSyncReport] = useState<{ itemId: string; provider: ProviderId | 'codex-native'; result: string }[] | null>(null);
@@ -127,17 +135,22 @@ export default function App() {
       } catch (e) { if (active) setAgentSyncError(`Agent updates disconnected. Retrying… ${String(e)}`); }
       finally { pending = false; if (active && again) { again = false; void poll(); } }
     };
-    void poll(); const timer = setInterval(() => { if (!pending && ([...(knownJobs.current?.values() ?? [])].includes('running') || Date.now() - lastPoll >= 5000)) void poll(); },1000);
+    void poll(); const timer = setInterval(() => { if (!pending && ([...(knownJobs.current?.values() ?? [])].some(status => status === 'running' || status === 'queued') || Date.now() - lastPoll >= 5000)) void poll(); },1000);
     const start = () => void poll(); window.addEventListener('kiln:agent-started',start); window.addEventListener('kiln:agent-refresh',start);
     return () => { active = false; clearInterval(timer); window.removeEventListener('kiln:agent-started',start); window.removeEventListener('kiln:agent-refresh',start); };
   },[refresh,snapshot?.root]);
+  /** Opens the capture dialog over whatever is on screen and hands it whatever was pasted or dropped. */
+  const startCapture = (seed?: CaptureSeed) => setCapture({ id: ++captureCount.current, seed });
+  const startCaptureRef = useRef(startCapture); startCaptureRef.current = startCapture;
   useEffect(() => {
-    const paste = (event: ClipboardEvent) => { if ((event.target as Element)?.closest('input,textarea,[contenteditable],.modal')) return; const files = Array.from(event.clipboardData?.files ?? []); const text = event.clipboardData?.getData('text/plain') ?? ''; if (files.length || text) { event.preventDefault(); setCaptureSeed({ files, text }); setDialog({ name: 'capture' }); } };
+    const paste = (event: ClipboardEvent) => { if ((event.target as Element)?.closest?.('input,textarea,[contenteditable],.modal')) return; const files = Array.from(event.clipboardData?.files ?? []); const text = event.clipboardData?.getData('text/plain') ?? ''; if (files.length || text) { event.preventDefault(); startCaptureRef.current({ files, text }); } };
     const over = (event: DragEvent) => { if (event.dataTransfer?.types.includes('Files')) event.preventDefault(); };
-    const drop = (event: DragEvent) => { if ((event.target as Element)?.closest('.modal')) return; event.preventDefault(); setCaptureSeed({ files: Array.from(event.dataTransfer?.files ?? []), text: event.dataTransfer?.getData('text/plain') }); setDialog({ name: 'capture' }); };
+    const drop = (event: DragEvent) => { if ((event.target as Element)?.closest?.('.modal')) return; event.preventDefault(); startCaptureRef.current({ files: Array.from(event.dataTransfer?.files ?? []), text: event.dataTransfer?.getData('text/plain') }); };
     window.addEventListener('paste',paste); window.addEventListener('dragover',over); window.addEventListener('drop',drop); return () => { window.removeEventListener('paste',paste); window.removeEventListener('dragover',over); window.removeEventListener('drop',drop); };
   },[]);
   const perform = async (action: () => Promise<unknown>, success = '') => { setError(''); setBusy(true); const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null; button?.setAttribute('aria-busy','true'); try { await action(); if (success) setMessage(success); } catch (e) { const message = e instanceof Error ? e.message : String(e); setError(message); window.dispatchEvent(new CustomEvent('kiln:error', { detail: message })); } finally { setBusy(false); button?.removeAttribute('aria-busy'); } };
+  // Keep these changes from the Installs rail, Machines and Compare; its dialog is rendered with the others below.
+  const keeper = useKeepChanges({ items: snapshot?.items ?? [], installations, perform, refresh, onMessage: setMessage });
   useEffect(() => { void perform(refresh); void api<Provider[]>('providers.detect').then(setProviders).catch(e => setError(String(e))); }, []);
   useEffect(() => { if (section === 'settings' && models === null) void api<CodexModel[]>('agent.models').then(setModels).catch(() => setModels([])); }, [section, models]);
   useEffect(() => { const onFocus = () => void refresh().catch(e => setError(String(e))); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [refresh]);
@@ -150,6 +163,11 @@ export default function App() {
   /** Creates "New Folder" (or the next free number) at once and opens it for naming, like a file manager: nothing to type first. */
   const newCollection = (parent = '') => void perform(async () => { const created = await api<{ name: string }>('collections.create', { name: untitledName(snapshot?.collections ?? [], parent) }); if (parent) expandCollection(parent); await refresh(); setRenamingCollection(created.name); });
   const renameCollection = (from: string, to: string) => perform(async () => { const renamed = await api<{ to: string }>('collections.rename', { from, to }); await refresh(); followCollection(from, renamed.to); setRenamingCollection(null); });
+  // Keyboard navigation and undo (keyboard.ts, UndoStack.tsx, ItemDrag.tsx, ShortcutSheet.tsx): the stack of the last 20 library
+  // actions with Ctrl+Z, the ? sheet, and rows dragged onto sidebar collections. The table's own keys live in LibraryTable.
+  const undoStack = useUndoStack({ root: snapshot?.root, perform, refresh, setMessage });
+  const [sheet, setSheet] = useState(false); useGlobalKeys({ undo: () => undoStack.undo(), sheet: () => setSheet(true) });
+  const itemDrag = useItemDrag({ onMove: (items, to) => void undoStack.move(items, to).then(() => setBulkIds([])) });
   const collectionDrag = useCollectionDrag(snapshot?.collections ?? [], (name, { parent, before }) => void perform(async () => { const moved = await api<{ to: string }>('collections.move', { name, parent, before }); if (parent) expandCollection(parent); await refresh(); followCollection(name, moved.to); }), name => !collapsed.includes(name));
   // Remember the library Kiln started with when it is not a ready repository, so setup can offer to carry its items over.
   useEffect(() => { if (snapshot && !snapshot.repository.ready && !previousLibrary.current) previousLibrary.current = { root: snapshot.root, items: snapshot.items.filter(i => !i.deletedAt).length, standard: snapshot.repository.standard, dedicated: snapshot.repository.dedicated }; }, [snapshot]);
@@ -159,56 +177,79 @@ export default function App() {
     if (!selected) { setDetail(null); return; }
     let active = true;
     // A selection remembered from another library (or a purged item) is simply dropped; every other failure is shown.
-    void api<ItemDetail>('items.read', { id: selected }).then(data => { if (active) setDetail(data); }).catch(e => { if (!active) return; setDetail(null); if (/ITEM_NOT_FOUND/.test(String(e))) { setSelected(''); localStorage.removeItem('kiln-selected'); } else setError(String(e)); });
+    void api<ItemDetail>('items.read', { id: selected }).then(data => { if (active) setDetail(data); }).catch(e => { if (!active) return; setDetail(null); if (/ITEM_NOT_FOUND/.test(String(e))) { setSelected(''); setOpen(false); localStorage.removeItem('kiln-selected'); } else setError(String(e)); });
     localStorage.setItem('kiln-selected', selected); return () => { active = false; };
   }, [selected, snapshot]);
   // Items sharing a title show where each came from; an import's full folder is kept on this machine only, so ask for it.
   const [origins, setOrigins] = useState<Record<string, string>>({});
   const sharedTitles = snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '';
   useEffect(() => { if (!sharedTitles) { setOrigins({}); return; } let active = true; void api<Record<string, string>>('items.origins', { ids: sharedTitles.split(',') }).then(result => { if (active) setOrigins(result); }).catch(() => {}); return () => { active = false; }; }, [sharedTitles]);
-  useCodeEditorFlag(experimentOn(snapshot?.settings, 'codeEditor'));
-  // Installation state for every skill: drives the toggles in the header and the small marks on list cards.
+  // Machines: share this machine's installs with the rest of the fleet, now and after each change (see packages/fleet).
+  // Never started while Machines manages this machine only, so no machine report is committed.
+  useEffect(() => { if (multiMachine) void api('fleet.start').catch(() => {}); }, []);
+  // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
   useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
   useEffect(() => {
     const chosenTheme = theme ?? snapshot?.settings.theme;
     document.documentElement.dataset.theme = chosenTheme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : chosenTheme ?? 'light';
   }, [snapshot?.settings.theme, theme]);
+  // Read by the window-wide keys below, which are registered once.
+  const keys = useRef({ itemOpen: false, step: (_direction: number) => {} });
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => { if (event.key === 'Escape' && !document.querySelector('dialog[open], .context-menu, .chat-popover') && !(event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]'))) { if (bulkRef.current.length) setBulkIds([]); else setSelected(''); return; } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); void api('desktop.palette'); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); setDialog({ name: 'capture' }); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { const search = document.querySelector<HTMLInputElement>('input[aria-label="Search library"]'); if (search) { event.preventDefault(); search.focus(); search.select(); } } };
+    const listener = (event: globalThis.KeyboardEvent) => {
+      const typing = event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]');
+      if (event.key === 'Escape' && !document.querySelector('dialog[open], .context-menu, .chat-popover, .lightbox') && !typing) {
+        // Back from an item, focus returns to its row so the list keys carry on from there.
+        if (keys.current.itemOpen) { setOpen(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus({ preventScroll: true })); } else if (bulkRef.current.length) setBulkIds([]); else setSelected('');
+        return;
+      }
+      if (event.altKey && keys.current.itemOpen && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && !typing) { event.preventDefault(); keys.current.step(event.key === 'ArrowDown' ? 1 : -1); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); void api('desktop.palette'); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); startCaptureRef.current(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        const focus = () => { const search = document.querySelector<HTMLInputElement>('input[aria-label="Search library"]'); search?.focus(); search?.select(); };
+        if (keys.current.itemOpen) { event.preventDefault(); setOpen(false); requestAnimationFrame(focus); } else if (document.querySelector('input[aria-label="Search library"]')) { event.preventDefault(); focus(); }
+      }
+    };
     window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener);
   }, []);
-  const navigate = (name: string) => { if (name === 'library' && section === 'library' && collection) setCollection(''); else setSection(name); };
-  /** A collection from the sidebar filters the library in place; the current tab stays. */
-  const openCollection = (name: string) => { setSection('library'); chooseCollection(name); };
-  /** Sets the collection filter; a tab that would be empty in that collection falls back to Recent rather than showing nothing. */
-  const chooseCollection = (name: string) => {
-    setCollection(name);
-    if (tab !== 'recent' && snapshot && !snapshot.items.some(i => !i.deletedAt && !hidden.includes(i.status) && inCollection(i, name) && inTab(i, tab))) { setTab('recent'); setSort(null); }
-  };
-  useEffect(() => {
-    if (!snapshot || tab === 'recent' || !['library', 'archive', 'trash'].includes(section)) return;
-    const available = snapshot.items.some(i => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? hidden.includes(i.status) : section === 'trash' || !hidden.includes(i.status)) && inCollection(i, collection) && inTab(i, tab));
-    if (!available) setTab('recent');
-  }, [snapshot, section, collection, tab]);
+  /** Rail choices. Choosing the place you are already in brings the list back from an open item; elsewhere its view is restored as it was. */
+  const navigate = (name: string) => { if (name === 'library' && section === 'library') { setStage(''); setOpen(false); } else { setSection(name); if (name === section) setOpen(false); } };
+  const chooseStage = (next: Stage) => { const same = section === 'library' && stage === next; setStage(next); if (same) setOpen(false); };
+  /** A collection from the sidebar filters the library in place. */
+  const openCollection = (name: string) => { const same = section === 'library' && collection === name; setSection('library'); setCollection(name); if (same) setOpen(false); };
   const select = (id: string) => { setSelected(id); setBulkIds([]); };
-  /** Everything made from a source, across collections: the library with only the Source filter set. */
-  const showMadeFrom = (sourceId: string) => { setSection('library'); setCollection(''); setTab('recent'); setQuery(''); setFilter('all'); setInstallFilter('any'); setAdvancedFilters({ ...emptyLibraryFilters, source: sourceId }); };
-  const revealItem = (id: string, destination = 'library') => { setSection(destination); setCollection(''); setTab('recent'); setQuery(''); setFilter('all'); setInstallFilter('any'); setAdvancedFilters(emptyLibraryFilters); select(id); };
+  /** Opens an item as a page over the list. */
+  const openItem = (id: string) => { select(id); setOpen(true); };
+  /** Everything made from a source, across collections: the whole library with only a `from:` token. */
+  const showMadeFrom = (sourceId: string) => { setStage(''); setQuery(''); setTokens([{ facet: 'from', value: sourceId }]); setOpen(false); };
+  /** Shows one item in an unfiltered view of `destination`, opened as a page unless `open` is false (a fresh capture stays in the list). */
+  const revealItem = (id: string, destination = 'library', open = true) => { if (destination === 'library') setStage(''); else { setSection(destination); setCollection(''); } setQuery(''); setTokens([]); select(id); setOpen(open); };
   useEffect(() => { const open = () => { const id = new URLSearchParams(location.hash.slice(1)).get('item'); if (id) { revealItem(id); history.replaceState(null, '', location.pathname + location.search); } }; open(); window.addEventListener('hashchange', open); return () => window.removeEventListener('hashchange', open); }, []);
-  usePaletteCommands(command => { if (command === 'capture') setDialog({ name: 'capture' }); else if (command === 'updates') { setSection('settings'); void perform(async () => { await checkUpdate(true); }, 'Checked for updates'); } else navigate(command); });
-  // Experimental keyboardUndo (keyboard.ts, UndoStack.tsx, ItemDrag.tsx, ShortcutSheet.tsx): list keys, the undo stack, the ? sheet and dragging items onto collections.
-  const keys = experimentOn(snapshot?.settings, 'keyboardUndo'); useEffect(() => setKeyboardUndo(keys), [keys]);
-  const undoStack = useUndoStack({ on: keys, root: snapshot?.root, perform, refresh, setMessage });
-  const [sheet, setSheet] = useState(false); useGlobalKeys(keys, { undo: () => undoStack.undo(), sheet: () => setSheet(true) });
-  const listKeys = useListKeys(), itemDrag = useItemDrag({ on: keys, onMove: (items, to) => void undoStack.move(items, to).then(() => setBulkIds([])) });
+  // Quick search (Palette.tsx) asks for these through desktop.command; main.ts has already shown this window.
+  /** Quick search reads the library itself, so it can name an item this window has not loaded yet (made by the CLI, MCP or a sync); the page needs it in the snapshot. */
+  const revealFresh = (id: string, then?: () => void) => void perform(async () => { if (!snapshot?.items.some(i => i.id === id)) await refresh(); revealItem(id); then?.(); });
+  useKilnCommands({
+    capture: () => startCapture(),
+    'open-item': id => { if (id) revealFresh(id); },
+    'test-item': id => { if (id) revealFresh(id, () => setTestRequest({ id, at: Date.now() })); },
+    navigate: id => { if (id) navigate(id); },
+    'sync-installs': () => { navigate('settings'); void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); }); },
+    'new-collection': () => { setSection('library'); newCollection(); },
+    'toggle-theme': toggleTheme,
+    'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
+    'check-updates': () => { navigate('settings'); void perform(() => checkUpdate(true), 'Checked for updates'); },
+  });
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
+  const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows in the status bar.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
   const copyItem = async (item: Item) => {
     const data = await api<ItemDetail>('items.read', { id: item.id });
     if (variablesIn(data.revision.content).length) { select(item.id); setDetail(data); setDialog({ name: 'variables' }); return; }
     await api('desktop.copy', { id: item.id, revision: item.revision }); await refresh(); setMessage('Copied to clipboard');
   };
-  const archiveItem = (item: Item) => keys ? void undoStack.apply([item], () => ({ status: 'archived' })) : void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, status: 'archived' }); await refresh(); setMessage(''); setUndo({ item, previous: item.status }); });
-  const undoArchive = () => { const last = undo; if (!last) return; setUndo(null); void perform(async () => { await api('items.meta', { id: last.item.id, expect: last.item.revision, status: last.previous }); await refresh(); }, `${last.item.title} is back in ${last.previous}`); };
+  /** Test from the list or quick search: the item opens on its experiments grid, whose run bar starts a run. */
+  const testItem = (item: Item) => { openItem(item.id); setTestRequest({ id: item.id, at: Date.now() }); };
+  const archiveItem = (item: Item) => void undoStack.apply([item], () => ({ status: 'archived' }));
   /** Records approval of the current revision; the router then commits and pushes it to the Kiln repo. */
   const approveCurrent = async (target: ItemDetail) => {
     const evidence = target.trials.filter(t => t.revision === target.item.revision && t.status === 'completed');
@@ -251,13 +292,16 @@ export default function App() {
       return;
     }
     if ((name === 'update-installs' || name === 'approve-update-installs') && detail) {
-      // Experimental installUpdates: the Detail header's Update installs / Approve & update installs.
+      // The item header's Update installs (N) / Approve & update installs.
       if (busy) return;
       void perform(async () => { const note = await updateInstalls(detail.item, name === 'approve-update-installs'); await refresh(); setMessage(note); });
       return;
     }
     if (name === 'copy' && detail && variablesIn(detail.revision.content).length === 0) { void perform(async () => { await api('desktop.copy', { id: detail.item.id, revision: detail.item.revision }); await refresh(); }, 'Copied to clipboard'); return; }
     if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }
+    if (name.startsWith('keep:')) { const [, itemId, targetId] = name.split(':'); keeper.keep(itemId, targetId); return; }
+    // The rail's Manage… on a copy in a project folder Kiln doesn't manage: the project dialog on that folder (the root may hold colons).
+    if (name.startsWith('install-project:')) { const [, location, ...root] = name.split(':'); setDialog({ name: 'install-project', workspace: root.join(':'), location: (location || undefined) as ProjectLocation | undefined }); return; }
     setDialog({ name: name === 'copy' ? 'variables' : name, trial });
   };
   const updateAction = (restart: boolean) => void perform(async () => {
@@ -275,35 +319,35 @@ export default function App() {
   const setLocation = (provider: Provider, on: boolean, native = false) => void perform(() => updateLocation(provider, on, native), on ? `${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills folder is now managed by Kiln. Nothing was installed yet.` : `Kiln stopped managing the ${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills folder. Installed files were left in place.`);
   if (!snapshot) return <div className="startup"><span className="brand-symbol"><KilnMark /></span><h1>Kiln</h1><p>{error || 'Opening your workbench…'}</p>{error && <button className="button" onClick={() => void perform(refresh)}>Retry</button>}</div>;
   // Kiln only works on a Kiln repository connected to GitHub. Anything else lands here until one is connected.
-  if (!snapshot.repository.ready || setupOpen) return <Setup snapshot={snapshot} previous={previousLibrary.current} providers={providers} onSetLocation={updateLocation} onRefresh={refresh} onAttach={async root => { await api('desktop.attach', { root }); setSelected(''); await refresh(); setSetupOpen(true); }} onDone={async (review = false) => { await refresh(); setSection('library'); setCollection(''); setTab('recent'); setQuery(''); setFilter('all'); setInstallFilter('any'); setAdvancedFilters(emptyLibraryFilters); setSelected(''); setSetupOpen(false); if (review) setMessage('Use Select all, then choose a bulk action. You can narrow the list with filters first.'); }} />;
+  if (!snapshot.repository.ready || setupOpen) return <Setup snapshot={snapshot} previous={previousLibrary.current} providers={providers} onSetLocation={updateLocation} onRefresh={refresh} onAttach={async root => { await api('desktop.attach', { root }); setSelected(''); await refresh(); setSetupOpen(true); }} onDone={async (review = false) => { await refresh(); setStage(''); setQuery(''); setTokens([]); setSelected(''); setOpen(false); setSetupOpen(false); if (review) setMessage('Use Select all, then choose a bulk action. You can narrow the list with filters first.'); }} />;
   const live = snapshot.items.filter(i => !i.deletedAt);
-  // How many live items each item was made from, for the Sources tab and the Source filter.
+  const isHidden = (i: Item) => hidden.includes(i.status);
+  // How many live items each item was made from, for sources' Status column and `from:` suggestions.
   const madeCount = new Map<string, number>(); for (const i of live) if (i.origin) madeCount.set(i.origin.itemId, (madeCount.get(i.origin.itemId) ?? 0) + 1);
-  const nested = snapshot.collections.some(c => c.includes('/')), unfiled = live.filter(i => !i.collection && !hidden.includes(i.status)).length;
-  const inLibrary = live.filter(i => !hidden.includes(i.status)).length;
-  // Each list filter is a predicate, so a filter's menu can count items under all the *other* filters and never loses its options.
-  const inSection = (i: Item, includeSearch = true) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? hidden.includes(i.status) : section === 'trash' || !hidden.includes(i.status)) && (!includeSearch || !query.trim() || (betterSearch && !searchSet) || Boolean(searchSet?.has(i.id)));
-  const byCollection = (i: Item) => inCollection(i, collection);
-  const byStatus = (i: Item) => filter === 'all' || i.status === filter;
-  const locationsConfigured = providers.map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: NonNullable<ReturnType<typeof personalTarget>> }[];
-  // Two items with one title (the same skill name imported from different folders) show where each came from.
-  const sameTitle = titleCollisions(snapshot.items, providers[0]?.personalRoot, origins);
-  const byAdvanced = (i: Item) => matchesLibraryFilters(i, installations, advancedFilters);
-  const byInstall = (i: Item) => passesInstallFilter(installFilter, i, locationsConfigured, installations) && byAdvanced(i);
-  // `pool` feeds the tab counts: the section, search and collection narrow it; the tab, status and install filters do not.
-  const pool = snapshot.items.filter(i => inSection(i) && byCollection(i));
+  // The newest experiment on each item, for the Last test column. Built once per render from the snapshot, never per row.
+  const places = trialPlaces(jobs);
+  const lastTrial = new Map<string, Trial>(); for (const t of snapshot.trials) if (!t.deletedAt && !reviewOf(t) && (!lastTrial.has(t.itemId) || lastTrial.get(t.itemId)!.createdAt < t.createdAt)) lastTrial.set(t.itemId, t);
+  // Each filter is a predicate, so the query bar can count what a token would show under all the others.
+  const inSection = (i: Item) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i));
+  // Until the first results arrive the list stays as it was; after that the previous results stay until the next ones replace them.
+  const bySearch = (i: Item) => !searchText || !searchSet || searchSet.has(i.id);
+  const byStage = (i: Item) => section !== 'library' || inStage(i, stage, installations);
+  /** The view before search and tokens: its section, collection or stage. Suggestions count from here. */
+  const base = snapshot.items.filter(i => inSection(i) && inCollection(i, collection) && byStage(i));
+  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens, duplicateSet)).length;
   // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
-  const tabbed = pool.filter(i => inTab(i, tab) && byStatus(i) && byInstall(i));
-  // With betterSearch, a search orders by relevance unless this view has a chosen order; a pick made during the search lasts until it is cleared.
-  const searchingNow = betterSearch && Boolean(query.trim()), relevance = searchingNow && (searchSort ? searchSort === 'relevance' : !sort);
-  const order = (searchingNow && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
-  const matching = relevance && searchIds ? rankItems(tabbed, searchIds, pinSources) : arrangeItems(tabbed, order, snapshot.usage, pinSources);
-  const bulkItems = matching.filter(item => bulkIds.includes(item.id));
-  /** What right-click and the single-key shortcuts act on: the picked rows when there are several, otherwise the focused row. */
-  const chosen = bulkItems.length > 1 ? bulkItems : matching.filter(i => i.id === selected);
-  /** Plain click focuses one row. Ctrl-click toggles a row in the selection; Shift-click extends it from the focused row, like a file manager. */
+  // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
+  const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
+  const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
+  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet));
+  const matching = relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, snapshot.usage, pinSources);
+  const groups = groupItems(matching, group);
+  /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
+  const shown = groups.flatMap(g => g.items);
+  const bulkItems = shown.filter(item => bulkIds.includes(item.id));
+  /** Plain click opens the item. Ctrl-click toggles a row in the selection; Shift-click extends it from the focused row, like a file manager. */
   const clickRow = (event: MouseEvent, item: Item) => {
-    const ids = matching.map(i => i.id);
+    const ids = shown.map(i => i.id);
     if (event.shiftKey && ids.includes(selected)) { const [a, b] = [ids.indexOf(selected), ids.indexOf(item.id)]; setBulkIds(ids.slice(Math.min(a, b), Math.max(a, b) + 1)); return; }
     if (event.ctrlKey || event.metaKey) {
       const base = bulkItems.length > 1 ? bulkIds : ids.includes(selected) ? [selected] : [];
@@ -311,75 +355,73 @@ export default function App() {
       if (next.length <= 1) { setSelected(next[0] ?? ''); setBulkIds([]); } else { setBulkIds(next); if (!ids.includes(selected)) setSelected(item.id); }
       return;
     }
-    select(item.id);
+    if (bulkItems.length > 1) { select(item.id); return; }
+    openItem(item.id);
   };
-  // Tabs remain reachable while searching inside another view.
-  const tabPool = snapshot.items.filter(i => inSection(i, false) && byCollection(i));
-  const tabCounts: Record<string, number> = { recent: tabPool.length, favourites: tabPool.filter(i => i.favourite).length, ...Object.fromEntries(KINDS.map(k => [k, tabPool.filter(i => i.kind === k).length])) };
-  // Filter menus: every value present in this tab is offered; its count is what choosing it would show under the other filters.
-  const facet = snapshot.items.filter(i => inSection(i) && inTab(i, tab));
-  const facetOptions = (key: (i: Item) => string, narrowed: Item[], label: (v: string) => string, hint?: (v: string) => string): FilterOption[] => [...new Set(facet.map(key))].sort((a, b) => a.localeCompare(b)).map(v => ({ value: v, label: label(v), count: narrowed.filter(i => key(i) === v).length, hint: hint?.(v) }));
-  const statusOrder = ['captured', 'testing', 'approved', 'rejected', 'archived'];
-  const statusOptions = facetOptions(i => i.status, facet.filter(i => byCollection(i) && byInstall(i)), v => v[0].toUpperCase() + v.slice(1), v => statusHelp[v]).sort((a, b) => statusOrder.indexOf(a.value) - statusOrder.indexOf(b.value));
-  const installFacet = facet.filter(i => byCollection(i) && byStatus(i) && byAdvanced(i));
-  const installOptions: FilterOption[] | null = facet.some(i => ['skill', 'agent'].includes(i.kind)) ? [{ value: 'installed', label: 'Installed' }, { value: 'none', label: 'Not installed' }].map(o => ({ ...o, count: installFacet.filter(i => passesInstallFilter(o.value as InstallFilter, i, locationsConfigured, installations)).length })) : null;
-  const advancedFacet = facet.filter(i => byCollection(i) && byStatus(i) && passesInstallFilter(installFilter, i, locationsConfigured, installations));
-  const advancedOptions = (key: LibraryFilterKey): FilterOption[] => { const values = key === 'tag' ? [...new Set(facet.flatMap(i => i.tags))].sort((a, b) => a.localeCompare(b)).map(tag => ({ value: tag, label: tag })) : key === 'source' ? snapshot.items.filter(i => i.kind === 'source' && madeCount.has(i.id)).map(i => ({ value: i.id, label: i.title })) : filterDimensions.find(d => d.key === key)!.options; return values.map(o => ({ ...o, count: advancedFacet.filter(i => matchesLibraryFilters(i, installations, { ...advancedFilters, [key]: o.value })).length })); };
-  const clearFilters = (clearSearch = false) => { setCollection(''); setQuery(clearSearch ? '' : query); setFilter('all'); setInstallFilter('any'); setAdvancedFilters(emptyLibraryFilters); };
-  const filtering = Boolean(query) || Boolean(collection) || filter !== 'all' || installFilter !== 'any' || activeFilterCount(advancedFilters) > 0;
-  const sectionName = (collection === UNFILED ? 'Unfiled' : collection.replaceAll('/', ' / ')) || navItems.find(n => n.id === section)?.label || ({ settings: 'Settings', archive: 'Archive', trash: 'Trash' } as Record<string, string>)[section] || 'Library';
-  const libraryView = ['library', 'archive', 'trash'].includes(section);
-  const locations = providers.map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) }));
-  const configured = locations.filter(l => l.target);
+  const selectAll = () => { if (shown.length > 1) { setBulkIds(shown.map(i => i.id)); if (!shown.some(i => i.id === selected)) setSelected(shown[0].id); } };
+  const sourceTitle = (id: string) => snapshot.items.find(i => i.id === id)?.title;
+  const stageName = stages.find(s => s.id === stage)?.label;
+  const sectionName = (collection === UNFILED ? 'Unfiled' : collection.replaceAll('/', ' / ')) || (section === 'library' && stageName) || sectionLabel[section] || 'Library';
+  const locations: Location[] = providers.map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) })).filter((l): l is Location => Boolean(l.target));
+  const configured = locations;
+  // Two items with one title (the same skill name imported from different folders) show where each came from.
+  const sameTitle = titleCollisions(snapshot.items, providers[0]?.personalRoot, origins);
   const openTrialItem = (itemId: string) => {
     const item = snapshot.items.find(i => i.id === itemId);
     revealItem(itemId, item?.deletedAt ? 'trash' : item?.status === 'archived' || item?.status === 'rejected' ? 'archive' : 'library');
   };
+  /** "Open result" on a finished run (runs list, toast, desktop notification): the item on the view that holds it, or the chat. */
+  const openRun = (job: RunRef) => {
+    const target = resultTarget(job);
+    const show = () => { if (target.view === 'tests') setTestRequest({ id: target.itemId, at: Date.now() }); if (target.view === 'chat') setChatOpen(true); window.dispatchEvent(new CustomEvent(OPEN_RESULT_TAB_EVENT, { detail: { kind: job.kind } })); };
+    if (snapshot.items.some(i => i.id === target.itemId)) { openTrialItem(target.itemId); show(); } else revealFresh(target.itemId, show);
+  };
   const reorderSelected = (direction: number) => { const ids = moveInOrder(matching, selected, direction, pinSources); if (ids) void perform(async () => { await api('items.reorder', { ids }); await refresh(); }); };
   /** Right-click on a picked row acts on the whole selection; on any other row it focuses that row first, as a file manager would. */
-  const openMenu = (event: MouseEvent, item: Item) => { event.preventDefault(); const many = bulkItems.length > 1 && bulkIds.includes(item.id); if (!many) select(item.id); setMenu({ x: event.clientX, y: event.clientY, items: many ? bulkItems : [item] }); };
+  const openMenu = (event: MouseEvent, item: Item) => { event.preventDefault(); const many = bulkItems.length > 1 && bulkIds.includes(item.id); if (!many) select(item.id); setMenu({ ...menuPoint(event), items: many ? bulkItems : [item] }); };
   const statusKeys: Record<string, string> = { captured: '1', testing: '2', approved: '3', rejected: '4', archived: 'A' };
   const capital = (word: string) => word[0].toUpperCase() + word.slice(1);
   const hasCopies = (item: Item) => ['skill', 'agent'].includes(item.kind) && installations.some(i => i.itemId === item.id);
   const menuEntries = (items: Item[]): MenuEntry[] => items.length === 1 ? singleEntries(items[0]) : bulkEntries(items);
   /** The same menu as for one item, with the actions that make sense for many. Each action runs over every picked item, then the selection clears. */
   const bulkEntries = (items: Item[]): MenuEntry[] => {
-    const each = (patch: (item: Item) => Record<string, unknown> | null, note: string) => keys ? () => void undoStack.apply(items, patch).then(() => setBulkIds([])) : () => void perform(async () => { for (const item of items) { const change = patch(item); if (change) await api('items.meta', { id: item.id, expect: item.revision, ...change }); } setBulkIds([]); await refresh(); }, note);
+    // One undoable action over them all, in small batches with progress (UndoStack.tsx).
+    const each = (patch: (item: Item) => Record<string, unknown> | null) => () => void undoStack.apply(items, patch).then(() => setBulkIds([]));
     const label = `${items.length} items`, allFavourite = items.every(i => i.favourite), trashed = items.some(i => i.deletedAt);
-    const entries: MenuEntry[] = [{ heading: `${label} selected` }, { label: allFavourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: each(i => i.favourite === !allFavourite ? null : { favourite: !allFavourite }, allFavourite ? `${label} removed from favourites` : `${label} added to favourites`) }];
+    const entries: MenuEntry[] = [{ heading: `${label} selected` }, { label: allFavourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: each(i => i.favourite === !allFavourite ? null : { favourite: !allFavourite }) }];
     if (!trashed) {
       entries.push('separator', { heading: 'Status' });
-      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived']) { const all = items.every(i => i.status === status); entries.push({ label: capital(status), checked: all, disabled: status === 'approved' || all, shortcut: statusKeys[status], hint: status === 'approved' ? 'Approve items one at a time; approval always names an exact revision.' : statusHelp[status], onSelect: each(i => i.status === status ? null : { status }, `${label} moved to ${status}`) }); }
+      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived'] as const) { const all = items.every(i => i.status === status); entries.push({ label: capital(statusLabel[status]), checked: all, disabled: status === 'approved' || all, shortcut: statusKeys[status], hint: status === 'approved' ? 'Approve items one at a time; approval always names an exact revision.' : statusHelp[status], onSelect: each(i => i.status === status ? null : { status }) }); }
       if (items.some(hasCopies)) entries.push('separator', { label: 'Remove local copies…', icon: <FolderX />, shortcut: 'L', hint: 'Preview and remove every installed copy of the picked skills and agents, in every configured folder. Library items stay.', onSelect: () => setBulkReview(items.map(i => i.id)) });
     }
     entries.push('separator', { label: 'Move to collection…', icon: <FolderInput />, shortcut: 'M', hint: 'File them in another collection or none. Approvals and installed copies stay.', onSelect: () => setDialog({ name: 'move-items', itemIds: items.map(i => i.id) }) }, 'separator');
-    if (trashed) entries.push({ label: 'Restore from trash', icon: <RotateCcw />, shortcut: 'R', onSelect: each(() => ({ deleted: false }), `${label} restored`) }, { label: 'Delete permanently…', icon: <Trash2 />, danger: true, shortcut: 'D', onSelect: () => setDialog({ name: 'purge-many', itemIds: items.map(i => i.id) }) });
-    else entries.push({ label: 'Move to trash', icon: <Trash2 />, danger: true, shortcut: 'D', hint: 'Recoverable from Trash. Installed copies are untouched.', onSelect: each(() => ({ deleted: true }), `${label} moved to Trash. Restore them any time.`) });
+    if (trashed) entries.push({ label: 'Restore from trash', icon: <RotateCcw />, shortcut: 'R', onSelect: each(() => ({ deleted: false })) }, { label: 'Delete permanently…', icon: <Trash2 />, danger: true, shortcut: 'D', onSelect: () => setDialog({ name: 'purge-many', itemIds: items.map(i => i.id) }) });
+    else entries.push({ label: 'Move to trash', icon: <Trash2 />, danger: true, shortcut: 'D', hint: 'Recoverable from Trash. Installed copies are untouched.', onSelect: each(() => ({ deleted: true })) });
     return entries;
   };
+  /** One entry per skill folder the item can go into, checked where a copy is. Used by the right-click menu and the row's Install ▾. */
+  const installEntries = (item: Item): MenuEntry[] => locationsFor(item, configured).map(({ provider, target }) => { const { state } = skillState(item, target, installations); return { label: `${locationName(item, provider)}${state === 'off' || state === 'on' ? '' : ` · ${state}`}`, icon: <Download />, checked: state !== 'off', hint: state === 'off' ? 'Install the approved version here' : 'Manage or remove this copy', onSelect: () => toggleInstall(item.id, provider.id) }; });
+  const installMenu = (item: Item): MenuEntry[] => { const entries = installEntries(item); return entries.length ? [{ heading: `Install ${item.title} into` }, ...entries] : [{ label: 'Set up skill folders…', icon: <Settings />, hint: 'Choose the Agents and Claude folders in Settings', onSelect: () => navigate('settings') }]; };
   const singleEntries = (item: Item): MenuEntry[] => {
-    const meta = (patch: Record<string, unknown>, note: string) => keys ? () => void undoStack.apply([item], () => patch) : () => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...patch }); await refresh(); }, note);
+    const meta = (patch: Record<string, unknown>) => () => void undoStack.apply([item], () => patch);
     const entries: MenuEntry[] = [
-      { label: 'Open', icon: <ArrowRight />, shortcut: 'O', onSelect: () => select(item.id) },
+      { label: 'Open', icon: <ArrowRight />, shortcut: 'O', onSelect: () => openItem(item.id) },
       // A source is the material an analysis read, not something to paste.
       ...(item.kind === 'source' ? [] : [{ label: 'Copy', icon: <Copy />, shortcut: 'C', onSelect: () => void perform(() => copyItem(item)) }]),
-      { label: item.favourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: meta({ favourite: !item.favourite }, item.favourite ? 'Removed from favourites' : 'Added to favourites') },
+      { label: item.favourite ? 'Remove from favourites' : 'Add to favourites', icon: <Star />, shortcut: 'F', onSelect: meta({ favourite: !item.favourite }) },
       { label: item.kind === 'source' ? 'Open original' : item.kind === 'link' ? 'Open link in browser' : ['file', 'image', 'reference'].includes(item.kind) ? 'Reveal stored file' : 'Open stored file', icon: <ExternalLink />, shortcut: 'E', onSelect: () => void perform(() => api('desktop.openItem', { id: item.id })) },
     ];
     if (item.kind === 'source') entries.push({ label: 'Show what was made from it', icon: <Layers3 />, shortcut: 'W', hint: 'The library filtered to items made from this source, wherever they are filed.', disabled: !madeCount.get(item.id), onSelect: () => showMadeFrom(item.id) });
     else if (item.origin && snapshot.items.some(i => i.id === item.origin!.itemId && i.kind === 'source')) entries.push({ label: 'Open its source', icon: <ArrowRight />, shortcut: 'S', onSelect: () => revealItem(item.origin!.itemId) });
     if (!item.deletedAt) {
       entries.push('separator', { heading: 'Status' });
-      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived']) entries.push({ label: status[0].toUpperCase() + status.slice(1), checked: item.status === status, disabled: status === 'approved' || item.status === status, shortcut: statusKeys[status], hint: status === 'approved' ? 'Use Approve on the item; approval always names an exact revision.' : status === 'archived' ? `${statusHelp[status]} Swipe the item sideways to archive it too.` : statusHelp[status], onSelect: status === 'archived' ? () => archiveItem(item) : meta({ status }, `Moved to ${status}`) });
-      if (['skill', 'agent'].includes(item.kind) && configured.length) {
-        entries.push('separator', { heading: 'Installed for' });
-        for (const { provider, target } of configured.filter(l => item.kind === 'agent' ? l.provider.id === item.agent?.provider : l.provider.id !== 'copilot') as { provider: Provider; target: NonNullable<ReturnType<typeof personalTarget>> }[]) { const { state } = skillState(item, target, installations); entries.push({ label: `${item.kind === 'agent' ? provider.label : primarySkillLabel(provider.id)}${state === 'off' || state === 'on' ? '' : ` · ${state}`}`, icon: <Download />, checked: state !== 'off', onSelect: () => toggleInstall(item.id, provider.id) }); }
-      }
+      for (const status of ['captured', 'testing', 'approved', 'rejected', 'archived'] as const) entries.push({ label: capital(statusLabel[status]), checked: item.status === status, disabled: status === 'approved' || item.status === status, shortcut: statusKeys[status], hint: status === 'approved' ? 'Use Approve on the item; approval always names an exact revision.' : status === 'archived' ? `${statusHelp[status]} Swipe the item sideways to archive it too.` : statusHelp[status], onSelect: status === 'archived' ? () => archiveItem(item) : meta({ status }) });
+      if (['skill', 'agent'].includes(item.kind) && configured.length) entries.push('separator', { heading: 'Installed for' }, ...installEntries(item));
       if (hasCopies(item)) entries.push('separator', { label: 'Remove local copies…', icon: <FolderX />, shortcut: 'L', hint: 'Preview and remove every installed copy in every configured folder, including other providers. The library item stays.', onSelect: () => setBulkReview([item.id]) });
     }
     entries.push('separator', { label: 'Move to collection…', icon: <FolderInput />, shortcut: 'M', hint: 'File it in another collection or none. Approval and installed copies stay.', onSelect: () => setDialog({ name: 'move-items', itemIds: [item.id] }) }, 'separator');
-    if (item.deletedAt) entries.push({ label: 'Restore from trash', icon: <RotateCcw />, shortcut: 'R', onSelect: meta({ deleted: false }, 'Item restored') }, { label: 'Delete permanently…', icon: <Trash2 />, danger: true, shortcut: 'D', onSelect: () => setDialog({ name: 'purge', itemId: item.id }) });
-    else entries.push({ label: 'Move to trash', icon: <Trash2 />, danger: true, shortcut: 'D', hint: 'Recoverable from Trash. Installed copies are untouched.', onSelect: meta({ deleted: true }, 'Moved to Trash. Restore it any time.') });
+    if (item.deletedAt) entries.push({ label: 'Restore from trash', icon: <RotateCcw />, shortcut: 'R', onSelect: meta({ deleted: false }) }, { label: 'Delete permanently…', icon: <Trash2 />, danger: true, shortcut: 'D', onSelect: () => setDialog({ name: 'purge', itemId: item.id }) });
+    else entries.push({ label: 'Move to trash', icon: <Trash2 />, danger: true, shortcut: 'D', hint: 'Recoverable from Trash. Installed copies are untouched.', onSelect: meta({ deleted: true }) });
     return entries;
   };
   /** Right-click menu for a sidebar collection. Deleting asks whether the items stay in the library or go to the trash. */
@@ -394,52 +436,102 @@ export default function App() {
       { label: 'Delete collection…', icon: <Trash2 />, danger: true, shortcut: 'D', hint: inside ? `Asks whether its ${inside} item${inside === 1 ? '' : 's'} stay in the library or move to the trash.` : 'Removes this empty collection from the sidebar.', onSelect: () => setDialog({ name: 'delete-collection', collection: name }) },
     ];
   };
-  const showDetail = Boolean(detail && detail.item.id === selected && matching.some(i => i.id === selected));
   /** Approved and pushed: the last publish job for this item finished, or there is none and nothing waits to be pushed. */
   const published = (item: Item) => { if (item.status !== 'approved') return false; const job = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision); return job ? job.status === 'done' : snapshot.git.ahead === 0; };
   const purgeTarget = dialog?.name === 'purge' ? snapshot.items.find(i => i.id === dialog.itemId) : undefined;
   const installTarget = dialog?.name === 'skill-install' ? { item: snapshot.items.find(i => i.id === dialog.itemId), provider: providers.find(p => p.id === dialog.provider), target: snapshot.targets.find(t => t.id === dialog.targetId) } : null;
-  // The chat is about the open item. A video, or an entry distilled from one, brings the transcript along; the video is recognised by the tags prepareVideo adds.
+  // The chat is about the focused item. A video, or an entry distilled from one, brings the transcript along; the video is recognised by the tags prepareVideo adds.
   // Sources carry the material behind their entries; a video captured before sources existed counts as one too.
   const isSource = (i: Item | undefined) => Boolean(i && (i.kind === 'source' || (i.kind === 'link' && i.tags.includes('youtube'))));
-  const openItem = libraryView ? snapshot.items.find(i => i.id === selected && !i.deletedAt) ?? null : null;
-  const chatDocked = experimentOn(snapshot.settings, 'chatHistory');
-  askAgentRef.current = ({ itemId, message }) => { if (openItem?.id !== itemId) revealItem(itemId); setChatSeed({ itemId, text: message, nonce: Date.now() }); setChatOpen(true); };
-  const sourceBehind = !openItem ? null : isSource(openItem) ? openItem : (() => { const origin = openItem.origin ? snapshot.items.find(i => i.id === openItem.origin!.itemId) : undefined; return isSource(origin) ? origin! : null; })();
+  const chatItem = libraryView ? snapshot.items.find(i => i.id === selected && !i.deletedAt) ?? null : null;
+  askAgentRef.current = ({ itemId, message }) => { if (chatItem?.id !== itemId) revealItem(itemId); setChatSeed({ itemId, text: message, nonce: Date.now() }); setChatOpen(true); };
+  const sourceBehind = !chatItem ? null : isSource(chatItem) ? chatItem : (() => { const origin = chatItem.origin ? snapshot.items.find(i => i.id === chatItem.origin!.itemId) : undefined; return isSource(origin) ? origin! : null; })();
+  // The open item's page. It stays open when a filter hides it; the bar then says so instead of a position.
+  const itemView = libraryView && itemOpen && snapshot.items.some(i => i.id === selected);
+  const position = shown.findIndex(i => i.id === selected) + 1;
+  const step = (direction: number) => { const next = shown[position - 1 + direction]; if (position > 0 && next) setSelected(next.id); };
+  keys.current = { itemOpen: itemView, step };
+  const filtering = Boolean(searchText) || tokens.length > 0;
+  const rescue = !matching.length && filtering ? narrowest(tokens, searchText, countFor) : null;
+  const clearQuery = () => { setQuery(''); setTokens([]); };
+  const emptyState = <div className="list-empty"><Search size={22} />
+    {filtering ? <><p>{`Nothing matches ${tokens.length + (searchText ? 1 : 0) > 1 ? `all ${tokens.length + (searchText ? 1 : 0)} filters` : 'this filter'}${collection || stage ? ` in ${sectionName}` : ''}.`}</p>
+      {rescue && rescue.count > 0 && <p className="muted small">The narrowest is <span className="q-inline">{rescue.token ? `${rescue.token.facet}: ${tokenLabel(rescue.token, sourceTitle)}` : `“${searchText}”`}</span>. Without it you would see {rescue.count} item{rescue.count === 1 ? '' : 's'}.</p>}
+      <div className="wrap-actions center">{rescue && rescue.count > 0 && <button className="button" onClick={() => rescue.token ? setTokens(tokens.filter(t => !sameToken(t, rescue.token!))) : setQuery('')}>Remove it</button>}<button className="text-button" onClick={clearQuery}>Clear search and filters <X size={13} /></button></div></>
+      : <><p>{section === 'trash' ? 'The trash is empty.' : section === 'archive' ? 'Nothing archived or rejected.' : stage ? `Nothing in ${stageName} right now.` : collection ? 'Nothing in this collection yet.' : 'Nothing here yet.'}</p>{section === 'library' && <button className="text-button" onClick={() => startCapture()}>Capture your first item <Plus size={13} /></button>}</>}
+    {!live.length && section === 'library' && <div className="welcome-import"><h2>Already have skills?</h2><p>Bring them in as drafts, then approve the ones you want in your Kiln repository. Nothing is moved where it lives now.</p><div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'import-local' })}><Download size={15} />Import my installed skills</button><button className="button" onClick={() => setDialog({ name: 'import-repo' })}><Upload size={15} />Import from a skills repository…</button></div></div>}
+  </div>;
+  /** What a single-key shortcut does on a focused row: the matching entry of its menu, or of the selection's. */
+  const rowShortcut = (event: globalThis.KeyboardEvent, id: string) => { const target = bulkItems.length > 1 ? bulkItems : shown.filter(i => i.id === id); const hit = target.length > 0 && !menu ? shortcutEntry(menuEntries(target), event) : null; return hit ? () => { if (id !== selected && bulkItems.length < 2) select(id); hit.onSelect?.(); } : null; };
+  /** Shift with the list keys: `ids` picked, `anchor` the open row they extend from. */
+  const pickRange = (ids: string[], anchor: string) => { setSelected(anchor); setBulkIds(ids); };
+  // Duplicates (Consolidate.tsx): how many other copies a row has, a short name for a copy, and the two actions' undo.
+  const groupSize = new Map(snapshot.duplicates.flatMap(g => g.ids.map(id => [id, g.ids.length] as const)));
+  const copiesOf = (item: Item) => item.deletedAt ? undefined : (groupSize.get(item.id) ?? 1) - 1 || undefined;
+  const copyName = (item: Item) => sameTitle.get(item.id)?.label ?? (item.collection ? item.collection.replaceAll('/', ' / ') : 'Unfiled');
+  const consolidated = (result: { kept: Item; merged: string[]; undo: Record<string, unknown> }) => {
+    const count = result.merged.length + 1;
+    undoStack.recordRun(`Consolidated ${count} copies of “${result.kept.title}”`, async () => {
+      const undone = await api<{ restored: string[]; skipped: string[] }>('items.unconsolidate', result.undo);
+      return undone.skipped.length ? `Undone, except ${undone.skipped.length} ${undone.skipped.length === 1 ? 'copy that was' : 'copies that were'} changed since` : `Undone: the ${count} copies are separate again`;
+    });
+    // The page follows the kept item when it was opened on a copy that was merged.
+    if (selected !== result.kept.id) setSelected(result.kept.id);
+  };
+  const notDuplicates = (item: Item, others: Item[]) => void perform(async () => {
+    for (const other of others) await api('items.distinct', { ids: [item.id, other.id] });
+    await refresh();
+    undoStack.recordRun(`“${item.title}” is no longer flagged as a duplicate`, async () => { for (const other of others) await api('items.distinct', { ids: [item.id, other.id], distinct: false }); return 'Undone: flagged as a duplicate again'; });
+  });
+  const libraryPage = <section className="library-page">
+    <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
+    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} duplicates={duplicateSet} saved={savedViews}
+      sort={order} onSort={searchText ? setSearchSort : setSort} relevance={searchText ? { active: relevance, onPick: () => setSearchSort('relevance') } : undefined} searching={searching} close={Boolean(searchText) && closeMatches}
+      group={group} onGroup={setGroup} canReorder={!relevance && bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
+      onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
+    {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
+    {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
+    <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
+      locations={configured} installations={installations} approvals={snapshot.approvals} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
+      onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
+      canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
+      scroll={listScroll} empty={emptyState}
+      hint={section === 'trash' ? 'Right-click to restore or delete permanently. Ctrl-click picks several items at once.' : section === 'archive' ? 'Right-click to change status or move to trash. Ctrl-click picks several items at once.' : 'Click opens an item. Right-click for actions and their shortcuts. Ctrl-click or Shift-click picks several items at once. Swipe sideways to archive. Press ? for every shortcut.'} />
+  </section>;
+  const itemPage = itemView && <div className="item-view">
+    <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
+      : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
+  </div>;
+  const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
   return <div className="app-shell">
-    <aside className="sidebar" style={sidebar.style}><div className="brand-row"><button className="brand" onClick={() => navigate('library')}><span className="brand-symbol"><KilnMark /></span><span>Kiln</span></button><button className="icon-button" aria-label="Toggle theme" title="Switch between light and dark" onClick={toggleTheme}>{(theme ?? snapshot.settings.theme) === 'dark' ? <Sun size={15} /> : <Moon size={15} />}</button></div><button className="quick-search" onClick={() => void api('desktop.palette')}><Search size={15} /><span>Quick search</span><kbd>Ctrl K</kbd></button>
-      <div className="sidebar-label">WORKSPACE</div><nav aria-label="Main navigation">{navItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigate(id)} className={`nav-item ${section === id && !collection ? 'active' : ''}`}><Icon size={17} /><span>{label}</span>{id === 'machines' && !machinesEnabled && <small className="nav-soon">Soon</small>}{id === 'library' && inLibrary > 0 && <span className="nav-count" aria-hidden="true" title={`${inLibrary} items in the library. Archived, rejected and trashed items are not counted.`}>{inLibrary}</span>}</button>)}</nav>
-      <div className="sidebar-label collection-label" {...collectionDrag.top}>COLLECTIONS<button className="icon-button" aria-label="New collection" title="New collection; drop a collection here to move it to the top level" onClick={() => newCollection()}><Plus size={13} /></button></div>{snapshot.collections.filter(c => !ancestorsOf(c).some(a => collapsed.includes(a))).map(c => { const parent = snapshot.collections.some(n => n.startsWith(c + '/')), open = !collapsed.includes(c); return <div className="collection-node" key={c} style={{ paddingLeft: depthOf(c) * 14 }} {...itemDrag.target(c, collectionDrag.row(c, renamingCollection !== c))}>{nested && (parent ? <button className="collection-toggle" aria-label={`${open ? 'Collapse' : 'Expand'} ${c}`} aria-expanded={open} onClick={() => toggleCollapsed(c)}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button> : <span className="collection-toggle" aria-hidden="true" />)}{renamingCollection === c ? <div className="nav-item collection-rename"><Folder size={16} /><CollectionNameInput name={c} onRename={to => renameCollection(c, to)} onDone={() => setRenamingCollection(null)} onError={setError} /></div> : <button className={`nav-item ${collection === c && libraryView ? 'active' : ''}`} onClick={() => openCollection(c)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); setRenamingCollection(c); } }} onContextMenu={event => { event.preventDefault(); setCollectionMenu({ x: event.clientX, y: event.clientY, name: c }); }} title={parent ? `Show “${c}” and its subfolders in the library` : `Show only “${c}” in the library`}><Folder size={16} /><span>{leafOf(c)}</span><small>{live.filter(i => isWithin(i.collection, c) && !hidden.includes(i.status)).length}</small></button>}</div>; })}{(unfiled > 0 || collection === UNFILED || itemDrag.active) && <button className={`nav-item ${collection === UNFILED && libraryView ? 'active' : ''}`} {...itemDrag.target('')} onClick={() => openCollection(UNFILED)} title="Items outside every collection. They also show in the whole library."><Inbox size={16} /><span>Unfiled</span><small>{unfiled || ''}</small></button>}<button className={`nav-item ${section === 'archive' ? 'active' : ''}`} onClick={() => navigate('archive')}><Archive size={16} /><span>Archive</span><small aria-hidden="true">{live.filter(i => hidden.includes(i.status)).length || ''}</small></button><button className={`nav-item ${section === 'trash' ? 'active' : ''}`} onClick={() => navigate('trash')}><Trash2 size={16} /><span>Trash</span><small aria-hidden="true">{snapshot.items.filter(i => i.deletedAt).length || ''}</small></button>
-      <div className="sidebar-bottom"><button className={`nav-item ${section === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={17} /><span>Settings & repository</span></button><div className="sidebar-foot"><span title={update?.packaged === false ? 'Running from source' : 'Installed version'}>v{update?.current ?? '…'}</span><UpdateAction update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} compact /></div></div>
-    </aside><ResizeHandle panel={sidebar} label="Resize sidebar" />
-    <main className="main-workspace"><header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><b>{sectionName}</b></div><div className="topbar-right">{experimentOn(snapshot.settings, 'runNotifications') ? <RunsButton jobs={jobs} items={snapshot.items} onOpen={(itemId, kind) => { openTrialItem(itemId); if (kind === 'chat') setChatOpen(true); }} /> : jobs.some(j => j.status === 'running') && (() => { const running = jobs.filter(j => j.status === 'running'); return <button className="agent-running" title={`${running.map(j => snapshot.items.find(i => i.id === j.itemId)?.title ?? j.kind).join(', ')} · click to open`} onClick={() => running[0].itemId ? openTrialItem(running[0].itemId) : setChatOpen(true)}><Loader2 className="spin" size={13} />{[...new Set(running.map(j => providerName[j.provider]))].join(' & ')} working{running.length > 1 ? ` · ${running.length}` : ''}</button>; })()}{busy && <Loader2 className="spin" size={15} />}{experimentOn(snapshot.settings, 'autoSync') ? <SyncIndicator snapshot={snapshot} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onSettings={() => setSection('settings')} /> : <span className="git-indicator"><span className={`live-dot ${snapshot.git.attached ? '' : 'neutral'}`} />{snapshot.git.attached ? snapshot.git.branch || 'Git attached' : 'Local library'}</span>}<button className="button primary" onClick={() => setDialog({ name: 'capture' })}><Plus size={16} />Capture <kbd>Ctrl N</kbd></button><button type="button" className={`chat-toggle ${chatOpen && openItem ? 'open' : ''}`} aria-label="Ask the agent" aria-pressed={chatOpen && Boolean(openItem)} disabled={!openItem} title={openItem ? `Ask the agent about “${openItem.title}”` : 'Open an item to ask the agent about it'} onClick={() => setChatOpen(open => !open)}><MessageSquare size={16} />{jobs.some(j => j.kind === 'chat' && j.status === 'running') && <span className="live-dot" aria-hidden="true" />}</button></div></header>
-      {error && <div className="global-error" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={17} /></button></div>}
-      {agentSyncError && <p role="alert" className="error-box">{agentSyncError}</p>}
-      {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
-      {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? <div className="library-layout"><section className="library-list" style={{ ...skillList.style, maxWidth: 'calc(100% - 380px)' }}><div className="list-heading"><div><h2>{sectionName} <span>{matching.length}</span></h2></div><span className="inline">{matching.length > 1 && <button className="button" onClick={() => { setBulkIds(matching.map(i => i.id)); setSelected(matching[0].id); }}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div><div className="list-controls">
-        <LibraryTabs tab={tab} counts={tabCounts} onChange={setTab} />
-        <LibraryTools query={query} onQuery={setQuery} onSearchDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); } if (e.key === 'ArrowDown' && matching.length) { e.preventDefault(); select(matching[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); } }} status={filter} statuses={statusOptions} onStatus={setFilter} install={installFilter} installOptions={installOptions} onInstall={setInstallFilter} advanced={advancedFilters} onAdvanced={setAdvancedFilters} advancedOptions={advancedOptions} onClear={clearFilters} shown={matching.length} chosen={bulkItems.length} onClearChosen={() => setBulkIds([])} sort={order} onSort={searchingNow ? next => setSearchSort(next) : setSort} relevance={searchingNow ? { active: relevance, onPick: () => setSearchSort('relevance') } : undefined} searching={searching} closeMatches={closeMatches} canReorder={!relevance && bulkItems.length < 2 && order.key === 'order'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]} />
-        <p className="muted small lib-hint">{section === 'trash' ? 'Right-click to restore or delete permanently. Ctrl-click picks several items at once.' : section === 'archive' ? 'Right-click to change status or move to trash. Ctrl-click picks several items at once.' : 'Right-click for actions and their shortcuts. Ctrl-click or Shift-click picks several items at once. Swipe sideways to archive.'}</p></div>
-        {tab === 'skill' && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
-        <div className="item-list" {...listScroll} onKeyDown={e => { if (keys && listKeys(e, { matching, selected, picked: bulkItems.length, menuOpen: Boolean(menu), select, setSelected, setBulkIds, hasShortcut: event => chosen.length > 0 && Boolean(shortcutEntry(menuEntries(chosen), event)) })) return; if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); if (matching.length > 1) { setBulkIds(matching.map(item => item.id)); if (!matching.some(i => i.id === selected)) setSelected(matching[0].id); } return; } if (menu || !(e.target instanceof HTMLElement) || !e.target.classList.contains('item-card')) return; if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') { const hit = chosen.length > 0 && shortcutEntry(menuEntries(chosen), e.nativeEvent); if (hit) { e.preventDefault(); hit.onSelect?.(); } return; } const index = matching.findIndex(i => i.id === selected); const next = matching[index + (e.key === 'ArrowDown' ? 1 : -1)]; if (!next) return; e.preventDefault(); select(next.id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }}>{matching.length > 0 && <RowHead tab={tab} sort={relevance ? null : order} onSort={key => searchingNow ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))} />}{matching.map(item => <SwipeToArchive key={item.id} enabled={bulkItems.length < 2 && !item.deletedAt && item.status !== 'archived'} label="Archive" onArchive={() => archiveItem(item)}><button className={`item-card lib-row cols-${columns(tab).length} ${selected === item.id ? 'selected' : ''} ${bulkItems.length > 1 && bulkIds.includes(item.id) ? 'picked' : ''}`} aria-pressed={bulkItems.length > 1 ? bulkIds.includes(item.id) : undefined} {...itemDrag.source(item, bulkItems.length < 2 && !item.deletedAt && item.status !== 'archived', bulkItems)} onClick={event => clickRow(event, item)} onContextMenu={event => openMenu(event, item)}><ItemRow item={item} tab={tab} collectionShown={Boolean(collection)} locations={locationsConfigured} installations={installations} published={published(item)} from={sameTitle.get(item.id)} made={madeCount.get(item.id)} /></button></SwipeToArchive>)}{!matching.length && <div className="list-empty"><Search size={22} /><p>{filtering ? 'No items match these filters.' : section === 'trash' ? 'The trash is empty.' : section === 'archive' ? 'Nothing archived or rejected.' : 'Nothing here yet.'}</p>{filtering ? <button className="text-button" onClick={() => clearFilters(true)}>Clear search and filters <X size={13} /></button> : section !== 'trash' && section !== 'archive' && <button className="text-button" onClick={() => setDialog({ name: 'capture' })}>Capture your first item <Plus size={13} /></button>}{!live.length && section === 'library' && <div className="welcome-import"><h2>Already have skills?</h2><p>Bring them in as drafts, then approve the ones you want in your Kiln repository. Nothing is moved where it lives now.</p><div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'import-local' })}><Download size={15} />Import my installed skills</button><button className="button" onClick={() => setDialog({ name: 'import-repo' })}><Upload size={15} />Import from a skills repository…</button></div></div>}</div>}</div>
-      </section><ResizeHandle panel={skillList} label="Resize skill list" />{bulkItems.length > 1 ? <div className="detail-empty selection-summary" aria-label={`${bulkItems.length} items selected`}><p><b>{bulkItems.length} items selected</b></p><small>{Object.entries(bulkItems.reduce<Record<string, number>>((acc, i) => ({ ...acc, [i.kind]: (acc[i.kind] ?? 0) + 1 }), {})).map(([kind, n]) => `${n} ${kind}${n === 1 ? '' : 's'}`).join(' · ')}</small><small>Ctrl-click adds or removes · Shift-click selects a range</small><div className="wrap-actions">{bulkEntries(bulkItems).filter((entry): entry is Extract<MenuEntry, { label: string }> => typeof entry === 'object' && 'label' in entry && ['Move to trash', 'Restore from trash', 'Delete permanently…', 'Remove local copies…', 'Archived'].includes(entry.label)).map(entry => <button key={entry.label} className={`button ${entry.danger ? 'danger-text' : ''}`} disabled={busy || entry.disabled} onClick={entry.onSelect}>{entry.label}</button>)}<button className="button" onClick={() => setBulkIds([])}>Clear selection</button></div><small>Moving to trash keeps installed copies. Remove local copies previews the files first.</small></div> : showDetail && detail ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={name => { navigate('library'); chooseCollection(name); }} onMadeFrom={showMadeFrom} /> : <div className="detail-empty" aria-label="No item selected"><p>{matching.length ? 'Select an item to see its content, history, trials and installs.' : live.length ? 'Nothing matches here.' : 'Capture or import something to get started.'}</p><small>{keys ? '↑ ↓ move · Enter opens it and goes to its actions · ? shows every shortcut' : '↑ ↓ move · Enter or click opens · right-click for actions'}</small></div>}{chatDocked && chatOpen && openItem && <ChatDock jobs={jobs} items={snapshot.items} item={openItem} source={sourceBehind} provider={snapshot.settings.agentProvider} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} initialMessage={chatSeed?.itemId === openItem.id ? chatSeed : undefined} refresh={refresh} />}</div> : <div className="page-scroll">
-        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && machinesEnabled && <button className="button primary" onClick={() => setDialog({ name: 'target' })}><Plus size={16} />Enroll project folder</button>}</div>
-        {section === 'experiments' && experimentOn(snapshot.settings, 'trialLoop') && snapshot.trials.length > 0 && <ExperimentsByItem trials={snapshot.trials} items={snapshot.items} approvals={snapshot.approvals} busy={busy} onOpen={openTrialItem} onResult={t => setDialog({ name: 'result', trial: t })} onDelete={t => action('delete-trial', t)} />}
-        {section === 'experiments' && !(experimentOn(snapshot.settings, 'trialLoop') && snapshot.trials.length > 0) && <>{snapshot.trials.length ? <div className="experiments-table"><div className="table-head"><span>Resource / trial</span><span>Agent</span><span>Revision</span><span>Result</span><span /></div>{[...snapshot.trials].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(t => <div className="table-row" key={t.id}><div><button className="text-button table-title" title="Open the item this experiment tests" onClick={() => openTrialItem(t.itemId)}>{snapshot.items.find(i => i.id === t.itemId)?.title ?? t.itemId}</button><small>{t.case} case · {date(t.createdAt)}</small></div><span>{t.provider === 'manual' ? 'Manual' : providerName[t.provider]}</span><code>{shortHash(t.revision)}</code><Badge status={t.judgement ?? t.status} /><div className="wrap-actions"><button className="text-button" onClick={() => { if (t.status === 'prepared') setDialog({ name: 'result', trial: t }); else openTrialItem(t.itemId); }}>{t.status === 'prepared' ? 'Record result' : 'Open item'} <ArrowRight size={13} /></button><button className="text-button danger-text" disabled={busy} onClick={() => action('delete-trial', t)}><Trash2 size={14} />Delete experiment</button></div></div>)}</div> : <Empty icon={<FlaskConical size={30} />} title="A good prompt earns your trust." action={<button className="button" onClick={() => navigate('library')}>Choose an item to test <ArrowRight size={15} /></button>}>Start with a typical task. Add a boundary case. Record what happened.</Empty>}</>}
-        {section === 'machines' && !machinesEnabled && <MachinesSoon onSettings={() => navigate('settings')} />}
-        {section === 'machines' && machinesEnabled && <><div className="machine-banner"><div className="machine-icon"><Monitor size={30} /></div><div><h3>This machine</h3><p>Local execution · {snapshot.targets.length} enrolled environments</p><small>Personal skill folders are set up in Settings. Project folders are enrolled here.</small></div><button className="button" onClick={() => void perform(async () => { setDrift(await api('deploy.drift')); await refresh(); }, 'Installed files checked')}><RefreshCw size={15} />Check drift</button></div><div className="cards-grid">{snapshot.targets.map(t => <div className="environment-card" key={t.id}><div className="section-heading"><div className={`provider-mark ${t.provider}`}><Terminal size={20} /></div><Badge status={t.scope} /></div><h3>{t.name}</h3><p>{providerName[t.provider]} · {t.scope === 'project' ? 'project folder' : 'personal folder'}{t.profile && t.profile.toLowerCase() !== t.scope ? ` · ${t.profile}` : ''}</p><code className="path-text">{t.root}</code><div className="environment-footer"><span>{snapshot.receipts.filter(r => r.targetId === t.id && r.status === 'applied').length} install receipts</span><span>{providers.find(p => p.id === t.provider)?.available ? 'Client detected' : 'Client not on PATH'}</span></div><div className="wrap-actions"><button className="button danger-text" onClick={() => void perform(async () => { await api('targets.remove', { id: t.id, confirm: true }); await refresh(); }, 'Environment removed; installed files were left in place')}>Stop managing</button></div></div>)}</div>{!snapshot.targets.length && <Empty icon={<Monitor size={28} />} title="Choose where approved skills belong." action={<button className="button" onClick={() => navigate('settings')}>Set up skill locations</button>}>Personal skill folders for Codex, Claude Code and Copilot are one click away in Settings. Project folders can be enrolled here.</Empty>}{drift.length > 0 && <section className="settings-card"><h3>Live destination checks</h3>{drift.map(d => <div className="drift-row" key={d.id}><code className="path-text">{d.destination}</code><Badge status={d.drifted ? 'drifted' : 'current'} />{d.drifted && snapshot.items.find(i => i.id === d.itemId)?.kind === 'skill' && <button className="button" title="See which files differ and how" onClick={() => setDialog({ name: `compare:${d.itemId}:${d.targetId}` })}>Compare</button>}<small>{date(d.checkedAt)}</small></div>)}</section>}<Installations snapshot={snapshot} installations={installations} onUninstall={id => setDialog({ name: 'uninstall:' + id })} onCompare={i => setDialog({ name: `compare:${i.itemId}:${i.targetId}` })} /><div className="notice"><b>Remote environments</b><p>SSH execution and reconnect recovery are not implemented yet. This release never falls back from a remote request to this machine.</p></div><button className="button" onClick={() => void perform(async () => { const result = await api('deploy.recover'); setMessage(JSON.stringify(result)); await refresh(); })}>Recover interrupted local installs</button></>}
-        {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => { navigate('library'); select(a.itemId!); }}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
+    <div className="app-body">
+      <Rail style={sidebar.style} theme={(theme ?? snapshot.settings.theme) === 'dark' ? 'dark' : 'light'} onTheme={toggleTheme} section={section} collection={collection} stage={stage} collections={snapshot.collections} live={live} trashed={snapshot.items.filter(i => i.deletedAt).length} hidden={isHidden}
+        stageCount={s => live.filter(i => !isHidden(i) && inStage(i, s, installations)).length} collapsed={collapsed} onToggle={toggleCollapsed} drag={collectionDrag} itemDrag={itemDrag} renaming={renamingCollection} onRename={renameCollection} onRenaming={setRenamingCollection} onError={setError}
+        onNavigate={navigate} onStage={chooseStage} onCollection={openCollection} onNewCollection={() => newCollection()} onCollectionMenu={(event, name) => setCollectionMenu({ ...menuPoint(event), name })} />
+      <ResizeHandle panel={sidebar} label="Resize sidebar" />
+      <main className="main-workspace"><header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><b>{sectionName}</b></div>
+        <button type="button" className="top-search" onClick={() => void api('desktop.palette')} title="Find items and run commands (Ctrl+K)"><Search size={15} /><span>Search or run a command…</span><kbd>Ctrl K</kbd></button>
+        <div className="topbar-right"><button className="button primary" onClick={() => startCapture()}><Plus size={16} />Capture <kbd>Ctrl N</kbd></button><button type="button" className={`chat-toggle ${chatOpen && chatItem ? 'open' : ''}`} aria-label="Ask the agent" aria-pressed={chatOpen && Boolean(chatItem)} disabled={!chatItem} title={chatItem ? `Ask the agent about “${chatItem.title}”` : 'Open an item to ask the agent about it'} onClick={() => setChatOpen(open => !open)}><MessageSquare size={16} />{running && <span className="live-dot" aria-hidden="true" />}</button></div></header>
+        {error && <div className="global-error" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={17} /></button></div>}
+        {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
+        <div className="workspace-row"><div className="workspace-content">
+        {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
+        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
+        {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
+        {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
+        {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => openTrialItem(a.itemId!)}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
         {section === 'settings' && <div className="settings-grid"><RepositoryPanel root={snapshot.root} perform={perform} refresh={refresh} onSetup={() => setSetupOpen(true)} onMessage={setMessage} />
           <section className="settings-card"><div className="section-heading"><h3><Download size={18} />Skill &amp; agent locations</h3><Badge status={configured.length ? 'ready' : 'not set up'} /></div><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={setLocation} onScan={(provider, target) => setDialog({ name: 'scan', provider, targetId: target.id })} />
-            <div className="wrap-actions"><button className="button" disabled={!configured.length || !Object.keys(snapshot.installs).length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library</span></div>
+            <div className="wrap-actions"><button className="button" disabled={!configured.length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library{multiMachine ? ', plus anything marked for this machine in Machines' : ''}</span></div>
             <p className="muted small">The library records which skills you installed (workbench/installs.json). After cloning it on another machine, turn on the locations above and press the button, or run <code>workbench skills sync</code>.</p>
             {syncReport && <details open><summary>Sync result</summary><div className="file-preview-list">{syncReport.map((r, i) => <div key={i}><span>{snapshot.items.find(it => it.id === r.itemId)?.title ?? r.itemId} · {r.provider === 'codex-native' ? 'Codex-specific' : primarySkillLabel(r.provider)}</span><span className="muted">{r.result}</span></div>)}{!syncReport.length && <div><span className="muted">Nothing marked for install.</span></div>}</div></details>}
           </section>
-          <section className="settings-card"><div className="section-heading"><h3><FolderGit2 size={18} />Kiln repository</h3><Badge status={snapshot.git.ahead || (experimentOn(snapshot.settings, 'autoSync') && snapshot.git.behind) ? 'review' : 'connected'} /></div><p>Everything you approve is committed here and pushed to GitHub straight away. Drafts stay in this folder on this machine until you approve them. Search indexes, private trial inputs and install ownership live outside it.</p><code className="path-text">{snapshot.root}</code>
-            <div className="connected-repo"><Github size={18} /><div><b>{repoName(snapshot.git.remote)}</b><small>{snapshot.git.branch} · {shortHash(snapshot.git.commit)} · {experimentOn(snapshot.settings, 'autoSync') ? <SyncSummary git={snapshot.git} /> : snapshot.git.ahead ? `${snapshot.git.ahead} commit${snapshot.git.ahead === 1 ? '' : 's'} not on GitHub yet` : 'up to date with GitHub'}</small></div>{snapshot.git.ahead > 0 && <button className="button primary" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button>}</div>
+          <section className="settings-card"><div className="section-heading"><h3><FolderGit2 size={18} />Kiln repository</h3><Badge status={snapshot.git.ahead || snapshot.git.behind ? 'review' : 'connected'} /></div><p>Everything you approve is committed here and pushed to GitHub straight away. Drafts stay in this folder on this machine until you approve them. Search indexes, private trial inputs and install ownership live outside it.</p><code className="path-text">{snapshot.root}</code>
+            <div className="connected-repo"><Github size={18} /><div><b>{repoName(snapshot.git.remote)}</b><small>{snapshot.git.branch} · {shortHash(snapshot.git.commit)} · <SyncSummary git={snapshot.git} /></small></div>{snapshot.git.ahead > 0 && <button className="button primary" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button>}</div>
             {snapshot.publish.some(j => j.status === 'failed') && <div className="notice warning"><b>Some approvals did not reach GitHub</b>{snapshot.publish.filter(j => j.status === 'failed').slice(0, 5).map(j => <p key={j.id}>{j.title}: {j.error} <button className="text-button" onClick={() => void perform(async () => { await api('publish.retry', { id: j.id }); await refresh(); })}>Retry</button></p>)}</div>}
             <p className="muted small">{snapshot.git.changes.length ? `${snapshot.git.changes.length} draft file${snapshot.git.changes.length === 1 ? '' : 's'} changed only on this machine. Approving an item sends its files to GitHub.` : 'No draft changes waiting on this machine.'}</p>
-            <div className="wrap-actions"><button className="button" disabled={!snapshot.git.changes.length} onClick={() => void perform(async () => { setGitPreview(await api('git.diff')); setDialog({ name: 'git-diff' }); })}>View draft changes</button><button className="button" onClick={() => experimentOn(snapshot.settings, 'autoSync') ? requestSync('fetch') : void perform(async () => { await api('git.sync', { action: 'fetch' }); await refresh(); }, 'Fetched from GitHub')}>Fetch from GitHub</button><button className="button" onClick={() => experimentOn(snapshot.settings, 'autoSync') ? requestSync('pull') : void perform(async () => { await api('git.sync', { action: 'pull' }); await refresh(); }, 'Pulled from GitHub')}>Pull from GitHub</button><button className="button" onClick={() => experimentOn(snapshot.settings, 'autoSync') ? requestSync('merge') : void perform(async () => { setConflicts(await api('git.merge')); setDialog({ name: 'conflicts' }); await refresh(); })}>Merge from GitHub</button><button className="button" onClick={() => void perform(async () => { setConflicts(await api('git.conflicts')); setDialog({ name: 'conflicts' }); })}>Resolve conflicts</button><button className="button" onClick={() => void perform(async () => { const root = await api<string | null>('desktop.chooseDirectory'); if (root) setInventory(await api('git.inventory', { root })); })}><FolderOpen size={15} />Inspect a repository</button><button className="button" onClick={() => setSetupOpen(true)}>Connect a different repository…</button></div>
+            <div className="wrap-actions"><button className="button" disabled={!snapshot.git.changes.length} onClick={() => void perform(async () => { setGitPreview(await api('git.diff')); setDialog({ name: 'git-diff' }); })}>View draft changes</button><button className="button" onClick={() => requestSync('fetch')}>Fetch from GitHub</button><button className="button" onClick={() => requestSync('pull')}>Pull from GitHub</button><button className="button" onClick={() => requestSync('merge')}>Merge from GitHub</button><button className="button" onClick={() => void perform(async () => { setConflicts(await api('git.conflicts')); setDialog({ name: 'conflicts' }); })}>Resolve conflicts</button><button className="button" onClick={() => void perform(async () => { const root = await api<string | null>('desktop.chooseDirectory'); if (root) setInventory(await api('git.inventory', { root })); })}><FolderOpen size={15} />Inspect a repository</button><button className="button" onClick={() => setSetupOpen(true)}>Connect a different repository…</button></div>
             <details><summary>Draft paths on this machine</summary><pre>{snapshot.git.changes.join('\n') || 'None'}</pre></details></section>
           <section className="settings-card"><h3>Desktop preferences</h3><form onSubmit={event => { event.preventDefault(); const v = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { const settings = await api<Snapshot['settings']>('desktop.settings', { shortcut: v.shortcut, theme: v.theme, launchAtLogin: v.launchAtLogin === 'on', agentProvider: v.agentProvider }); setTheme(v.theme); localStorage.setItem('kiln-theme', v.theme); setSnapshot(current => current ? { ...current, settings } : current); }, 'Preferences saved'); }}><Field label="Default agent for capture, experiments and skill drafts" hint="Every run dialog still lets you pick the other one."><select name="agentProvider" defaultValue={snapshot.settings.agentProvider}>{providers.filter(p => p.id !== 'copilot').map(p => <option key={p.id} value={p.id}>{p.label}{p.available ? '' : ' · not detected'}</option>)}</select></Field><Field label="Global quick-search shortcut"><input name="shortcut" defaultValue={snapshot.settings.shortcut} required /></Field><Field label="Theme"><select name="theme" defaultValue={snapshot.settings.theme}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Follow system</option></select></Field>{platform !== 'linux' && <label className="check-row"><input name="launchAtLogin" type="checkbox" defaultChecked={snapshot.settings.launchAtLogin} /><span>Launch Kiln when I sign in</span></label>}<p className="muted small">{platform === 'darwin' ? 'Closing the window keeps Kiln in the menu bar. Use its menu or Cmd+Q to quit.' : platform === 'linux' ? 'Closing the window keeps Kiln running in the tray. Quit from the tray menu, or from File → Quit (press Alt to show the menu bar). Opening Kiln again brings the window back.' : 'Closing the window keeps Kiln in the tray. Use the tray menu to quit.'}</p><button className="button" type="submit">Save preferences</button></form></section>
           <section className="settings-card"><h3>Official agents</h3>{providers.map(p => <div className="provider-row" key={p.id}><div className={`provider-mark ${p.id}`}><Terminal size={18} /></div><div><b>{p.label}</b><small>{p.version}</small><code className="path-text">{p.executable ?? 'Not detected on PATH'}</code></div><Badge status={p.available ? 'detected' : 'unavailable'} /></div>)}<p className="muted small">Runs use each client’s own sign-in. Kiln never asks for an API key.</p><button className="button" onClick={() => void perform(async () => setProviders(await api('providers.detect')))}>Detect again</button>
@@ -449,37 +541,42 @@ export default function App() {
               <Field label="CLI commit messages" hint="Used for generated notes when running Kiln’s CLI directly. Desktop saves, approvals and installs use plain notes without invoking a model."><select aria-label="Commit message model" value={snapshot.settings.commitModel} disabled={!models?.length} onChange={e => save({ commitModel: e.target.value, commitEffort: '' })}>{snapshot.settings.commitModel && !commitChosen && <option value={snapshot.settings.commitModel}>{snapshot.settings.commitModel}</option>}{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
               <Field label="Commit message effort"><select aria-label="Commit message effort" value={snapshot.settings.commitEffort} disabled={!commitChosen} onChange={e => save({ commitEffort: e.target.value })}><option value="">Model default{commitChosen?.defaultEffort ? ` (${commitChosen.defaultEffort})` : ''}</option>{commitChosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>
             </form>; })()}</section>
-          <ExperimentsPanel settings={snapshot.settings} onChange={(id, enabled) => void perform(async () => { const settings = await api<Snapshot['settings']>('desktop.experiment', { id, enabled }); setSnapshot(current => current ? { ...current, settings } : current); })} />
           <section className="settings-card"><h3>Performance logs</h3><p>Local logs record operation timings, slow requests, window freezes, crashes, CPU and memory. Logs rotate automatically at 5 MB; one previous file is kept. No skill content or request inputs are recorded.</p><button className="button" onClick={() => void perform(() => api('desktop.openLogs'))}>Open performance logs</button></section>
           <UpdatesPanel update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} onCheck={() => void perform(async () => { await checkUpdate(true); }, 'Checked for updates')} onSource={value => void perform(async () => setUpdate(await api('desktop.updateSource', value)))} />
           <section className="settings-card"><h3>Export & recovery</h3><button className="button" onClick={() => void perform(() => api('desktop.resetAgentConsent'), 'Agent access warning will appear before the next interaction')}>Show agent access warnings again</button><p>Export content, bundled assets, revisions, and trial summaries to a readable JSON file. Private inputs, local paths, and credentials are excluded.</p><div className="wrap-actions"><button className="button" onClick={() => void perform(async () => { const result = await api<{ destination: string } | null>('desktop.export'); if (result) setMessage(`Exported to ${result.destination}`); })}><Download size={15} />Export library</button><button className="button" onClick={() => void perform(async () => { const result = await api<{ imported: number; conflicts: string[] } | null>('desktop.importBundle'); if (result) { await refresh(); setMessage(`Imported ${result.imported}; ${result.conflicts.length} diverging items retained in History.`); } })}><Upload size={15} />Restore export</button></div><p className="muted small">Imports are repeatable. Diverging revisions are retained. Imported approvals require a fresh human review.</p></section></div>}
       </div>}
-    </main>
+        </div>
+        {chatOpen && chatItem && <ChatPopover jobs={jobs} item={chatItem} source={sourceBehind} provider={snapshot.settings.agentProvider} items={snapshot.items} onRefresh={refresh} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} initialMessage={chatSeed?.itemId === chatItem.id ? chatSeed : undefined} />}
+        </div>
+      </main>
+    </div>
+    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection} />
+    <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />
+    {undoStack.toasts(message)}
     {sheet && <ShortcutSheet quickSearch={snapshot.settings.shortcut} onClose={() => setSheet(false)} />}
-    {keys ? undoStack.toasts(message) : undo ? <UndoToast key={undo.item.id} title={undo.item.title} onUndo={undoArchive} onExpire={() => setUndo(null)} /> : message && <div className="toast" role="status"><Check size={17} />{message}</div>}
-    {chatOpen && openItem && !chatDocked && <ChatPopover jobs={jobs} item={openItem} source={sourceBehind} provider={snapshot.settings.agentProvider} onClose={() => setChatOpen(false)} onOpenItem={id => { revealItem(id); }} initialMessage={chatSeed?.itemId === openItem.id ? chatSeed : undefined} />}
     {menu && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries(menu.items)} onClose={() => setMenu(null)} />}
     {collectionMenu && <ContextMenu x={collectionMenu.x} y={collectionMenu.y} entries={collectionEntries(collectionMenu.name)} onClose={() => setCollectionMenu(null)} />}
-    {dialog?.name === 'capture' && <QuickCapture seed={captureSeed} provider={snapshot.settings.agentProvider} onClose={() => { setDialog(null); setCaptureSeed(undefined); }} onDone={id => { setCaptureSeed(undefined); void completed(id); }} />}
     {dialog?.name === 'collections' && <CollectionsDialog names={snapshot.collections} items={snapshot.items} onClose={() => setDialog(null)} onDone={async moved => { await refresh(); if (moved) followCollection(moved.from, moved.to); }} onDelete={name => setDialog({ name: 'delete-collection', collection: name })} onOpen={openCollection} />}
     {dialog?.name === 'delete-collection' && dialog.collection && (() => { const name = dialog.collection; return <DeleteCollectionDialog name={name} names={snapshot.collections} items={snapshot.items} onClose={() => setDialog(null)} onDelete={(items, note) => void perform(async () => { await api('collections.delete', { name, confirm: true, items }); if (collection && isWithin(collection, name)) setCollection(''); if (items === 'trash' && itemsWithin(snapshot.items, name).some(i => i.id === selected)) setSelected(''); await completed(); }, note)} />; })()}
-    {dialog?.name === 'move-items' && dialog.itemIds && <MoveItemsDialog names={snapshot.collections} items={snapshot.items.filter(i => dialog.itemIds!.includes(i.id))} onClose={() => setDialog(null)} onDone={async (to, moved, ids) => { setDialog(null); setBulkIds([]); await refresh(); if (keys && ids) { undoStack.recordMove(snapshot.items.filter(i => dialog.itemIds!.includes(i.id)), { collection: to, moved: ids }); return; } setMessage(moved ? `Moved ${moved === 1 ? '1 item' : `${moved} items`} to ${to ? `“${to}”` : 'no collection'}` : 'Already there'); }} />}
+    {dialog?.name === 'move-items' && dialog.itemIds && <MoveItemsDialog names={snapshot.collections} items={snapshot.items.filter(i => dialog.itemIds!.includes(i.id))} onClose={() => setDialog(null)} onDone={async (to, _moved, ids = []) => { const before = snapshot.items.filter(i => dialog.itemIds!.includes(i.id)); setDialog(null); setBulkIds([]); await refresh(); undoStack.recordMove(before, { collection: to, moved: ids }); }} />}
     {detail && dialog?.name === 'variables' && <VariablesDialog detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); setMessage('Copied to clipboard'); void refresh(); }} />}
-    {detail && dialog?.name === 'trial' && <AgentTrialDialog itemId={detail.item.id} providers={providers} targets={snapshot.targets} initialWorkspace={jobs.find(j => j.itemId === detail.item.id && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} revisions={experimentOn(snapshot.settings, 'trialLoop') ? detail : undefined} knownProjects={experimentOn(snapshot.settings, 'projectInstalls')} />}
-    {detail && dialog?.name === 'manual-trial' && <TrialDialog detail={detail} providers={providers} targets={snapshot.targets} initialWorkspace={dialog.workspace} knownProjects={experimentOn(snapshot.settings, 'projectInstalls')} onClose={() => { setDialog(null); void refresh(); }} onDone={() => void completed()} />}
+    {dialog?.name === 'trial' && (dialog.itemId ?? detail?.item.id) && <AgentTrialDialog itemId={dialog.itemId ?? detail!.item.id} providers={providers} initialWorkspace={jobs.find(j => j.itemId === (dialog.itemId ?? detail?.item.id) && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} revisions={detail?.item.id === (dialog.itemId ?? detail?.item.id) ? detail ?? undefined : undefined} />}
+    {detail && dialog?.name === 'manual-trial' && <TrialDialog detail={detail} providers={providers} initialWorkspace={dialog.workspace} onClose={() => { setDialog(null); void refresh(); }} onDone={() => void completed()} />}
     {dialog?.name === 'result' && dialog.trial && <ResultDialog trial={dialog.trial} onClose={() => setDialog(null)} onDone={() => void completed()} />}
     {detail && dialog?.name === 'derive' && <CreateSkillDialog itemId={detail.item.id} title={detail.item.title} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} />}
     {detail && dialog?.name === 'deploy' && <DeployDialog detail={detail} snapshot={snapshot} onClose={() => setDialog(null)} onDone={() => void completed()} />}
-    {detail && dialog?.name === 'install-project' && experimentOn(snapshot.settings, 'projectInstalls') && <ProjectInstallDialog item={detail.item} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
-    {dialog?.name === 'target' && <TargetDialog onClose={() => setDialog(null)} onDone={() => void completed()} />}
-    {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} settings={snapshot.settings} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {detail && dialog?.name === 'install-project' && <ProjectInstallDialog item={detail.item} initial={dialog.workspace ? { root: dialog.workspace, location: dialog.location } : undefined} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {dialog?.name === 'add-project' && <ProjectInstallDialog onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} settings={snapshot.settings} reload={refresh} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'scan' && dialog.provider && (() => { const provider = providers.find(p => p.id === dialog.provider), target = snapshot.targets.find(t => t.id === dialog.targetId); return provider && target ? <ScanDialog provider={provider} target={target} onClose={() => setDialog(null)} onImported={refresh} /> : null; })()}
     {purgeTarget && <Modal title="Delete permanently?" subtitle={purgeTarget.title} onClose={() => setDialog(null)}><p>This removes the item, all its revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold it.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('items.purge', { id: purgeTarget.id, confirm: true }); if (selected === purgeTarget.id) setSelected(''); await completed(); }, 'Deleted permanently')}><Trash2 size={14} />Delete permanently</button></div></Modal>}
-    {dialog?.name === 'purge-many' && dialog.itemIds && <Modal title="Delete permanently?" subtitle={`${dialog.itemIds.length} items`} onClose={() => setDialog(null)}><p>This removes these items, all their revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold them.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => { const ids = dialog.itemIds!; void perform(async () => { for (const id of ids) await api('items.purge', { id, confirm: true }); if (ids.includes(selected)) setSelected(''); setBulkIds([]); await completed(); }, `${ids.length} items deleted permanently`); }}><Trash2 size={14} />Delete {dialog.itemIds.length} items</button></div></Modal>}
+    {dialog?.name === 'purge-many' && dialog.itemIds && <Modal title="Delete permanently?" subtitle={`${dialog.itemIds.length} items`} onClose={() => setDialog(null)}><p>This removes these items, all their revisions, approvals and experiment records from the library folder. Copies already installed in agent folders are not touched. This cannot be undone from Kiln; Git history may still hold them.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => { const ids = dialog.itemIds!; void perform(async () => { try { await undoStack.each(ids, id => api('items.purge', { id, confirm: true }), (done, total) => `Deleting ${done} of ${total}…`, 'deleted'); } finally { await refresh(); } if (ids.includes(selected)) setSelected(''); setBulkIds([]); await completed(); }, `${ids.length} items deleted permanently`); }}><Trash2 size={14} />Delete {dialog.itemIds.length} items</button></div></Modal>}
     {bulkReview && <BulkRemovalDialog itemIds={bulkReview} onClose={() => { setBulkReview(null); setBulkIds([]); }} onDone={async () => { await refresh(); setInstallations(await api<Installation[]>('deploy.installations')); }} />}
-    {dialog?.name === 'empty-trash' && <Modal title="Empty the trash?" subtitle={`${matching.length} item${matching.length === 1 ? '' : 's'} will be deleted permanently.`} onClose={() => setDialog(null)}><p>Revisions, approvals and experiment records of these items are removed from the library folder. Installed copies in agent folders stay as they are.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { for (const item of matching) await api('items.purge', { id: item.id, confirm: true }); setSelected(''); await completed(); }, 'Trash emptied')}><Trash2 size={14} />Delete {matching.length} item{matching.length === 1 ? '' : 's'}</button></div></Modal>}
+    {dialog?.name === 'empty-trash' && <Modal title="Empty the trash?" subtitle={`${matching.length} item${matching.length === 1 ? '' : 's'} will be deleted permanently.`} onClose={() => setDialog(null)}><p>Revisions, approvals and experiment records of these items are removed from the library folder. Installed copies in agent folders stay as they are.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { try { await undoStack.each(matching, item => api('items.purge', { id: item.id, confirm: true }), (done, total) => `Deleting ${done} of ${total}…`, 'deleted'); } finally { await refresh(); } setSelected(''); await completed(); }, 'Trash emptied')}><Trash2 size={14} />Delete {matching.length} item{matching.length === 1 ? '' : 's'}</button></div></Modal>}
     {dialog?.name.startsWith('rollback:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Reverse this install?" subtitle="Installed files will be checked again before rollback." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>{receipt.previousRevision ? `Restore approved revision ${shortHash(receipt.previousRevision)}.` : 'Remove the snapshot Kiln created. There was no previous file at this destination.'}</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.rollback', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Install reversed')}>Confirm rollback</button></div></Modal> : null; })()}
-    {dialog?.name.startsWith('compare:') && (() => { const [, itemId, targetId] = dialog.name.split(':'); const item = snapshot.items.find(i => i.id === itemId), installation = installations.find(i => i.itemId === itemId && i.targetId === targetId); return item ? <CompareDialog itemId={itemId} targetId={targetId} title={item.title} destination={installation?.destination ?? snapshot.receipts.find(r => r.itemId === itemId && r.targetId === targetId)?.destination ?? ''} onClose={() => setDialog(null)} keep={experimentOn(snapshot.settings, 'keepOutsideEdits') && canKeep(installation) ? { item, settings: snapshot.settings, onDone: note => { setDialog(null); setMessage(note); void refresh(); } } : undefined} /> : null; })()}
+    {dialog?.name.startsWith('compare:') && (() => { const [, itemId, targetId] = dialog.name.split(':'); const item = snapshot.items.find(i => i.id === itemId), installation = installations.find(i => i.itemId === itemId && i.targetId === targetId); return item ? <CompareDialog itemId={itemId} targetId={targetId} title={item.title} destination={installation?.destination ?? snapshot.receipts.find(r => r.itemId === itemId && r.targetId === targetId)?.destination ?? ''} onClose={() => setDialog(null)} onKeep={canKeep(installation) ? () => { setDialog(null); keeper.keep(itemId, targetId); } : undefined} /> : null; })()}
+    {keeper.dialog}
+    {consolidating && <ConsolidateDialog group={consolidating} snapshot={snapshot} installations={installations} where={copyName} perform={perform} refresh={refresh} onMessage={setMessage} onClose={() => setConsolidating(null)} onDone={consolidated} />}
     {dialog?.name.startsWith('uninstall:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Remove this skill?" subtitle="Only the matching Kiln-owned folder will be removed." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>The skill stays in your library, with its approvals and history. You can install it again later.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.uninstall', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Skill removed; library retained')}>Confirm removal</button></div></Modal> : null; })()}
     {inventory && <Modal title="Repository inventory" subtitle="Read-only inspection complete. No history or existing files changed." onClose={() => setInventory(null)} wide><code className="path-text">{inventory.root}</code><p>{inventory.totalFiles} tracked files · {inventory.resources.length} candidate resources · branch {inventory.branch}</p><div className="inventory-list">{inventory.resources.map(relative => <div key={relative}><code>{relative}</code><button className="text-button" onClick={() => void perform(async () => { const item = await api<Item>('desktop.importResource', { root: inventory.root, relative }); await refresh(); setSelected(item.id); }, 'Imported as an unapproved resource')}>Import copy</button></div>)}</div><p>Attaching creates a separate workbench folder. Existing dotfile installers and agent files keep their current ownership. Import selected resources deliberately.</p><div className="modal-actions"><button className="button" onClick={() => setInventory(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('desktop.attach', { root: inventory.root }); setInventory(null); setSelected(''); await refresh(); }, 'Repository attached')}>Attach this repository</button></div></Modal>}
     {dialog?.name === 'import-local' && <LocalSkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}

@@ -3,13 +3,13 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import type { Workbench } from '../domain/workbench';
 import { invariant, WorkbenchError } from '../domain/errors';
-import { experimentOn } from '../protocol/experiments';
 import { atomicWrite, now, withLock } from '../storage/files';
 import { gitStatus } from './service';
+import { GitQueue } from './queue';
 
 /**
- * Background sync with GitHub (the autoSync experiment): a fetch that never waits in the backend queue, the overlap check that
- * lets Pull and Merge run beside drafts, and the fast-forward itself. Nothing here runs unless the experiment is on.
+ * Background sync with GitHub: a fetch that never waits in the backend queue (only in the Git queue, behind other Git work),
+ * the overlap check that lets Pull and Merge run beside drafts, and the fast-forward itself.
  */
 const base = ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0'];
 function git(root: string, args: string[]) {
@@ -17,9 +17,6 @@ function git(root: string, args: string[]) {
 }
 const stderrOf = (error: unknown) => String((error as { stderr?: string }).stderr || (error instanceof Error ? error.message : error)).trim();
 
-export function requireAutoSync(wb: Workbench) {
-  invariant(experimentOn(wb.settings(), 'autoSync'), 'CAPABILITY_UNSUPPORTED', 'Turn on “Background sync with GitHub” in Settings → Experimental features first.');
-}
 
 /** When the desktop app fetches: shortly after start, then every few minutes. KILN_SYNC_INTERVAL_MS shortens both, for tests. */
 export function syncTiming(value = process.env.KILN_SYNC_INTERVAL_MS) {
@@ -44,31 +41,45 @@ export function fetchOrigin(root: string, timeoutMs = 60_000) {
 
 export class BackgroundFetch {
   private running: Promise<void> | null = null;
+  private attempting = false;
+  private startedAt = 0;
   private fetchedAt: string | null = null;
   private checkedAt: string | null = null;
   private error = '';
-  /** `busy` says a publish job is committing or pushing; a fetch then waits for the next turn so the two never race for the same refs. */
-  constructor(private wb: Workbench, private busy: () => boolean = () => false) {}
+  /** `queue` is shared with every other background Git job (see queue.ts), so a fetch waits for a commit or push to finish instead of racing it for the same refs. */
+  constructor(private wb: Workbench, readonly queue: GitQueue = new GitQueue()) {}
   status(): SyncStatus {
     if (!this.fetchedAt) {
       // A fetch from the command line or an earlier session counts too.
       try { this.fetchedAt = fs.statSync(path.resolve(this.wb.root, git(this.wb.root, ['rev-parse', '--git-path', 'FETCH_HEAD']).trim())).mtime.toISOString(); } catch { /* Never fetched. */ }
     }
-    return { fetching: Boolean(this.running), fetchedAt: this.fetchedAt, checkedAt: this.checkedAt, error: this.error, ...syncTiming() };
+    return { fetching: Boolean(this.running) || this.attempting, fetchedAt: this.fetchedAt, checkedAt: this.checkedAt, error: this.error, ...syncTiming() };
   }
-  /** Fetches unless the last attempt is younger than `maxAgeMs`. Joins a fetch already running instead of starting a second one. */
+  private fresh(maxAgeMs: number) { return Boolean(this.checkedAt && Date.now() - Date.parse(this.checkedAt) < maxAgeMs); }
+  /**
+   * Fetches unless the last attempt is younger than `maxAgeMs`, in its turn in the Git queue. Joins a fetch already waiting or
+   * running instead of starting a second one, and skips its turn when another job fetched after it asked.
+   */
   async fetch(maxAgeMs = 0): Promise<SyncStatus> {
-    requireAutoSync(this.wb);
     if (this.running) { await this.running; return this.status(); }
-    if (this.checkedAt && Date.now() - Date.parse(this.checkedAt) < maxAgeMs) return this.status();
-    if (this.busy() || !this.wb.repositoryState().ready) return this.status();
-    this.running = fetchOrigin(this.wb.root)
-      .then(() => { this.error = ''; this.fetchedAt = now(); }, error => { this.error = error instanceof Error ? error.message : String(error); })
-      .finally(() => { this.checkedAt = now(); this.running = null; this.wb.invalidateGit(); });
+    if (this.fresh(maxAgeMs) || !this.wb.repositoryState().ready) return this.status();
+    const asked = Date.now();
+    this.running = this.queue.run(() => this.startedAt >= asked ? undefined : this.attempt()).finally(() => { this.running = null; });
     await this.running;
     return this.status();
   }
-  /** Resolves once no fetch is running. */
+  /** The same for a job already running in the Git queue (a machine report), which would otherwise wait for its own turn forever. */
+  async fetchHeld(maxAgeMs = 0): Promise<SyncStatus> {
+    if (!this.fresh(maxAgeMs) && this.wb.repositoryState().ready) await this.attempt();
+    return this.status();
+  }
+  private async attempt() {
+    this.attempting = true; this.startedAt = Date.now();
+    try { await fetchOrigin(this.wb.root); this.error = ''; this.fetchedAt = now(); }
+    catch (error) { this.error = error instanceof Error ? error.message : String(error); }
+    finally { this.attempting = false; this.checkedAt = now(); this.wb.invalidateGit(); }
+  }
+  /** Resolves once no fetch is waiting or running. */
   idle() { return this.running ?? Promise.resolve(); }
 }
 
@@ -172,7 +183,6 @@ export type PullResult = { status: 'pulled'; count: number } | { status: 'curren
  * the pull is refused (naming the items) when GitHub changed something that also changed here.
  */
 export function pullFetched(wb: Workbench): PullResult {
-  requireAutoSync(wb);
   const result = withLock(wb.canonical, (): PullResult => {
     try {
       invariant(gitStatus(wb.root).attached, 'NOT_A_REPOSITORY', 'Attach a Git repository first.');

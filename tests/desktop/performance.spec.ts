@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { desktopEnv, readyLibrary } from './fixture';
+import { desktopEnv, readyLibrary, showKind } from './fixture';
 
 test('217 skills: import preview stays responsive, panels resize, stalls are logged', async () => {
   test.setTimeout(120_000);
@@ -25,12 +25,11 @@ test('217 skills: import preview stays responsive, panels resize, stalls are log
     const handle = page.getByRole('separator', { name: 'Resize sidebar', exact: true });
     await handle.focus(); await page.keyboard.press('ArrowRight');
     await expect(handle).toHaveAttribute('aria-valuenow', '270');
-    const list = page.getByRole('separator', { name: 'Resize skill list' });
-    const box = (await list.boundingBox())!;
-    await page.mouse.move(box.x + 3, box.y + 80); await page.mouse.down(); await page.mouse.move(box.x + 63, box.y + 80); await page.mouse.up();
-    await expect(list).toHaveAttribute('aria-valuenow', '680');
-    await page.reload(); await expect(handle).toHaveAttribute('aria-valuenow', '270');
-    await expect(list).toHaveAttribute('aria-valuenow', '680');
+    // The library is one full-width table (an open item replaces it), so the sidebar is the only panel to resize: by pointer too.
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 80); await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 60, box.y + 80, { steps: 4 }); await page.mouse.up();
+    await expect(handle).toHaveAttribute('aria-valuenow', '330');
+    await page.reload(); await expect(handle).toHaveAttribute('aria-valuenow', '330');
     await page.getByRole('button', { name: 'Settings & repository' }).click();
     await app.evaluate(() => { (globalThis as any).testTicks = 0; (globalThis as any).testTimer = setInterval(() => (globalThis as any).testTicks++, 20); });
     await page.getByRole('button', { name: 'Import from a skills repository…' }).click();
@@ -44,10 +43,10 @@ test('217 skills: import preview stays responsive, panels resize, stalls are log
     await page.getByRole('button', { name: 'Import 217 skills', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 60000 });
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
-    await page.getByRole('tab', { name: /^Skills/ }).click();
+    await showKind(page, 'skill');
     await expect(page.locator('.item-card')).toHaveCount(217);
     await page.locator('.item-card').first().click();
-    await expect(page.getByRole('button', { name: 'Open editor', exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Edit text', exact: true })).toBeVisible();
     await page.evaluate(() => { const end = performance.now() + 1800; while (performance.now() < end) { /* Deliberate renderer stall. */ } });
     const file = path.join(local, 'desktop', 'logs', 'performance.jsonl');
     await expect.poll(() => fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '').toContain('renderer.stall');

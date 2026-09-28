@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { desktopEnv } from './fixture';
+import { desktopEnv, showKind } from './fixture';
 
 test('shared locations, native copies and cleanup are clear in Settings and Library', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-locations-ui-'));
@@ -19,7 +19,7 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
   const app = await electron.launch({ ...(process.env.KILN_LOCATIONS_EXE ? { executablePath: process.env.KILN_LOCATIONS_EXE } : { args: ['.'] }), env: desktopEnv(root) });
   try {
     const page = await app.firstWindow();
-    await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toBeVisible();
     const item = await page.evaluate(async ({ home, content }) => {
       for (const provider of ['codex', 'claude']) await window.kiln.call('targets.enroll', { name: provider, provider, root: home, scope: 'personal' });
       return window.kiln.call<any>('items.create', { title: 'Review', kind: 'skill', content });
@@ -43,15 +43,17 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
     await page.screenshot({ path: 'artifacts/locations-cleanup.png' });
     await dialog.getByRole('button', { name: 'Done', exact: true }).click();
     await page.getByRole('button', { name: /^Library/ }).click();
-    await page.getByRole('tab', { name: /^Skills/ }).click();
+    await showKind(page, 'skill');
     await page.locator('.item-card').filter({ hasText: 'Review' }).click();
-    await page.getByRole('button', { name: 'installs', exact: true }).click();
-    const toggles = page.getByRole('group', { name: 'Installed for' });
+    // The item page has no tabs: installs live in the rail's Installs section, open by default.
+    const installs = page.getByRole('region', { name: 'Installs', exact: true });
+    await expect(installs.getByRole('button', { name: /^Installs/ })).toHaveAttribute('aria-expanded', 'true');
+    const toggles = installs.getByRole('group', { name: 'Installed for' });
     await expect(toggles.getByRole('button', { name: /^Agents/ })).toBeVisible();
     await expect(toggles.getByRole('button', { name: /^Claude/ })).toBeVisible();
     await expect(toggles.getByRole('button')).toHaveCount(2);
-    await page.getByText('Client-specific copies (1)', { exact: true }).click();
-    await expect(page.locator('.other-copies').getByText(native, { exact: true })).toBeVisible();
+    await installs.getByText('Client-specific copies (1)', { exact: true }).click();
+    await expect(installs.locator('.other-copies').getByText(native, { exact: true })).toBeVisible();
     await page.screenshot({ path: 'artifacts/locations-library.png' });
     const copies = await page.evaluate(id => window.kiln.call<any[]>('deploy.installations', { itemId: id }), item.id);
     expect(copies.map(i => i.location).sort()).toEqual(['agents', 'codex']);

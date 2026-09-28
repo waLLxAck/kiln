@@ -31,8 +31,8 @@ test('setup imports skills and agents and opens a current, bulk-manageable libra
     await expect(dialog).toHaveCount(0);
     await page.getByRole('button', { name: 'Review and bulk manage my library' }).click();
     await expect(page.locator('.item-card')).toHaveCount(2);
-    await expect(page.getByRole('tab', { name: /^Skills\s*1$/ })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /^Agents\s*1$/ })).toBeVisible();
+    await expect(page.locator('.item-card .item-kind.skill')).toHaveCount(1);
+    await expect(page.locator('.item-card .item-kind.agent')).toHaveCount(1);
     await page.getByRole('button', { name: 'Select all', exact: true }).click();
     await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
     await expect(page.locator('.item-card')).toHaveCount(0);
@@ -75,8 +75,14 @@ test('after importing installed skills, one click manages their folders without 
     expect(listing(), 'managing a folder installs and changes nothing').toEqual(before);
     await page.getByRole('button', { name: 'Start using Kiln' }).click();
     await expect(page.locator('.item-card')).toHaveCount(2);
-    await expect(page.locator('.install-mark.found')).toHaveCount(2);
-    await expect(page.locator('.install-mark.off')).toHaveCount(2);
+    // Each skill is in one of the two folders as an identical copy Kiln found but did not install: the Installed column
+    // marks it apart from a managed copy (ringed dot, "unmanaged") and leaves the other folder empty.
+    const installed = page.locator('.item-card .col-installed');
+    await expect(installed).toHaveText([/^1 of 2/, /^1 of 2/]);
+    await expect(installed.locator('.lib-unmanaged')).toHaveText(['1 unmanaged', '1 unmanaged']);
+    await expect(installed.locator('.lib-dots i.found')).toHaveCount(2);
+    await expect(installed.locator('.lib-dots i.off')).toHaveCount(2);
+    await expect(installed.locator('.lib-dots i.on')).toHaveCount(0);
     expect(listing()).toEqual(before);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -100,25 +106,26 @@ test('the import list skips folders that only hold skills, and two different ski
     await expect(dialog).toHaveCount(0);
     const rows = page.locator('.item-card');
     await expect(rows).toHaveCount(2);
-    await expect(rows.locator('.lib-sub')).toHaveText([/from ~\/.(claude\/skills\/synced\/0c6f2e1a|codex\/skills\/.system)\/skill-creator/, /from ~\/.(claude\/skills\/synced\/0c6f2e1a|codex\/skills\/.system)\/skill-creator/]);
+    await expect(rows.locator('.lib-from')).toHaveText([/from ~\/.(claude\/skills\/synced\/0c6f2e1a|codex\/skills\/.system)\/skill-creator/, /from ~\/.(claude\/skills\/synced\/0c6f2e1a|codex\/skills\/.system)\/skill-creator/]);
     await rows.filter({ hasText: '.system' }).click();
-    await expect(page.getByRole('article', { name: 'Selected item' }).locator('.detail-source')).toHaveText('from ~/.codex/skills/.system/skill-creator');
+    // Two items share the title, so the rail's Provenance says where this one came from.
+    await expect(page.getByRole('article', { name: 'Selected item' }).getByRole('region', { name: 'Provenance' })).toContainText('~/.codex/skills/.system/skill-creator');
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('an agents collection with a remembered skill tab opens All without a ghost Skills zero tab', async () => {
+test('an agents collection remembered with an old kind tab opens with no leftover filter', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-empty-kind-'));
   const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
   try {
     const page = await app.firstWindow();
-    await expect(page.getByRole('tab', { name: /^All/ })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Search library' })).toBeVisible();
     await page.evaluate(async () => {
       await window.kiln.call('items.create', { kind: 'agent', title: 'Reviewer', content: 'Review.', agent: { provider: 'claude', filename: 'reviewer.md' }, collection: 'Agents' });
       localStorage.setItem('kiln-view-memory', JSON.stringify({ location: { section: 'library', collection: 'Agents', tab: 'skill' }, sections: {}, views: {} }));
     });
     await page.reload();
-    await expect(page.getByRole('tab', { name: /^All\s*1$/ })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('tab', { name: /^Skills/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'All', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.q-token')).toHaveCount(0);
     await expect(page.locator('.item-card')).toHaveCount(1);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

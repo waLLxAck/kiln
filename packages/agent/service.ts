@@ -9,7 +9,6 @@ import { writeJson, now, readRecords, atomicWrite } from '../storage/files';
 import { runCodex, codexModels, type RunInput, type AgentEvent, type CodexEvent, type CodexModel } from './codex';
 import { runClaude } from './claude';
 import { writingForAgents } from './guidance';
-import { experimentOn } from '../protocol/experiments';
 import { TRIAL_LOOP_TIMEOUT_MS, trialContext } from './trial-loop';
 import { activeRun } from './run-notice';
 import { findSession, restoreSession } from './session';
@@ -26,13 +25,15 @@ const distillResult = z.object({ collection: z.string().min(1), summary: z.strin
 export type DistillResult = z.infer<typeof distillResult>;
 /** A chat turn's answer is free Markdown from the agent; changes it made went through Kiln's CLI and show up as revisions. */
 export type ChatResult = { reply: string };
+/** One item a chat turn changed or created, found by comparing revisions from before and after the turn. */
+export type ChatChange = { itemId: string; title: string; kind: Item['kind']; from: string | null; to: string };
 export type AgentKind = 'capture' | 'trial' | 'derive' | 'distill' | 'chat';
 /** One visible thing the agent did, kept in order so the user can follow a run without opening the CLI. */
 export type AgentStep = { id: string; at: string; kind: 'status' | 'message' | 'reasoning' | 'command' | 'search' | 'file' | 'tool' | 'todo' | 'error'; text: string; status?: string };
 export type AgentUsage = { input: number; cached: number; output: number; reasoning: number };
-export type AgentJob = { /** Selected project and input stay in machine-private job records. */ workspace?: string; context?: string; conversationId?: string; lastActivityAt?: string; process?: { pid: number; running: boolean }; id: string; itemId: string; revision: string; kind: AgentKind; provider: RunProviderId; /** queued: waiting for a free slot (runNotifications). */ status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'; startedAt: string; finishedAt?: string; phase: string; /** Model slug actually requested or reported; empty until known. */ model: string; /** Reasoning effort requested; empty when the model default applies. */ effort: string; threadId?: string; usage?: AgentUsage; steps: AgentStep[]; trialId?: string; createdItemId?: string; /** Items a distillation created, in result order. */ createdItemIds?: string[]; /** Collection the distilled entries were filed under. */ collection?: string; /** Chat turns: the run whose CLI session this turn continued, when it exists on this machine. */ parentJobId?: string; /** Chat turns: what the user asked. */ question?: string; /** Library chat turns: what the user had open when asking. */ focus?: { itemId?: string; title?: string; collection?: string }; /** The CLI's own transcript of this session, saved privately beside the run. */ session?: { file: string; bytes: number }; error?: string; result?: z.infer<typeof captureResult> | z.infer<typeof trialResult> | z.infer<typeof deriveResult> | DistillResult | ChatResult };
+export type AgentJob = { /** Selected project and input stay in machine-private job records. */ workspace?: string; context?: string; conversationId?: string; lastActivityAt?: string; process?: { pid: number; running: boolean }; id: string; itemId: string; revision: string; kind: AgentKind; provider: RunProviderId; /** queued: waiting for a free slot (two runs go at once). */ status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'; startedAt: string; finishedAt?: string; phase: string; /** Model slug actually requested or reported; empty until known. */ model: string; /** Reasoning effort requested; empty when the model default applies. */ effort: string; threadId?: string; usage?: AgentUsage; steps: AgentStep[]; trialId?: string; createdItemId?: string; /** Items a distillation created, in result order. */ createdItemIds?: string[]; /** Collection the distilled entries were filed under. */ collection?: string; /** Chat turns: the run whose CLI session this turn continued, when it exists on this machine. */ parentJobId?: string; /** Chat turns: what the user asked. */ question?: string; /** Library chat turns: what the user had open when asking. */ focus?: { itemId?: string; title?: string; collection?: string }; /** Chat turns: other library items the user added as context, at the revision that was sent. */ contextItems?: { itemId: string; title: string; revision: string }[]; /** Chat turns: items whose revision changed while the turn ran (`from` is null for items it created). The agent edits through Kiln's CLI, so this is how its edits are found. */ changes?: ChatChange[]; /** The CLI's own transcript of this session, saved privately beside the run. */ session?: { file: string; bytes: number }; error?: string; result?: z.infer<typeof captureResult> | z.infer<typeof trialResult> | z.infer<typeof deriveResult> | DistillResult | ChatResult };
 const MAX_STEPS = 200, MAX_STEP_TEXT = 4000;
-/** At most this many CLI runs at once; with runNotifications further runs wait in order instead of being refused. */
+/** At most this many CLI runs at once; further runs wait in order. */
 const SLOTS = 2;
 export const QUEUED_PHASE = 'Waiting for a free slot';
 /** Name of the private file holding the CLI's session transcript on a video item. */
@@ -58,7 +59,7 @@ const prompts: Record<Exclude<AgentKind, 'chat' | 'capture'>, string> = {
 };
 const parseTimestamp = (value: string) => { const parts = value.trim().split(':').map(Number); if (!parts.length || parts.some(n => Number.isNaN(n))) return null; return parts.reduce((total, n) => total * 60 + n, 0); };
 /** Instructions for a conversation about one open item. context.md carries the item (and the source behind it); the CLI is the only way to change anything. */
-export function itemChatPrompt(input: { cli: string; resumed: boolean; itemId: string; sourceId: string | null; transcript: boolean; /** trialLoop: context.md lists the item's recent experiments. */ trials?: boolean }) {
+export function itemChatPrompt(input: { cli: string; resumed: boolean; itemId: string; sourceId: string | null; transcript: boolean; /** context.md lists the item's recent experiments. */ trials?: boolean }) {
   return [
     'You are the assistant inside Kiln, the user’s personal library of prompts, agent skills, agents, links, sources (material such as a pasted chat, a page or a video that was analysed) and the entries distilled from them (insights, techniques, tools, resources). context.md in the current folder describes the item the user has open: its metadata, its full content, its attached files under attachments/, and, when it is a source or was made from one, that source and every entry made from it. Read context.md first, every turn; it is rewritten before each message. Answer from it. When the user asks you to change, expand, clarify or add something, make the change with Kiln’s CLI, then say exactly what changed and where.',
     input.resumed ? 'This continues an earlier conversation. Trust context.md over memory for the current state of items.' : '',
@@ -87,7 +88,7 @@ export class AgentService {
   private activeChatItem?: string;
   private activeConversation = randomUUID();
   private catalogCache?: { at: number; models: Promise<CodexModel[]> };
-  /** runNotifications: runs waiting for a free slot, oldest first. `begin` launches one exactly as if it had started at once. */
+  /** Runs waiting for a free slot, oldest first. `begin` launches one exactly as if it had started at once. */
   private waiting: { job: AgentJob; begin: () => void }[] = [];
   private announced = new Set<string>();
   /** Told once when a run ends, however it ended (completed, failed, cancelled, or cancelled while queued), so the desktop can notify. */
@@ -114,12 +115,8 @@ export class AgentService {
   }
   get running() { return this.controllers.size; }
   get queued() { return this.waiting.length; }
-  /** Whether a new run can start now. When both slots are busy it waits its turn with runNotifications on, and is refused as before with it off. */
-  private slotFree() {
-    if (this.running < SLOTS && !this.waiting.length) return true;
-    if (!experimentOn(this.wb.settings(), 'runNotifications')) throw new Error('Two agent runs are active. Wait or cancel one.');
-    return false;
-  }
+  /** Whether a new run can start now. When both slots are busy it waits its turn. */
+  private slotFree() { return this.running < SLOTS && !this.waiting.length; }
   /** Starts a run now or puts it at the back of the queue. */
   private launch(job: AgentJob, startNow: boolean, begin: () => void) {
     if (startNow) begin(); else { this.waiting.push({ job, begin }); this.log('agent.queued', { jobId: job.id, kind: job.kind, position: this.waiting.length }); }
@@ -151,9 +148,8 @@ export class AgentService {
     const recent = all.slice(0, 100), kept = new Set(recent.map(j => `${j.itemId}:${j.kind}`));
     return [...recent, ...all.slice(100).filter(j => j.kind !== 'chat' && !kept.has(`${j.itemId}:${j.kind}`) && kept.add(`${j.itemId}:${j.kind}`))];
   }
-  /** chatHistory experiment: every chat turn about one item on this machine, oldest first. `list()` keeps only the newest hundred runs, so older conversations need this. */
+  /** Every chat turn about one item on this machine, oldest first. `list()` keeps only the newest hundred runs, so older conversations need this. */
   chatHistory(input: unknown) {
-    if (!experimentOn(this.wb.settings(), 'chatHistory')) throw new WorkbenchError('CAPABILITY_UNSUPPORTED', 'Turn on “Docked chat with history” in Settings → Experimental features.');
     return chatTurns([...this.jobs.values()], z.object({ itemId: idSchema }).parse(input).itemId);
   }
   deleteTrial(input: unknown) {
@@ -270,7 +266,7 @@ export class AgentService {
     try { const origin = this.wb.getItem(item.origin.itemId), r = this.wb.getRevision(origin.id); return isSource(origin.kind, r) ? { id: origin.id, revision: r } : null; } catch { return null; }
   }
   /** context.md: the open item in full and, when a source stands behind it, that source with every entry made from it. Rewritten before every turn. */
-  private writeContext(folder: string, item: Item, revision: Revision, source: { id: string; revision: Revision } | null) {
+  private writeContext(folder: string, item: Item, revision: Revision, source: { id: string; revision: Revision } | null, extras: { item: Item; revision: Revision }[] = []) {
     const attachments = Object.keys(revision.files).filter(name => name !== SESSION_FILE);
     const lines = ['# What the user has open in Kiln', '', 'Every update changes an item’s revision hash; run `items read <id>` again before a second edit.', '',
       `## Open item: ${item.title}`, '', `id: ${item.id}`, `kind: ${item.kind}`, `collection: ${item.collection}`, `revision: ${item.revision}`, `status: ${item.status}`, `tags: ${item.tags.join(', ') || 'none'}`, `source: ${item.source || 'captured locally'}`, ...(item.description ? [`description: ${item.description}`] : []), ...(attachments.length ? [`attached files (under attachments/): ${attachments.join(', ')}`] : []), '', '### Content', '',
@@ -281,7 +277,11 @@ export class AgentService {
       const material = video ? ['transcript: attachments/transcript.md'] : source.id === item.id ? [] : ['source material: attachments/source.md'];
       lines.push(`## ${video ? 'Video' : 'Source'}: ${sourceItem.title}`, '', `id: ${source.id} (revision ${sourceItem.revision}, collection “${sourceItem.collection}”)`, ...(sourceItem.source ? [`url: ${sourceItem.source}`] : []), ...(sourceItem.description ? [`summary: ${sourceItem.description}`] : []), ...material, '', `### Entries distilled from it (${entries.length})`, '', '| id | kind | revision | title |', '|---|---|---|---|', ...entries.map(e => `| ${e.id} | ${e.kind} | ${e.revision} | ${e.title.replaceAll('|', '\\|')} |`), '');
     }
-    if (experimentOn(this.wb.settings(), 'trialLoop')) lines.push(...trialContext(this.wb.trials().filter(t => t.itemId === item.id), item.revision, path.join(this.wb.local, 'runs')));
+    // Items the user mentioned for this message, each with its current content, so the agent can compare or combine them.
+    if (extras.length) lines.push(`## Also included by the user (${extras.length})`, '');
+    for (const extra of extras) lines.push(`### ${extra.item.title}`, '', `id: ${extra.item.id}`, `kind: ${extra.item.kind}`, `collection: ${extra.item.collection}`, `revision: ${extra.item.revision}`, ...(extra.item.description ? [`description: ${extra.item.description}`] : []), '', '#### Content', '',
+      extra.revision.content.length > 20000 ? `${extra.revision.content.slice(0, 20000)}\n\n…(truncated; read the rest with items read ${extra.item.id} --full)` : extra.revision.content, '');
+    lines.push(...trialContext(this.wb.trials().filter(t => t.itemId === item.id), item.revision, path.join(this.wb.local, 'runs')));
     atomicWrite(path.join(folder, 'context.md'), lines.join('\n') + '\n');
   }
   /**
@@ -289,7 +289,7 @@ export class AgentService {
    * the video's transcript are written into the session folder, so the agent sees the current state.
    */
   chat(input: unknown) {
-    const data = z.object({ message: z.string().max(20000), itemId: idSchema, conversationId: idSchema.optional(), newSession: z.boolean().default(false) }).parse(input);
+    const data = z.object({ message: z.string().max(20000), itemId: idSchema, conversationId: idSchema.optional(), newSession: z.boolean().default(false), provider: z.enum(['codex', 'claude']).optional(), contextItemIds: z.array(idSchema).max(10).default([]) }).parse(input);
     const question = data.message.trim(); if (!question) throw new Error('Type a question or an instruction first.');
     if ([...this.jobs.values()].some(j => j.itemId === data.itemId && j.kind === 'chat' && activeRun(j))) throw new Error('Wait for the current reply before sending another message.');
     const startNow = this.slotFree();
@@ -299,6 +299,10 @@ export class AgentService {
     if (owner && owner.itemId !== data.itemId) throw new Error('Start a new session when changing items.');
     if ([...this.jobs.values()].some(j => j.conversationId === conversationId && activeRun(j))) throw new Error('Wait for this session to finish.');
     let item = this.wb.getItem(data.itemId), revision = this.wb.getRevision(item.id), source = this.sourceBehind(item, revision);
+    const extras = [...new Set(data.contextItemIds)].filter(id => id !== item.id).map(id => {
+      const extra = this.wb.getItem(id); if (extra.deletedAt) throw new Error(`“${extra.title}” is in the trash. Restore it before adding it to the chat.`);
+      return { item: extra, revision: this.wb.getRevision(id) };
+    });
     let previous: AgentJob | undefined = [...this.jobs.values()].filter(j => j.conversationId === conversationId && j.status === 'completed' && j.threadId).sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
     const workdir = path.join(this.folder, `session-${conversationId}`); fs.mkdirSync(workdir, { recursive: true });
     if (previous && !findSession(previous.provider, previous.threadId!, workdir)) {
@@ -306,13 +310,17 @@ export class AgentService {
       if (fs.existsSync(saved)) restoreSession(previous.provider, previous.threadId!, workdir, fs.readFileSync(saved));
       else previous = undefined;
     }
-    const provider = previous?.provider ?? this.wb.settings().agentProvider, label = providerLabel[provider];
-    const job: AgentJob = { id: randomUUID(), conversationId, itemId: item.id, revision: revision.hash, kind: 'chat', provider, status: startNow ? 'running' : 'queued', startedAt: now(), phase: startNow ? `Starting ${label}` : QUEUED_PHASE, model: previous?.model ?? '', effort: previous?.effort ?? '', steps: [], threadId: previous?.threadId, question, focus: { itemId: item.id, title: item.title, collection: item.collection } };
+    // A session belongs to one CLI: the other one cannot resume it.
+    if (previous && data.provider && data.provider !== previous.provider) throw new Error(`This session runs on ${providerLabel[previous.provider]}. Start a new session to switch to ${providerLabel[data.provider]}.`);
+    const provider = previous?.provider ?? data.provider ?? this.wb.settings().agentProvider, label = providerLabel[provider];
+    const job: AgentJob = { id: randomUUID(), conversationId, itemId: item.id, revision: revision.hash, kind: 'chat', provider, status: startNow ? 'running' : 'queued', startedAt: now(), phase: startNow ? `Starting ${label}` : QUEUED_PHASE, model: previous?.model ?? '', effort: previous?.effort ?? '', steps: [], threadId: previous?.threadId, question, focus: { itemId: item.id, title: item.title, collection: item.collection }, ...(extras.length ? { contextItems: extras.map(e => ({ itemId: e.item.id, title: e.item.title, revision: e.item.revision })) } : {}) };
     const folder = path.join(this.folder, job.id); fs.mkdirSync(folder);
     this.save(job);
     return this.launch(job, startNow, () => {
     // A turn that waited in the queue reads the item as it is when it starts.
     if (!startNow) { item = this.wb.getItem(data.itemId); revision = this.wb.getRevision(item.id); source = this.sourceBehind(item, revision); job.revision = revision.hash; }
+    // Revisions before the turn; whatever differs afterwards was changed (or created) while the agent ran.
+    const before = new Map(this.wb.listItems(true).map(i => [i.id, i.revision]));
     const controller = new AbortController(); this.controllers.set(job.id, controller);
     this.execute(job, controller, async () => {
       const { names } = this.writeAttachments(workdir, revision);
@@ -323,11 +331,18 @@ export class AgentService {
         atomicWrite(path.join(workdir, 'attachments.md'), `Attached source files, available for reading. Never execute imported scripts.\n${names.map(name => 'attachments/' + name).join('\n')}`);
       }
       const cli = this.writeCli(workdir);
-      this.writeContext(workdir, item, revision, source);
-      const prompt = `${itemChatPrompt({ cli, resumed: Boolean(previous), itemId: item.id, sourceId: source?.id ?? null, transcript: names.includes('transcript.md'), trials: experimentOn(this.wb.settings(), 'trialLoop') })}\n\n<user_message>\n${question}\n</user_message>`;
-      return this.runners[provider]({ folder, workdir, prompt, images: [], model: job.model, effort: job.effort, persist: true, resume: previous?.threadId, writable: [this.wb.root, workdir], timeoutMs: 20 * 60_000, signal: controller.signal, onStatus: phase => this.progress(job, phase), onProcess: (pid, running) => this.observeProcess(job, pid, running), onEvent: event => { this.observe(job, event); this.log('agent.progress', { jobId: job.id, type: event.type }); } });
+      this.writeContext(workdir, item, revision, source, extras);
+      const prompt = `${itemChatPrompt({ cli, resumed: Boolean(previous), itemId: item.id, sourceId: source?.id ?? null, transcript: names.includes('transcript.md'), trials: true })}\n\n<user_message>\n${question}\n</user_message>`;
+      // Found even when the turn fails or is cancelled: edits made before that are still in the library.
+      return this.runners[provider]({ folder, workdir, prompt, images: [], model: job.model, effort: job.effort, persist: true, resume: previous?.threadId, writable: [this.wb.root, workdir], timeoutMs: 20 * 60_000, signal: controller.signal, onStatus: phase => this.progress(job, phase), onProcess: (pid, running) => this.observeProcess(job, pid, running), onEvent: event => { this.observe(job, event); this.log('agent.progress', { jobId: job.id, type: event.type }); } })
+        .finally(() => { try { const changes = this.changesSince(before); if (changes.length) job.changes = changes; } catch (error) { this.log('agent.changes.failed', { jobId: job.id, error: String(error) }); } });
     }, raw => { job.result = { reply: String(raw ?? '').trim() || 'The agent finished without a reply.' }; this.sessionAttachment(job, folder, workdir); });
     });
+  }
+  /** Items whose revision differs from `before`, newest edits first; items that did not exist are listed as created. Trash excluded. */
+  private changesSince(before: Map<string, string>): ChatChange[] {
+    return this.wb.listItems().filter(i => before.get(i.id) !== i.revision).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 20)
+      .map(i => ({ itemId: i.id, title: i.title, kind: i.kind, from: before.get(i.id) ?? null, to: i.revision }));
   }
   /** Shared run lifecycle: resolve the model, launch the CLI, file the result, and record how the run ended. A failed trial run closes its trial as uncertain. */
   private execute(job: AgentJob, controller: AbortController, launch: () => Promise<unknown>, finish: (raw: unknown) => void) {
@@ -388,7 +403,7 @@ export class AgentService {
       // Claude Code stream-json: system/init carries the model, assistant turns carry text and tool_use blocks, result carries usage.
       const e = event as { type: string; subtype?: string; model?: string; session_id?: string; message?: { content?: { type: string; text?: string; name?: string; input?: Record<string, unknown>; id?: string }[] }; usage?: Record<string, number>; is_error?: boolean; result?: string };
       if (e.type === 'system') { if (e.model) job.model = e.model; if (e.session_id) job.threadId = e.session_id; job.phase = `${label} connected`; }
-      else if (e.type === 'assistant') { for (const block of e.message?.content ?? []) { if (block.type === 'text' && block.text) this.addStep(job, { id: `${block.id ?? job.steps.length}-text`, kind: 'message', text: block.text }); else if (block.type === 'tool_use') { const target = typeof block.input?.file_path === 'string' ? block.input.file_path : typeof block.input?.pattern === 'string' ? block.input.pattern : ''; /* chatHistory: a chat's shell commands are shown, as Codex's are, so the changes card sees which items its CLI calls named. */ const command = !target && job.kind === 'chat' && typeof block.input?.command === 'string' && experimentOn(this.wb.settings(), 'chatHistory') ? block.input.command.slice(0, 2500) : ''; this.addStep(job, { id: block.id ?? `tool-${job.steps.length}`, kind: 'tool', text: `${block.name ?? 'tool'} ${target || command}`.trim() }); } } job.phase = `${label} is working`; }
+      else if (e.type === 'assistant') { for (const block of e.message?.content ?? []) { if (block.type === 'text' && block.text) this.addStep(job, { id: `${block.id ?? job.steps.length}-text`, kind: 'message', text: block.text }); else if (block.type === 'tool_use') { const target = typeof block.input?.file_path === 'string' ? block.input.file_path : typeof block.input?.pattern === 'string' ? block.input.pattern : ''; /* A chat's shell commands are shown as steps, as Codex's are. */ const command = !target && job.kind === 'chat' && typeof block.input?.command === 'string' ? block.input.command.slice(0, 2500) : ''; this.addStep(job, { id: block.id ?? `tool-${job.steps.length}`, kind: 'tool', text: `${block.name ?? 'tool'} ${target || command}`.trim() }); } } job.phase = `${label} is working`; }
       else if (e.type === 'result') { const u = e.usage ?? {}; job.usage = { input: u.input_tokens ?? 0, cached: u.cache_read_input_tokens ?? 0, output: u.output_tokens ?? 0, reasoning: 0 }; job.phase = 'Saving result'; if (e.is_error) this.addStep(job, { id: 'result-error', kind: 'error', text: e.result ?? 'Run failed' }); }
     }
     this.save(job);
@@ -434,7 +449,7 @@ export class AgentService {
       this.save(job); if (controller.signal.aborted) throw new Error('Cancelled');
       // A distillation keeps its CLI session so the user can carry on the conversation afterwards; other runs leave nothing behind.
       if (workspace) experimentWorkspace(workspace); // The folder may disappear while model discovery is running.
-      return this.runners[provider]({ folder, workdir: workspace, prompt: `${fullPrompt}${guidance}\n\nUser context: ${data.context}\n\n<source_material>\n${material}\n</source_material>`, schema, images, model: job.model, effort: job.effort, persist: kind === 'distill', timeoutMs: kind === 'distill' ? 20 * 60_000 : experimentOn(this.wb.settings(), 'trialLoop') ? TRIAL_LOOP_TIMEOUT_MS : undefined, signal: controller.signal, onStatus: phase => this.progress(job, phase), onProcess: (pid, running) => this.observeProcess(job, pid, running), onEvent: event => { this.observe(job, event); this.log('agent.progress', { jobId: job.id, type: event.type }); } });
+      return this.runners[provider]({ folder, workdir: workspace, prompt: `${fullPrompt}${guidance}\n\nUser context: ${data.context}\n\n<source_material>\n${material}\n</source_material>`, schema, images, model: job.model, effort: job.effort, persist: kind === 'distill', timeoutMs: kind === 'distill' ? 20 * 60_000 : TRIAL_LOOP_TIMEOUT_MS, signal: controller.signal, onStatus: phase => this.progress(job, phase), onProcess: (pid, running) => this.observeProcess(job, pid, running), onEvent: event => { this.observe(job, event); this.log('agent.progress', { jobId: job.id, type: event.type }); } });
     }, raw => {
       if (kind === 'distill') { const result = distillResult.parse(raw); job.result = result; this.fileDistillation(job, folder, video, result, label); }
       else if (kind === 'trial') {

@@ -17,16 +17,17 @@ test('comparing a CRLF folder copy shows only the real change, with the differin
     const folder = lines.map(l => l.startsWith('Present') ? 'Present the parent execution proof and wait for human approval.' : l).join('\r\n') + '\r\n';
     await page.evaluate(async content => { await (window as any).kiln.call('items.create', { kind: 'skill', title: 'Desktop review skill', content, collection: 'Personal', tags: [], files: {}, source: '', licence: 'Unknown' }); }, library);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Machines' }).click();
-    await page.getByRole('button', { name: 'Enroll project folder', exact: true }).click();
-    await page.getByLabel('Name', { exact: true }).fill('Test Codex project');
-    await page.getByLabel('Allowed root').fill(target);
-    await page.getByRole('dialog').getByRole('button', { name: 'Enroll environment', exact: true }).click();
+    // Add project… adds the folder for the shared Agents location (a Codex project target) without writing into it.
+    await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as typeof dialog.showOpenDialog; }, target);
+    await page.getByRole('button', { name: 'Add project…' }).first().click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Choose folder…' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Add project', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     const destination = path.join(target, '.agents', 'skills', 'desktop-review'); fs.mkdirSync(destination, { recursive: true });
     fs.writeFileSync(path.join(destination, 'SKILL.md'), folder);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await page.getByRole('button', { name: 'Refresh library' }).click();
-    await page.getByRole('button', { name: /Desktop review skill/ }).click();
-    await page.getByRole('navigation', { name: 'Item details' }).getByRole('button', { name: 'installs', exact: true }).click();
+    await page.locator('.item-card', { hasText: /Desktop review skill/ }).click();
     await page.getByRole('button', { name: 'Compare', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('1 of 1 file differ.')).toBeVisible();

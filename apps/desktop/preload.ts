@@ -8,3 +8,5 @@ contextBridge.exposeInMainWorld('kiln', {
     return result.data;
   },
 });
+// Quick search's requests to the main window (`desktop.command`, validated in main.ts) arrive as a DOM event; see src/commands.ts.
+ipcRenderer.on('kiln:command', (_event, detail: unknown) => window.dispatchEvent(new CustomEvent('kiln:command', { detail })));

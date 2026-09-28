@@ -37,6 +37,10 @@ items create --file draft.md --title "Title" [--kind prompt] [--from <id>] [--in
                             # --from links the new item to the current revision of <id>; meta.json may set description, tags, collection, source
 items update <id> --file draft.md --expect <hash> [--summary "what changed"] [--input meta.json]
 items restore <id> --revision <hash> --expect <hash>
+items duplicates            # groups of likely copies: same kind, same text, or same name with mostly the same text
+items consolidate --input request.json   # { keep, expect, merge: [{ id, expect }], content?, tags?, collection? }; the others go to the trash as merged
+items unconsolidate --input undo.json    # the undo object items consolidate returned, while nothing changed since
+items distinct --input request.json      # { ids: [id, id], distinct?: false }: not duplicates (false: flag them again)
 trials create --input request.json
 trials finish --input judgement.json
 skills draft --input draft.json
@@ -49,7 +53,7 @@ deploy rollback --input rollback.json
 deploy drift | recover
 skills install --input request.json
 skills remove --input request.json
-skills sync                 # install every skill listed in workbench/installs.json into this machine's skill locations
+skills sync                 # install every skill listed in workbench/installs.json, and everything marked for this machine, into its skill locations
 skills scan --input request.json
 targets remove --input request.json
 items purge --input request.json
@@ -62,7 +66,11 @@ home add --path <file> | home remove <key>
 git inventory --input folder.json
 git checkpoint --input message.json
 git sync --input action.json
-machines status
+machines status             # this machine: id, name, locations and copies as it would report them
+machines list               # fetch, then every machine that reported to this library
+machines report             # share this machine's installs now (commit and push its workbench/machines/<id>.json)
+machines mark <machine id> --item <id> --location agents|claude|codex|copilot|project:<folder> [--unmark]
+                            # ask a machine to install an approved item there on its next skills sync
 providers detect
 observations list
 library export --file backup.json
@@ -128,7 +136,14 @@ try {
     const job = router.publisher.list()[0];
     if (job?.status === 'failed') process.stderr.write(JSON.stringify({ schemaVersion: 1, warning: `Approval recorded locally but not pushed: ${job.error}` }) + '\n');
     else if (job) result = { approval: result, commit: job.commit, message: job.message };
-  } else if (resource === 'machines' && action === 'status') result = { machine: 'local', targets: wb.targets(), deployments: router.deployments.drift(), remote: 'Not enabled in this local release', coverage: 'External sessions unknown' };
+  } else if (resource === 'machines' && action === 'status') result = { machine: router.fleet.identity(), report: router.fleet.live(), targets: wb.targets(), deployments: router.deployments.drift(), coverage: 'External sessions unknown' };
+  else if (resource === 'machines' && action === 'list') result = await router.fleet.view({ fetch: true });
+  else if (resource === 'machines' && ['report', 'mark'].includes(action)) {
+    if (action === 'mark') router.fleet.mark({ machineId: id, itemId: option('item'), location: option('location'), wanted: !option('unmark') });
+    else router.fleet.report();
+    // Wait for the commit and push so the process exits with the report on GitHub (or a reason it isn't).
+    await router.fleet.idle(); result = router.fleet.publishState();
+  }
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));
   else if (resource === 'home' && ['read', 'backups'].includes(action)) result = await router.call(`home.${action}`, { key: id });

@@ -25,9 +25,9 @@ let input = ''; process.stdin.on('data', d => input += d); process.stdin.on('end
   return bin;
 }
 const api = (page: Page, method: string, args?: unknown) => page.evaluate(([m, a]) => (window as any).kiln.call(m, a), [method, args] as const);
-async function launch(root: string, experiments?: string) {
+async function launch(root: string) {
   const release = path.join(root, 'release'); fs.mkdirSync(release);
-  const env = { ...desktopEnv(root), KILN_DESKTOP_DATA: path.join(root, 'desktop'), KILN_FAKE_RELEASE: release, PATH: `${fakeClaude(root)}${path.delimiter}${process.env.PATH}`, ...(experiments ? { KILN_EXPERIMENTS: experiments } : {}) };
+  const env = { ...desktopEnv(root), KILN_DESKTOP_DATA: path.join(root, 'desktop'), KILN_FAKE_RELEASE: release, PATH: `${fakeClaude(root)}${path.delimiter}${process.env.PATH}` };
   const app = await electron.launch({ args: ['.'], env });
   const page = await app.firstWindow();
   await expect(page.getByRole('button', { name: 'Refresh library', exact: true })).toBeVisible();
@@ -41,7 +41,8 @@ async function launch(root: string, experiments?: string) {
   return { app, page, items, start, release: release_, status };
 }
 const heading = (page: Page) => page.locator('.detail-heading h1');
-const activeTab = (page: Page) => page.locator('.detail-tabs button.active');
+/** An experiment's result is in the item's tests view. */
+const testsView = (page: Page) => page.getByRole('heading', { name: 'Experiments', level: 2 });
 /** Stub desktop notifications in main: record them instead of showing, and say whether the window is in front. */
 const stubNotifications = (app: ElectronApplication, focused: boolean) => app.evaluate(({ BrowserWindow, Notification }, focused) => {
   const state = globalThis as any; state.notices ??= [];
@@ -52,38 +53,41 @@ const stubNotifications = (app: ElectronApplication, focused: boolean) => app.ev
 }, focused);
 const noticeTitles = (app: ElectronApplication) => app.evaluate(() => ((globalThis as any).notices ?? []).map((n: Electron.Notification) => n.title));
 
-test('runNotifications: runs list with Cancel, a queue beyond two runs, a toast with Open result, and a notification while Kiln is behind', async () => {
+test('runs: the status bar lists runs with Cancel, queues beyond two, toasts with Open result, and notifies while Kiln is behind', async () => {
   test.skip(process.platform === 'win32', 'The fake Claude Code CLI is a POSIX script');
   test.setTimeout(150_000);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-run-notifications-ui-'));
-  const { app, page, start, release, status } = await launch(root, 'runNotifications');
+  const { app, page, start, release, status } = await launch(root);
   try {
     await stubNotifications(app, true);
+    const segment = page.locator('.status-bar .status-item.runs');
+    await expect(segment).toHaveText('No agent runs');
     await start('Alpha');
-    const pill = page.getByRole('button', { name: /Claude Code working/ });
-    await pill.click();
+    await expect(segment).toContainText('1 running');
+    await expect(segment).toContainText('Claude Code');
+    await segment.click();
     const runs = page.getByRole('dialog', { name: 'Agent runs' });
     await expect(runs).toBeVisible();
-    const alpha = runs.getByRole('listitem', { name: 'Experiment · Alpha fixture' });
+    const alpha = runs.getByRole('list', { name: 'Active runs' }).getByRole('listitem', { name: 'Experiment · Alpha fixture' });
     await expect(alpha.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(alpha).toContainText('Claude Code');
     await page.keyboard.press('Escape');
     await expect(runs).toHaveCount(0);
-    await expect(pill).toBeFocused();
+    await expect(segment).toBeFocused();
 
     // A third run waits for a free slot instead of being refused, and starts by itself when one frees.
     await start('Beta');
     const gamma = await start('Gamma');
     expect(gamma.status).toBe('queued');
-    await expect(pill).toContainText('· 1 queued');
-    await pill.click();
+    await expect(segment).toContainText('2 running · 1 queued');
+    await segment.click();
     const gammaRow = runs.getByRole('listitem', { name: 'Experiment · Gamma fixture' });
-    await expect(gammaRow.locator('.badge')).toHaveText('queued');
-    await expect(gammaRow).toContainText('Waiting for a free slot');
+    await expect(gammaRow).toContainText('Queued');
+    await expect(gammaRow).toContainText('waiting');
     await expect(gammaRow.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await page.keyboard.press('Escape');
 
-    // Focused window: no desktop notification, a toast with Open result instead; the undo and message toasts are left alone.
+    // Focused window: no desktop notification, a toast with Open result instead.
     release('Alpha');
     const toast = page.locator('.run-toast');
     await expect(toast).toContainText('Experiment passed · Alpha fixture', { timeout: 30_000 });
@@ -91,7 +95,7 @@ test('runNotifications: runs list with Cancel, a queue beyond two runs, a toast 
     expect(await noticeTitles(app)).toEqual([]);
     await toast.getByRole('button', { name: 'Open result' }).click();
     await expect(heading(page)).toHaveText('Alpha fixture');
-    await expect(activeTab(page)).toHaveText(/trials/);
+    await expect(testsView(page)).toBeVisible();
     await expect(toast).toHaveCount(0);
 
     // Behind another window: the notification says what finished, and clicking it opens the result.
@@ -100,42 +104,41 @@ test('runNotifications: runs list with Cancel, a queue beyond two runs, a toast 
     await expect.poll(() => noticeTitles(app), { timeout: 30_000 }).toEqual(['Experiment passed · Beta fixture']);
     await app.evaluate(() => { const notices = (globalThis as any).notices; notices.at(-1).emit('click'); });
     await expect(heading(page)).toHaveText('Beta fixture');
-    await expect(activeTab(page)).toHaveText(/trials/);
+    await expect(testsView(page)).toBeVisible();
     await stubNotifications(app, true);
 
-    // The recent runs button stays once nothing is running, and lists what finished.
+    // Once nothing runs, the segment still leads to what finished in the last 30 minutes.
     release('Gamma');
     await expect(toast).toContainText('Experiment passed · Gamma fixture', { timeout: 30_000 });
-    await expect(pill).toHaveCount(0);
-    await page.getByRole('button', { name: 'Recent runs' }).click();
+    await expect(segment).toHaveText('3 finished recently');
+    await segment.click();
     await expect(runs.getByRole('list', { name: 'Finished runs' }).getByRole('listitem')).toHaveCount(3);
     await expect(runs.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
     await runs.getByRole('listitem', { name: 'Experiment · Gamma fixture' }).getByRole('button', { name: 'Open' }).click();
     await expect(heading(page)).toHaveText('Gamma fixture');
+    await expect(testsView(page)).toBeVisible();
     expect(await noticeTitles(app)).toEqual(['Experiment passed · Beta fixture']);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('runNotifications off: the pill opens the first run, a third run is refused, and no toast or notification appears', async () => {
+test('runs: a queued run can be cancelled before it starts, and no toast announces it', async () => {
   test.skip(process.platform === 'win32', 'The fake Claude Code CLI is a POSIX script');
   test.setTimeout(120_000);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-run-notifications-off-'));
-  const { app, page, items, start, release, status } = await launch(root);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-run-notifications-cancel-'));
+  const { app, page, start, release, status } = await launch(root);
   try {
     await stubNotifications(app, false);
-    const alpha = await start('Alpha'); await start('Beta');
-    const refused = await page.evaluate(async id => { try { await (window as any).kiln.call('agent.start', { id, kind: 'trial', provider: 'claude' }); return ''; } catch (error) { return String(error); } }, items.Gamma);
-    expect(refused).toMatch(/Two agent runs are active/);
-    const pill = page.getByRole('button', { name: /Claude Code working/ });
-    await pill.click();
-    await expect(page.getByRole('dialog', { name: 'Agent runs' })).toHaveCount(0);
-    await expect(heading(page)).toHaveText(/Alpha fixture|Beta fixture/);
+    await start('Alpha'); await start('Beta');
+    const gamma = await start('Gamma');
+    const segment = page.locator('.status-bar .status-item.runs');
+    await expect(segment).toContainText('1 queued');
+    await segment.click();
+    await page.getByRole('dialog', { name: 'Agent runs' }).getByRole('listitem', { name: 'Experiment · Gamma fixture' }).getByRole('button', { name: 'Cancel' }).click();
+    await expect.poll(() => status(gamma.id), { timeout: 10_000 }).toBe('cancelled');
+    await expect(segment).toHaveText(/^2 running/);
+    await page.keyboard.press('Escape');
     release('Alpha'); release('Beta');
-    await expect.poll(() => status(alpha.id), { timeout: 30_000 }).toBe('completed');
-    await expect(pill).toHaveCount(0, { timeout: 10_000 });
-    await page.waitForTimeout(1500);
-    await expect(page.locator('.run-toast')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Recent runs' })).toHaveCount(0);
-    expect(await noticeTitles(app)).toEqual([]);
+    await expect.poll(() => noticeTitles(app), { timeout: 30_000 }).toHaveLength(2);
+    expect(await noticeTitles(app)).not.toContainEqual(expect.stringContaining('Gamma'));
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

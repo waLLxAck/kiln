@@ -8,7 +8,6 @@ import type { Workbench } from '../domain/workbench';
 import { revisionHash } from '../domain/content';
 import { atomicWrite, noLinks, safeRelative, withLock, writeJson } from '../storage/files';
 import { writeWorkingFiles } from '../storage/bundles';
-import { experimentOn } from '../protocol/experiments';
 import { assertMergeable, itemPaths, localPaths } from './sync';
 
 function git(root: string, args: string[]) {
@@ -29,13 +28,11 @@ export function conflicts(wb: Workbench) {
 export function mergeFetched(wb: Workbench, ref = '@{upstream}') {
   invariant(ref === '@{upstream}' || /^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(ref), 'INVALID_REF', 'Choose a valid Git ref.');
   return withLock(wb.canonical, () => {
-    const autoSync = experimentOn(wb.settings(), 'autoSync');
-    if (!autoSync) invariant(!git(wb.root, ['status', '--porcelain']).trim(), 'GIT_DIRTY', 'Checkpoint or resolve local changes before merging.');
     let drivers = ''; try { drivers = git(wb.root, ['config', '--get-regexp', '^merge\..*\.driver$']); } catch { /* No custom merge drivers configured. */ }
     invariant(!drivers.trim(), 'CUSTOM_MERGE_DRIVER', 'This repository configures executable merge drivers. Merge it in your normal Git tool, then review the result in Kiln.');
     git(wb.root, ['rev-parse', '--verify', ref]);
-    // With background sync, drafts may stay while merging as long as GitHub changed none of the same items.
-    if (autoSync) assertMergeable(wb, ref);
+    // Drafts may stay while merging as long as GitHub changed none of the same items.
+    assertMergeable(wb, ref);
     try { git(wb.root, ['merge', '--no-commit', '--no-ff', '--no-edit', ref]); }
     catch (error) { if (!unresolved(wb.root).length) throw error; }
     return conflicts(wb);
@@ -60,7 +57,7 @@ export function resolveItemConflict(wb: Workbench, input: unknown) {
     const revisionFile = path.join(wb.itemDir(data.id), 'revisions', `${selected.revision}.json`);
     noLinks(revisionFile); const revision = revisionSchema.parse(JSON.parse(fs.readFileSync(revisionFile, 'utf8')));
     // With background sync, taking a side keeps its approval when this library trusts one for that exact revision; nothing new is granted.
-    const keepApproval = data.choice !== 'both' && selected.status === 'approved' && experimentOn(wb.settings(), 'autoSync') && wb.approvals().some(a => a.itemId === selected.id && a.revision === selected.revision && a.trust === 'local');
+    const keepApproval = data.choice !== 'both' && selected.status === 'approved' && wb.approvals().some(a => a.itemId === selected.id && a.revision === selected.revision && a.trust === 'local');
     const item = { ...selected, status: keepApproval ? 'approved' : 'captured', conflictHeads: data.choice === 'both' ? [...new Set([conflict.ours.revision, conflict.theirs.revision])] : [] };
     writeJson(path.join(wb.itemDir(data.id), 'item.json'), item);
     atomicWrite(path.join(wb.itemDir(data.id), 'content.md'), revision.content);
@@ -82,14 +79,11 @@ export function finishMerge(wb: Workbench) {
   return withLock(wb.canonical, () => {
     invariant(!unresolved(wb.root).length, 'GIT_CONFLICT', 'Resolve all conflict paths before finishing the merge.');
     git(wb.root, ['rev-parse', '--verify', 'MERGE_HEAD']);
-    if (!experimentOn(wb.settings(), 'autoSync')) git(wb.root, ['add', '--', 'workbench/activity']);
-    else {
-      // Drafts may be present during the merge: only its own conflict records join the commit, never other local activity, nor a
-      // conflict record left behind by an earlier, abandoned merge about some other item.
-      const merged = mergedOnBothSides(wb);
-      const own = localPaths(wb.root).filter(file => file.startsWith('workbench/activity/') && (() => { try { const record = JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { kind?: string; itemId?: string | null }; return record.kind === 'conflict_resolved' && Boolean(record.itemId && merged.has(record.itemId)); } catch { return false; } })());
-      if (own.length) git(wb.root, ['add', '--', ...own]);
-    }
+    // Drafts may be present during the merge: only its own conflict records join the commit, never other local activity, nor a
+    // conflict record left behind by an earlier, abandoned merge about some other item.
+    const merged = mergedOnBothSides(wb);
+    const own = localPaths(wb.root).filter(file => file.startsWith('workbench/activity/') && (() => { try { const record = JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { kind?: string; itemId?: string | null }; return record.kind === 'conflict_resolved' && Boolean(record.itemId && merged.has(record.itemId)); } catch { return false; } })());
+    if (own.length) git(wb.root, ['add', '--', ...own]);
     return git(wb.root, ['commit', '-m', 'Merge library changes; preserve revision history']).trim();
   });
 }
