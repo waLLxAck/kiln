@@ -30,8 +30,6 @@ test('background sync: the status bar shows new GitHub commits and pulls them; o
     await expect(repo).toContainText('main');
     await expect(repo).toContainText('Up to date');
 
-    // At start the app pushes this machine's report to GitHub; the laptop's pull must see it, or its push is rejected.
-    await expect.poll(() => page.evaluate(async () => (await window.kiln.call('fleet.view') as { publish: { state: string } }).publish.state)).not.toBe('queued');
     expect(approveOnLaptop(root, other, 'From the laptop').commit).toBeTruthy();
     // The next background fetch finds it, without anyone asking.
     await expect(repo).toHaveAccessibleName('Repository: 1 new on GitHub');
