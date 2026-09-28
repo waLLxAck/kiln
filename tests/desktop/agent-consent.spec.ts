@@ -60,11 +60,11 @@ test('new session and item switches clear the previous chat composer without inv
     await page.getByRole('button', { name: 'New session', exact: true }).click();
     await expect(message).toHaveValue('');
     await message.fill('Unsent item A');
-    await page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button', { name: 'Library' }).click();
+    await page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await page.locator('.item-card', { hasText: /Chat entry B/ }).click();
     await expect(message).toHaveValue('');
     await expect(page.locator('.chat-context')).toContainText('Chat entry B');
-    await page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button', { name: 'Library' }).click();
+    await page.getByRole('toolbar', { name: 'Item navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await page.locator('.item-card', { hasText: /Chat entry A/ }).click();
     await expect(message).toHaveValue('');
     await expect(page.locator('.chat-context')).toContainText('Chat entry A');
