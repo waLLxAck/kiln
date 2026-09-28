@@ -23,8 +23,8 @@ export async function notifyRunFinished(event: RunFinished, options: { window: (
 }
 
 /**
- * Script for the main window that opens a finished run: the runs list (src/Runs.tsx) opens the item on the tab that holds the
- * result and cancels the event; without it (flag just turned off, or setup is showing) the item opens the ordinary way.
+ * Script for the main window that opens a finished run: the status bar's runs list (src/Runs.tsx) opens the item on the view that holds the
+ * result and cancels the event; while setup is showing (no status bar) the item opens the ordinary way.
  */
 export function openRunScript(event: RunFinished) {
   const detail = JSON.stringify({ id: event.id, itemId: event.itemId, kind: event.kind });

@@ -42,8 +42,13 @@ button.status-item:hover { background: var(--subtle-2); }
 .status-item b { font-weight: 600; }
 .status-item.repo svg { color: var(--muted); }
 .status-item.repo.ok .repo-state { color: var(--ok); }
+.status-item.repo.behind .repo-state, .status-item.repo.behind svg { color: var(--accent-text); }
 .status-item.repo.warn .repo-state, .status-item.repo.warn svg { color: var(--warn); }
 .status-item.repo.bad .repo-state, .status-item.repo.bad svg, .status-item.bad { color: var(--bad); }
+.status-item.repo.offline .repo-state { color: var(--muted); }
+.status-item.repo.on { background: var(--subtle-2); }
+.status-item.repo-pull { gap: 4px; margin-left: -2px; color: var(--accent-text); font-weight: 600; }
+.status-item.repo-pull:hover { background: var(--accent-tint); }
 .status-sep { color: var(--faint); }
 .status-divider { width: 1px; height: 14px; background: var(--line-strong); margin: 0 2px; }
 .status-grow { flex: 1; }
@@ -53,23 +58,47 @@ button.status-item:hover { background: var(--subtle-2); }
 .status-item.version { color: var(--muted); }
 .status-bar .button { height: 22px; padding: 0 8px; font-size: 12px; }
 .status-bar .icon-button { width: 22px; height: 22px; }
-.status-runs { position: relative; }
-.runs-pop { position: absolute; left: 0; bottom: 30px; width: 440px; max-height: 60vh; overflow-y: auto; padding: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); animation: pop .12s ease-out; }
+/* Popovers open upwards from their segment. */
+.status-runs, .status-repo { position: relative; display: inline-flex; align-items: center; }
+.runs-pop, .sync-pop { position: absolute; left: 0; bottom: 30px; max-height: 60vh; overflow-y: auto; padding: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); color: var(--text); animation: pop .12s ease-out; }
+.runs-pop { width: 460px; }
+.sync-pop { width: 360px; }
 .runs-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 6px 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.runs-head > span:first-child { flex: 1; }
+.runs-head > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .runs-head .small { text-transform: none; letter-spacing: 0; font-weight: 400; }
-.run-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: start; width: 100%; padding: 8px; border-radius: var(--r-sm); text-align: left; color: var(--text); }
+.runs-label { padding: 10px 8px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.runs-list { list-style: none; margin: 0; padding: 0; }
+.run-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 7px 8px; border-radius: var(--r-sm); }
 .run-row:hover { background: var(--subtle); }
 .run-row + .run-row { border-top: 1px solid var(--line); }
 .run-icon { display: inline-flex; padding-top: 2px; color: var(--muted); }
-.run-row.running .run-icon, .run-row.running .run-time { color: var(--accent-text); }
+.run-row.running .run-icon, .run-row.running .run-time, .run-row.queued .run-icon { color: var(--accent-text); }
 .run-row.completed .run-icon { color: var(--ok); }
 .run-row.failed .run-icon, .run-row.interrupted .run-icon { color: var(--bad); }
 .run-text { display: flex; flex-direction: column; min-width: 0; font-size: 12.5px; }
 .run-text b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-text .muted { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-row.failed .run-text .muted { color: var(--bad); }
+.run-side { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .run-time { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); padding-top: 1px; }
-.runs-empty { padding: 8px; }
+.run-actions { display: inline-flex; gap: 10px; font-size: 12px; }
+.run-actions .text-button { font-size: 12px; }
+.runs-empty { padding: 8px; margin: 0; }
+.sync-checked { margin: 0; padding: 0 8px 6px; }
+.sync-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.sync-row > span { display: grid; gap: 2px; min-width: 0; }
+.sync-row small { font-size: 12px; overflow-wrap: anywhere; }
+.sync-row.failed small { color: var(--bad); }
+.sync-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 8px 2px; border-top: 1px solid var(--line); }
+.sync-blockers { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.sync-blockers li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--subtle); font-size: 13px; }
+/* The finished-run toast: stacked above the undo and message toasts rather than covering them. */
+.run-toast { gap: 12px; padding-right: 8px; }
+.run-toast > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-toast svg.run-toast-failed { color: var(--bad); }
+.run-toast .toast-close { padding: 0 7px; }
+.run-toast .toast-action svg { color: inherit; }
+body:has(.app-shell > .toast) .run-toast { bottom: 80px; }
 
 /* The open item: a thin bar back to the list, then the item page at full width. */
 .item-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }

@@ -910,28 +910,8 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .update-developer summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
 .update-developer[open] summary { margin-bottom: 6px; }
 
-/* Background sync with GitHub (autoSync experiment): top-bar indicator */
-.sync-indicator { position: relative; display: inline-flex; align-items: center; height: 28px; border-radius: 999px; background: var(--subtle); border: 1px solid var(--line); }
-.sync-pill { display: inline-flex; gap: 8px; align-items: center; height: 100%; padding: 0 10px 0 9px; border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
-.sync-pill:hover { color: var(--text); }
-.sync-pill:focus-visible, .sync-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sync-indicator.behind { background: var(--accent-tint); border-color: var(--ring); }
-.sync-indicator.behind .sync-pill { color: var(--accent-text); }
-.sync-indicator.waiting { background: var(--warn-bg); border-color: var(--warn-line); }
-.sync-indicator.waiting .sync-pill { color: var(--warn); }
 .live-dot.info { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
 .live-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
-.sync-action { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0 11px 0 9px; border-left: 1px solid var(--ring); border-radius: 0 999px 999px 0; color: var(--accent-text); font-size: 12px; font-weight: 600; cursor: pointer; }
-.sync-action:hover { background: var(--accent-tint); }
-.sync-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 150; width: 340px; padding: 14px; display: grid; gap: 10px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-md); animation: pop .1s ease-out; }
-.sync-popover p { margin: 0; }
-.sync-where { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sync-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
-.sync-row > span { display: grid; gap: 2px; min-width: 0; }
-.sync-row small { font-size: 12px; overflow-wrap: anywhere; }
-.sync-row.failed small { color: var(--bad); }
-.sync-blockers { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 6px; }
-.sync-blockers li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--subtle); font-size: 13px; }
 
 /* Improve and re-test from experiments (trialLoop) */
 .trial-group { margin: 18px 0 8px; }
@@ -982,30 +962,7 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 body:has(.toast-stack > .toast) .run-toast { bottom: 80px; }
 body:has(.toast-stack > .toast:nth-child(2)) .run-toast { bottom: 134px; }
 body:has(.toast-stack > .toast:nth-child(3)) .run-toast { bottom: 188px; }
-/* Experimental: Run notifications and runs list (runNotifications) */
-.runs-anchor { position: relative; display: inline-flex; }
-.runs-button { color: var(--accent-text); }
-.runs-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 160; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow-y: auto; padding: 8px 0 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-md); animation: pop .1s ease-out; }
-.runs-head { display: flex; align-items: center; gap: 10px; padding: 2px 10px 8px 14px; border-bottom: 1px solid var(--line); }
-.runs-head small { flex: 1; color: var(--muted); }
-.runs-label { padding: 10px 14px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.runs-list { list-style: none; margin: 0; padding: 4px 0; }
-.run-row { display: flex; align-items: flex-start; gap: 10px; padding: 7px 14px; }
-.run-row + .run-row { border-top: 1px solid var(--line); }
-.run-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.run-row-main b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-row-main small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-row-actions { display: inline-flex; gap: 10px; flex-shrink: 0; padding-top: 1px; }
-.runs-empty, .runs-foot { margin: 0; padding: 8px 14px 4px; }
 .badge.running, .badge.queued { color: var(--accent-text); background: var(--accent-tint); border-color: var(--accent-tint-2); }
-.runs-popover .badge.failed { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
-.run-toast { gap: 12px; padding-right: 8px; }
-.run-toast > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-toast svg.run-toast-failed { color: var(--bad); }
-.run-toast .toast-close { padding: 0 7px; }
-.run-toast .toast-action svg { color: inherit; }
-/* Stack above the undo and message toasts instead of covering them. */
-body:has(.app-shell > .toast) .run-toast { bottom: 80px; }
 /* Experimental: Code editor (codeEditor flag). Token colours reuse the item-kind palette so both themes stay consistent. */
 :root { --code-keyword: #6d4fd1; --code-string: var(--ok); --code-number: #a4650a; --code-atom: var(--accent-text); --code-escape: var(--bad); --code-definition: var(--accent-text); --code-type: #0f7f87; --code-property: var(--accent-text); --code-comment: var(--muted); --code-heading: var(--text); }
 :root[data-theme=dark] { --code-keyword: #b7a3f5; --code-number: #f0b660; --code-type: #6fd0d6; }
