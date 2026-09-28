@@ -44,20 +44,20 @@ test('authorized live install/uninstall affects only the disposable fixture in C
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    for (const [index, environment] of ['Personal Codex', 'Personal Claude Code'].entries()) {
-      await page.getByRole('button', { name: 'Deploy', exact: true }).first().click();
-      await page.getByLabel('Environment').selectOption({ label: `${environment} · ${index === 0 ? 'codex' : 'claude'} · Personal` });
-      await page.getByRole('button', { name: 'Preview deployment' }).click();
+    // Personal installs are the rail's location toggles: Agents (~/.agents/skills) and Claude (~/.claude/skills).
+    const toggles = page.getByRole('region', { name: 'Installs', exact: true }).getByRole('group', { name: 'Installed for' });
+    for (const [index, location] of ['Agents', 'Claude'].entries()) {
       expect(fs.existsSync(destinations[index])).toBe(false);
-      await page.getByRole('button', { name: 'Confirm & apply snapshot' }).click();
+      await toggles.getByRole('button', { name: new RegExp(`^${location}`) }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
       expect(fs.readFileSync(path.join(destinations[index], 'SKILL.md'), 'utf8')).toBe(content);
     }
-    await expect(page.getByRole('button', { name: 'Uninstall skill', exact: true })).toHaveCount(2);
+    await expect(toggles.getByRole('button', { name: /Installed/ })).toHaveCount(2);
     await page.screenshot({ path: path.join(evidence, 'test-skill-installed.png') });
-    for (let index = 0; index < 2; index++) {
-      await page.getByRole('button', { name: 'Uninstall skill', exact: true }).first().click();
-      await page.getByRole('button', { name: 'Confirm uninstall', exact: true }).click();
+    for (const location of ['Agents', 'Claude']) {
+      await toggles.getByRole('button', { name: new RegExp(`^${location}`) }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
     }
     for (const destination of destinations) expect(fs.existsSync(destination)).toBe(false);

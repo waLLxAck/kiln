@@ -111,7 +111,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const projectCopies = copies.filter(c => c.scope === 'project');
   const rows = [...listed, ...projectCopies];
   const row = (copy: Installation, n: number) => <Fragment key={`${copy.targetId}-${copy.destination}`}>{n === listed.length && <h4 className="rail-subhead">Projects</h4>}{copyRow(copy)}</Fragment>;
-  const installsCount = item.kind === 'instruction' ? receipts.length : drifted ? `${drifted} changed` : outdated ? `${outdated} update${outdated === 1 ? '' : 's'} available` : `${installed} installed`;
+  const installsCount = item.kind === 'instruction' ? receipts.length : [drifted && `${drifted} changed`, outdated && `${outdated} update${outdated === 1 ? '' : 's'} available`].filter(Boolean).join(' · ') || `${installed} installed`;
 
   return <aside className="item-rail" aria-label="Item status and organisation">
     {/* A source has no approval; what was made from it is on the page itself. */}
