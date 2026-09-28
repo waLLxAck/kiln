@@ -31,29 +31,31 @@
 .fleet-note { font-size: 12.5px; color: var(--muted); margin: -4px 2px 0; }
 .fleet-note.warn { color: var(--warn); }
 
-/* Summary strip */
-.fleet-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px 10px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-sm); }
-.fleet-stats { display: flex; align-items: center; gap: 12px; color: var(--text-2); flex-wrap: wrap; }
-.fleet-stats > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.fleet-stats b { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
-.fleet-stats .warn, .fleet-stats .warn b { color: var(--warn); }
-.fleet-stats .accent, .fleet-stats .accent b { color: var(--accent-text); }
-.fleet-stats .quiet { color: var(--faint); }
-.fleet-stats .quiet b { color: var(--muted); }
-.fleet-stats > .fleet-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--line-strong); }
-.fleet-strip-note { font-size: 12.5px; color: var(--muted); }
-.fleet-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: rgba(255, 255, 255, .22); font-size: 11px; font-weight: 700; }
-:root[data-theme=dark] .fleet-count { background: rgba(15, 26, 58, .18); }
-
-/* Filter and legend */
-.fleet-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* Filters: presets and state chips (the legend), then the name, column and kind filters with the bulk actions. */
+.fleet-filters, .fleet-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fleet-toolbar { margin-top: -4px; }
 .fleet-seg { display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--subtle-2); }
 .fleet-seg button { height: 26px; padding: 0 10px; border-radius: 6px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .fleet-seg button span { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .fleet-seg button.on { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
-.fleet-legend { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
-.fleet-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.fleet-legend .fleet-glyph { transform: scale(.82); }
+.fleet-seg button:focus-visible, .fleet-state:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.fleet-states { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chip.fleet-state { height: 28px; padding: 0 10px 0 4px; gap: 5px; text-transform: none; white-space: nowrap; }
+.fleet-state .fleet-glyph { transform: scale(.82); margin-right: -1px; }
+.fleet-state:disabled { opacity: .45; cursor: default; }
+.fleet-state:disabled:hover { border-color: var(--line); background: var(--panel); }
+.fleet-state.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.fleet-search { display: flex; align-items: center; gap: 8px; width: 220px; height: 30px; padding: 0 4px 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); }
+.fleet-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+.fleet-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--text); }
+.fleet-search input::placeholder { color: var(--faint); }
+.fleet-search .icon-button { width: 22px; height: 22px; }
+.fleet-filtered { display: inline-flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.fleet-filtered b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; margin-right: -6px; }
+.fleet-filtered .text-button { font-size: 12.5px; padding: 2px 0; }
+.fleet-note-inline { font-size: 12.5px; color: var(--muted); }
+.fleet-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: rgba(255, 255, 255, .22); font-size: 11px; font-weight: 700; }
+:root[data-theme=dark] .fleet-count { background: rgba(15, 26, 58, .18); }
 
 /* Glyphs */
 .fleet-glyph { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; }
@@ -104,6 +106,9 @@ button.fleet-cell.pending { box-shadow: inset 0 0 0 1px var(--accent-tint-2); }
 .fleet-cell.disabled { cursor: not-allowed; }
 .fleet-end { font-size: 12px; color: var(--text-2); text-align: right !important; padding-right: 16px !important; font-variant-numeric: tabular-nums; }
 .fleet-empty-row { padding: 18px; text-align: center; color: var(--muted); font-size: 13px; }
+/* Cells outside the chosen states fade, so the matching ones stand out; they still open on click. */
+.fleet-grid td.fleet-faded .fleet-cell { opacity: .3; }
+.fleet-grid td.fleet-faded .fleet-cell:hover, .fleet-grid td.fleet-faded .fleet-cell.open { opacity: 1; }
 
 /* Overview cells */
 .fleet-summary { display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; min-height: 34px; padding: 4px 8px; border-radius: var(--r-md); }

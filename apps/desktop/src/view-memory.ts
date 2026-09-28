@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type SetStateAction } fro
 import { z } from 'zod';
 import type { QueryToken } from './library-filters';
 import type { GroupKey } from './library-sort';
+import { filterSchema, noFilter, type MachinesFilter } from './machines-filter';
 
 const tokenSchema = z.object({ facet: z.enum(['kind', 'status', 'in', 'state', 'provider', 'scope', 'tag', 'from', 'collection', 'is']), value: z.string() });
 /** What one view remembers: the focused row, whether it is open as a page, the search text, the filter tokens and the order. */
@@ -65,6 +66,8 @@ function useStored<T>(storage: string, schema: z.ZodType<T>, fallback: T) {
   const update = (next: T) => { setValue(next); localStorage.setItem(storage, JSON.stringify(next)); };
   return [value, update] as const;
 }
+/** Machines' state chips, name filter, kind and columns (machines-filter.ts). */
+export const useMachinesFilter = () => useStored<MachinesFilter>('kiln-machines-filter', filterSchema, noFilter);
 /** How the library list is grouped, the same in every view. */
 export const useGroupBy = () => useStored<GroupKey>('kiln-library-group', z.enum(['none', 'collection', 'kind', 'status']), 'none');
 export type SavedView = { id: string; name: string; tokens: QueryToken[]; query: string };
