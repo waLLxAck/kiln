@@ -28,7 +28,7 @@ test('live signed-in Codex: screenshot capture and automatic experiment result',
     const page=await app.firstWindow();await page.getByRole('button',{name:'Capture Ctrl N',exact:true}).click();
     await page.getByLabel('Capture',{exact:true}).fill('https://x.com/georgepickett/status/2095979879137460640');
     await page.getByLabel('Select files',{exact:true}).setInputFiles(process.env.KILN_CAPTURE_IMAGE!);
-    await page.getByRole('button',{name:/^Analyze with/}).click();await page.locator('.item-card').first().click();
+    await page.getByRole('button',{name:/^Analyze with/}).click();await page.locator('.item-card .item-title').first().click();
     await expect(page.getByText('Takeaway',{exact:true}).first()).toBeVisible({timeout:180000});
     await page.getByRole('button',{name:'Test',exact:true}).click();await page.getByLabel('What should it try? (optional)').fill('Review only this synthetic example: function sum(xs) { return xs.reduce((a,b) => a+b, 0); }. Explain whether there is anything to delete, or whether it is already simple. Do not inspect or modify any files.');
     await page.getByRole('region',{name:'Run an experiment'}).getByRole('button',{name:'Run',exact:true}).click();

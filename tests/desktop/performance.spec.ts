@@ -45,7 +45,8 @@ test('217 skills: import preview stays responsive, panels resize, stalls are log
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Library', exact: true }).click();
     await showKind(page, 'skill');
     await expect(page.locator('.item-card')).toHaveCount(217);
-    await page.locator('.item-card').first().click();
+    // The row's middle can be the Invoked by switch; open the item from its title.
+    await page.locator('.item-card .item-title').first().click();
     await expect(page.getByRole('button', { name: 'Edit text', exact: true })).toBeVisible();
     await page.evaluate(() => { const end = performance.now() + 1800; while (performance.now() < end) { /* Deliberate renderer stall. */ } });
     const file = path.join(local, 'desktop', 'logs', 'performance.jsonl');
