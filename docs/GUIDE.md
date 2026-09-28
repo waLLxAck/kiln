@@ -380,7 +380,7 @@ Other typed operations accept `--input request.json`. Results include `schemaVer
 
 ## Features added in 0.22.0
 
-Kiln 0.22.0 shipped these ten changes behind switches in Settings. They are now part of Kiln and always on; the switches are gone, and a switch saved by 0.22.0 is ignored. Some of them are still moving into the redesigned screens, so a few controls described below may sit elsewhere for now.
+Kiln 0.22.0 shipped ten changes behind switches in Settings. They are now part of Kiln and always on; the switches are gone, and a switch saved by 0.22.0 is ignored. Each is described in this guide where it lives.
 
 
 ## Updating the installed app

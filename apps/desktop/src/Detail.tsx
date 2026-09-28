@@ -123,7 +123,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const copyId: MenuEntry = { label: 'Copy item ID', icon: <Hash />, hint: 'For support or scripts', onSelect: () => void perform(async () => copyText(item.id), 'Item ID copied') };
   const opens = ['open-original', 'open-link', 'open-file'].includes(primary);
   const openStored: MenuEntry[] = opens ? [] : [{ label: 'Open stored file or link', icon: <ExternalLink />, onSelect: openItem }];
-  const addFile: MenuEntry = { label: 'Add a file…', icon: <Paperclip />, hint: 'Bundle a file with it, in a new draft revision', onSelect: () => { setView('content'); setAddingFile(true); } };
+  const addFile: MenuEntry = { label: 'Add a file…', icon: <Paperclip />, hint: item.kind === 'agent' ? 'Bundle a file from disk; it is saved as a new revision' : 'Start a text file in your draft, or bundle one from disk', onSelect: () => { setView('content'); setAddingFile(true); } };
   const entries: MenuEntry[] = item.deletedAt ? [
     copyId, 'separator',
     { label: 'Delete permanently…', icon: <Trash2 />, danger: true, onSelect: () => onAction('purge') },

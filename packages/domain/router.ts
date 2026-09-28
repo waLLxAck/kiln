@@ -231,7 +231,7 @@ export class Router {
     if (this.wb.repositoryState().ready) this.publisher.enqueue('unapprove', item.id, item.revision);
     return item;
   }
-  /** Experimental update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
+  /** Update and keep actions may approve on the way; that approval is pushed to GitHub like an explicit Approve. */
   private published<T extends { itemId: string; approved: boolean; revision: string }>(result: T) {
     if (result.approved && this.wb.repositoryState().ready) this.publisher.enqueue('approve', result.itemId, result.revision);
     return result;

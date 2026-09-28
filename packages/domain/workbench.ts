@@ -34,7 +34,6 @@ function workingFingerprint(dir: string, revision: string) {
 export const PENDING_SUMMARY = 'Edited';
 /** Managed trials store `mode: 'codex'` for every provider (the schema predates Claude Code runs), so activity names the provider the trial records instead. */
 const agentLabel = (provider: 'codex' | 'claude' | 'manual') => provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Agent';
-/** Unknown flag names are kept (a flag removed from the list must not fail an older settings file); only true turns one on. */
 export class Workbench {
   readonly canonical: string;
   readonly local: string;
