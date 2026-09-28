@@ -53,6 +53,91 @@ test('Machines manages this machine, says adding a machine is coming soon, and p
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('the state chips filter the matrix, combine with the name and column filters, clear in one click and persist', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-machines-filter-'));
+  const library = readyLibrary(root), home = path.join(root, 'home'), project = path.join(root, 'my-app'); fs.mkdirSync(home); fs.mkdirSync(project);
+  const skill = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill for testing the Machines filters.\n---\n${body}\n`;
+  const app = await electron.launch({ args: ['.'], env: desktopEnv(root, library) });
+  try {
+    const page = await app.firstWindow();
+    // Careful review: installed in Agents, then edited by hand in Claude. Plan first: approved, with a different copy Kiln
+    // didn't put in Agents. Rough idea: a draft, so it can't be installed anywhere. my-app: a project column with nothing in it.
+    await page.evaluate(async ({ home, project, review, plan, rough }) => {
+      const call = window.kiln.call;
+      const agents = await call<{ id: string }>('targets.enroll', { name: 'codex', root: home, provider: 'codex', scope: 'personal' });
+      const claude = await call<{ id: string }>('targets.enroll', { name: 'claude', root: home, provider: 'claude', scope: 'personal' });
+      await call('targets.enroll', { name: 'my-app', root: project, provider: 'codex', scope: 'project' });
+      for (const [title, content] of [['Careful review', review], ['Plan first', plan]]) {
+        const item = await call<{ id: string; revision: string }>('items.create', { kind: 'skill', title, content, collection: 'Personal' });
+        await call('approvals.approve', { id: item.id, revision: item.revision, reviewer: 'Human', scope: 'Test', note: 'Reviewed', evidence: [], waivedChecks: 'Fixture' });
+        if (title === 'Careful review') for (const target of [agents, claude]) await call('skills.install', { itemId: item.id, targetId: target.id, confirm: true });
+      }
+      await call('items.create', { kind: 'skill', title: 'Rough idea', content: rough, collection: 'Personal' });
+    }, { home, project, review: skill('careful-review', 'Read the diff.'), plan: skill('plan-first', 'Plan, then act.'), rough: skill('rough-idea', 'Not ready.') });
+    fs.appendFileSync(path.join(home, '.claude', 'skills', 'careful-review', 'SKILL.md'), 'Edited by hand.\n');
+    fs.mkdirSync(path.join(home, '.agents', 'skills', 'plan-first'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.agents', 'skills', 'plan-first', 'SKILL.md'), skill('plan-first', 'An older plan copied by hand.'));
+    await page.getByRole('button', { name: 'Refresh library' }).click();
+    await nav(page).getByRole('button', { name: 'Machines' }).click();
+
+    const matrix = page.getByRole('table', { name: 'Installs on this machine' });
+    const rows = matrix.getByRole('rowheader');
+    const show = page.getByRole('group', { name: 'Show' }), states = page.getByRole('group', { name: 'Filter by state' });
+    const chip = (name: string) => states.getByRole('button', { name: new RegExp(`^${name} \\d+$`) });
+    const byName = page.getByRole('textbox', { name: 'Filter by name' });
+    await expect(rows).toHaveText([/^Careful review/, /^Plan first/, /^Rough idea/]);
+    await expect(show.getByRole('button', { name: /^All/ })).toHaveAttribute('aria-pressed', 'true');
+    // The chips are the legend, each with its count; a state nothing is in can't be chosen, and marks only show when there are some.
+    await expect(chip('Installed')).toHaveText(/1$/);
+    await expect(chip('Changed outside Kiln')).toHaveText(/1$/);
+    await expect(chip('Not managed')).toHaveText(/1$/);
+    await expect(chip('Outdated')).toBeDisabled();
+    await expect(chip('Marked')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Clear filters' })).toHaveCount(0);
+
+    // Installed keeps the rows with an installed copy; the row's other cells stay, faded.
+    await chip('Installed').click();
+    await expect(chip('Installed')).toHaveAttribute('aria-pressed', 'true');
+    await expect(show.getByRole('button', { name: /^All/ })).toHaveAttribute('aria-pressed', 'false');
+    await expect(rows).toHaveText([/^Careful review/]);
+    await expect(page.getByRole('status').filter({ hasText: 'shown' })).toHaveText(/1 of 3 shown/);
+    await expect(page.getByRole('cell').filter({ has: page.getByRole('button', { name: 'Careful review in Claude: Changed outside Kiln' }) })).toHaveClass(/fleet-faded/);
+    await expect(page.getByRole('cell').filter({ has: page.getByRole('button', { name: 'Careful review in Agents: Installed' }) })).not.toHaveClass(/fleet-faded/);
+    // Chips add up: installed or not managed.
+    await chip('Not managed').click();
+    await expect(rows).toHaveText([/^Careful review/, /^Plan first/]);
+    await page.screenshot({ path: 'test-results/machines-filter.png' });
+    // Needs attention is changed, outdated or not managed.
+    await show.getByRole('button', { name: /^Needs attention/ }).click();
+    await expect(chip('Installed')).toHaveAttribute('aria-pressed', 'false');
+    for (const name of ['Changed outside Kiln', 'Outdated', 'Not managed']) await expect(chip(name)).toHaveAttribute('aria-pressed', 'true');
+    await expect(rows).toHaveText([/^Careful review/, /^Plan first/]);
+    // The name and column filters narrow further.
+    await byName.fill('plan');
+    await expect(rows).toHaveText([/^Plan first/]);
+    await expect(page.getByRole('columnheader', { name: /my-app/ })).toBeVisible();
+    await page.getByRole('group', { name: 'Columns' }).getByRole('button', { name: 'Personal' }).click();
+    await expect(page.getByRole('columnheader', { name: /my-app/ })).toHaveCount(0);
+
+    // Kept for the session: a reload shows the same filtered view.
+    await page.reload();
+    await nav(page).getByRole('button', { name: 'Machines' }).click();
+    await expect(rows).toHaveText([/^Plan first/]);
+    await expect(show.getByRole('button', { name: /^Needs attention/ })).toHaveAttribute('aria-pressed', 'true');
+    await expect(byName).toHaveValue('plan');
+    await expect(page.getByRole('columnheader', { name: /my-app/ })).toHaveCount(0);
+
+    // One click clears everything.
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    await expect(rows).toHaveText([/^Careful review/, /^Plan first/, /^Rough idea/]);
+    await expect(show.getByRole('button', { name: /^All/ })).toHaveAttribute('aria-pressed', 'true');
+    await expect(byName).toHaveValue('');
+    await expect(page.getByRole('columnheader', { name: /my-app/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Clear filters' })).toHaveCount(0);
+    await expect(page.locator('td.fleet-faded')).toHaveCount(0);
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // Multi-machine is off for now (multiMachine in apps/desktop/src/features.ts): Machines manages this machine only and shares no
 // report. The fleet backend is still covered by tests/fleet.test.ts; turn this spec back on together with the switch.
 test.skip('the matrix shows this machine live and another machine from its report, and marks travel through GitHub', async () => {
