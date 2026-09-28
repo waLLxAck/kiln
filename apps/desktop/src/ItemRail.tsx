@@ -1,6 +1,6 @@
 import { experimentsOf, reviews, verdictOf } from './trial-verdicts';
 import { useState, type ReactNode } from 'react';
-import { Check, ChevronDown, ChevronRight, Circle, ExternalLink, FileDiff, FlaskConical, History as HistoryIcon, Plus, Rocket, Server, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, ExternalLink, FileDiff, FlaskConical, History as HistoryIcon, Plus, Rocket, Save, Server, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
 import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge } from './components';
@@ -11,6 +11,7 @@ import { dayLabel } from './history-model';
 import { trialPlace } from './trial-place';
 import { installationLabel } from './Installations';
 import { SkillToggles } from './Skills';
+import { canKeep, keepExplanation } from './KeepChanges';
 
 const closedKey = 'kiln-rail-closed';
 const closedSections = (): string[] => { try { const value = JSON.parse(localStorage.getItem(closedKey) ?? '[]'); return Array.isArray(value) ? value : []; } catch { return []; } };
@@ -81,7 +82,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
     <CopyGlyph copy={copy} />
     <div className="rail-text"><span className="rail-name">{copyLocation(copy, snapshot)}</span><span className={`rail-sub ${copy.state === 'drifted' ? 'bad' : ''}`} title={copy.destination}>{installationLabel(copy)}</span></div>
     {copy.receiptId && copy.state === 'installed' ? <button className="rail-mini" onClick={() => onAction(`uninstall:${copy.receiptId}`)}><Trash2 size={12} />Remove</button>
-      : copy.targetId && (copy.state === 'drifted' || !copy.matches) ? <button className="rail-mini bad" title="See which files differ and how" onClick={() => onAction(`compare:${copy.itemId}:${copy.targetId}`)}><FileDiff size={12} />Compare</button>
+      : copy.targetId && (copy.state === 'drifted' || !copy.matches) ? <><button className="rail-mini bad" title="See which files differ and how" onClick={() => onAction(`compare:${copy.itemId}:${copy.targetId}`)}><FileDiff size={12} />Compare</button>{canKeep(copy) && !item.deletedAt && <button className="rail-mini" aria-label="Keep these changes" title={keepExplanation} onClick={() => onAction(`keep:${copy.itemId}:${copy.targetId}`)}><Save size={12} />Keep</button>}</>
       : <button className="rail-mini accent" title="Let Kiln manage this identical copy, or remove it" onClick={() => onToggleInstall(copy.provider, copy.targetId)}>Install</button>}
   </div>;
   const trialRow = (t: Trial) => <button type="button" className="rail-item rail-button" key={t.id} onClick={onOpenTests} title={t.note || t.task}>
