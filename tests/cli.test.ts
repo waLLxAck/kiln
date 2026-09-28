@@ -205,3 +205,22 @@ test('search returns matches past 500 so later collection filters and totals sta
     assert.ok(matches.includes(rows[504].item.id));
   } finally { index.close(); }
 });
+
+test('items duplicates lists copies and items consolidate merges them through --input', () => {
+  const content = '---\nname: research\ndescription: Investigate a question against primary sources.\n---\n\nRead the official docs and the source code, then write the findings to one Markdown file with a source for each claim.\n';
+  const wb = new Workbench(library, local);
+  let keep: { id: string; revision: string }, copy: { id: string; revision: string };
+  try { keep = wb.create({ title: 'research', kind: 'skill', content }); copy = wb.create({ title: 'research (1)', kind: 'skill', content, collection: 'Imported skills' }); } finally { wb.close(); }
+  const listed = JSON.parse(run(['items', 'duplicates']).stdout).data.groups as { ids: string[]; match: string; items: { title: string }[] }[];
+  const group = listed.find(g => g.ids.includes(keep.id));
+  assert.deepEqual(group?.ids.sort(), [keep.id, copy.id].sort()); assert.equal(group?.match, 'identical');
+  assert.deepEqual(group?.items.map(i => i.title).sort(), ['research', 'research (1)']);
+  const request = path.join(root, 'consolidate.json');
+  fs.writeFileSync(request, JSON.stringify({ keep: keep.id, expect: keep.revision, merge: [{ id: copy.id, expect: copy.revision }] }));
+  const result = run(['items', 'consolidate', '--input', request]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).data.merged, [copy.id]);
+  assert.equal(JSON.parse(run(['items', 'duplicates']).stdout).data.groups.filter((g: { ids: string[] }) => g.ids.includes(keep.id)).length, 0);
+  const stale = run(['items', 'consolidate', '--input', request]);
+  assert.notEqual(stale.status, 0, 'the copy is in the trash now');
+});
