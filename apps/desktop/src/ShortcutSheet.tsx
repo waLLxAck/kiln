@@ -30,7 +30,8 @@ const groups = (quickSearch: string): { title: string; rows: Row[] }[] => [
     [[['Mod', 'click'], ['Shift', 'click']], 'Pick several items, or a range'],
     [[['drag']], 'Drag rows up or down, or by their icon, onto a collection or Unfiled in the sidebar to move them; a picked row takes the whole selection'],
     [[['swipe']], 'Swipe a row sideways to archive it'],
-    [[['Shift', 'F10']], 'On a column heading: Move left, Move right, Reset columns (drag a heading sideways to move it too)'],
+    [[['Shift', 'F10']], 'On a column heading: Move left, Move right, Reset width, Reset columns (drag a heading sideways to move it too)'],
+    [[['←'], ['→'], ['Home'], ['End']], 'On a column edge (Tab to it): resize the column 16px, or to its narrowest or widest; drag the edge too, or double-click it to fit the content'],
   ] },
   { title: 'Item actions (on the focused row or the selection, and in its right-click menu)', rows: [
     [[['O']], 'Open'], [[['C']], 'Copy'], [[['F']], 'Add to or remove from favourites'], [[['E']], 'Open or reveal the stored file or link'],

@@ -138,7 +138,10 @@ test('item editor: CodeMirror with live checks, Ctrl+F/H/S, bundled text files, 
 
     // Saving the fields: one revision with the new title, tags, source and licence, and the item moved to Work.
     await page.getByRole('button', { name: 'Edit text', exact: true }).click();
+    // The editor fills its fields from the revision when it opens; typing before that lands would be overwritten.
+    await expect(form.getByLabel('Title', { exact: true })).toHaveValue('Code editor skill');
     await form.getByLabel('Title', { exact: true }).fill('Renamed skill');
+    await expect(form.getByLabel('Title', { exact: true })).toHaveValue('Renamed skill');
     await form.getByLabel('Tags', { exact: true }).fill('alpha, beta');
     await form.getByLabel('Collection', { exact: true }).fill('Work');
     await form.getByLabel('Licence', { exact: true }).fill('MIT');
