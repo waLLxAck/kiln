@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Activity, Approval, Installation, Item, ItemDetail, PublishJob, Receipt, Revision, Trial } from '../packages/protocol/schema';
-import { primaryAction, splitFrontMatter } from '../apps/desktop/src/item-page';
+import { outdatedCopies, primaryAction, splitFrontMatter, updateInstallsLabel } from '../apps/desktop/src/item-page';
 import { buildHistory, dayLabel, historyFilters, revisionAuthor } from '../apps/desktop/src/history-model';
 import { trialPlace, trialPlaces } from '../apps/desktop/src/trial-place';
 
@@ -24,7 +24,9 @@ test('front-matter becomes ordered properties and the body follows it', () => {
 test('the header offers one next step chosen from the item state', () => {
   assert.equal(primaryAction({ detail: detail(), installations: [], locations: 2 }), 'test', 'an untested skill draft is tested first');
   assert.equal(primaryAction({ detail: detail({ trials: [trial()] }), installations: [], locations: 2 }), 'approve-install', 'a passing skill nobody installed is approved and installed');
-  assert.equal(primaryAction({ detail: detail({ trials: [trial()] }), installations: [copy('installed')], locations: 2 }), 'approve', 'a passing draft of an installed skill is approved');
+  assert.equal(primaryAction({ detail: detail({ trials: [trial()] }), installations: [copy('installed')], locations: 2 }), 'approve-update-installs', 'a passing draft of an installed skill is approved and its copies updated');
+  assert.equal(primaryAction({ detail: detail({ trials: [trial()] }), installations: [copy('external')], locations: 2 }), 'approve', 'copies Kiln did not install are not updated, so a passing draft is only approved');
+  assert.equal(primaryAction({ detail: detail(), installations: [copy('installed')], locations: 2 }), 'test', 'an untested draft of an installed skill is still tested first');
   assert.equal(primaryAction({ detail: detail({ trials: [trial({ judgement: 'fail' })] }), installations: [], locations: 2 }), 'test', 'a failed draft is tested again');
   // Your verdict on an experiment counts over the agent's, and is not an experiment of its own.
   const review = (judgement: 'pass' | 'fail') => trial({ id: `r-${judgement}`, mode: 'manual', provider: 'manual', judgement, outputReference: 'review-of:t1', createdAt: '2026-09-27T12:00:00.000Z' });
@@ -32,6 +34,11 @@ test('the header offers one next step chosen from the item state', () => {
   assert.equal(primaryAction({ detail: detail({ trials: [trial({ judgement: 'fail' }), review('pass')] }), installations: [], locations: 2 }), 'approve-install', 'an agent fail you marked as passed can be approved');
   assert.equal(primaryAction({ detail: detail({ approvals: [approval(hash('b'))] }), installations: [], locations: 2 }), 'install');
   assert.equal(primaryAction({ detail: detail({ approvals: [approval(hash('b'))] }), installations: [copy('installed')], locations: 2 }), 'copy');
+  const behind = { ...copy('installed'), outdated: true as const };
+  assert.equal(primaryAction({ detail: detail({ approvals: [approval(hash('b'))] }), installations: [behind, { ...behind, targetId: 'agents', location: 'agents' }], locations: 2 }), 'update-installs', 'copies behind the approved revision are updated');
+  assert.equal(primaryAction({ detail: detail({ approvals: [approval(hash('b'))] }), installations: [behind, copy('drifted')], locations: 2 }), 'resolve', 'a changed copy still comes first');
+  assert.deepEqual(outdatedCopies('item', [behind, copy('installed'), { ...behind, itemId: 'other' }]), [behind]);
+  assert.equal(updateInstallsLabel(2), 'Update installs (2)');
   assert.equal(primaryAction({ detail: detail({ approvals: [approval(hash('b'))] }), installations: [copy('drifted')], locations: 2 }), 'resolve', 'changed copies come before everything else');
   assert.equal(primaryAction({ detail: detail({ item: item({ kind: 'prompt' }) }), installations: [], locations: 2 }), 'copy', 'an untested prompt is copied');
   assert.equal(primaryAction({ detail: detail({ item: item({ kind: 'prompt' }), trials: [trial()] }), installations: [], locations: 2 }), 'approve');

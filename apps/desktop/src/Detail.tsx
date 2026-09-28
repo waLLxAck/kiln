@@ -5,7 +5,7 @@ import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, Hash, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, ZoomIn } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, Hash, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
 import { api, date, variablesIn } from './api';
@@ -18,7 +18,7 @@ import { History } from './History';
 import { ItemRail } from './ItemRail';
 import { DeployDialog } from './dialogs';
 import { buildHistory } from './history-model';
-import { changedCopiesLabel, primaryAction, splitFrontMatter, type PrimaryAction } from './item-page';
+import { changedCopiesLabel, outdatedCopies, primaryAction, splitFrontMatter, updateInstallsLabel, type PrimaryAction } from './item-page';
 import { CodeEditor } from './CodeEditor';
 import { itemLanguage } from './code-language';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
@@ -123,6 +123,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
     resolve: { label: changedCopiesLabel(drifted.length), icon: <TriangleAlert size={15} />, onClick: () => drifted[0] && onToggleInstall(drifted[0].provider, drifted[0].targetId), title: 'A copy was edited outside Kiln. Compare it, then reinstall the approved version or remove it.' },
     test: { label: 'Test', icon: <FlaskConical size={15} />, onClick: test, title: 'Run this revision on a real task' },
     approve: { label: 'Approve', icon: <ShieldCheck size={15} />, onClick: () => onAction('approve'), title: 'Approve this revision and publish it to GitHub.' },
+    'approve-update-installs': { label: 'Approve & update installs', icon: <CircleArrowUp size={15} />, onClick: () => onAction('approve-update-installs'), title: 'Approve this revision, then update every copy Kiln installed. Copies edited outside Kiln are left alone.' },
+    'update-installs': { label: updateInstallsLabel(outdatedCopies(item.id, installations).length), icon: <CircleArrowUp size={15} />, onClick: () => onAction('update-installs'), title: 'Install the approved revision over copies Kiln installed earlier. Copies edited outside Kiln are left alone.' },
     'approve-install': { label: 'Approve & install', icon: <Download size={15} />, onClick: () => onAction('approve-install'), title: 'Approve this revision, then install it in every configured location.' },
     install: { label: 'Install', icon: <Download size={15} />, onClick: () => onAction('approve-install'), title: 'Install the approved revision in every configured location.' },
     'open-link': { label: 'Open link', icon: <ExternalLink size={15} />, onClick: openItem },

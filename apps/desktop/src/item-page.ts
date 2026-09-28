@@ -18,16 +18,20 @@ export function splitFrontMatter(text: string): { properties: [string, string][]
   return { properties, body: text.slice(match[0].length) };
 }
 
-export type PrimaryAction = 'restore' | 'open-original' | 'analyze' | 'resolve' | 'test' | 'approve' | 'approve-install' | 'install' | 'open-link' | 'open-file' | 'copy';
+export type PrimaryAction = 'restore' | 'open-original' | 'analyze' | 'resolve' | 'test' | 'approve' | 'approve-install' | 'approve-update-installs' | 'update-installs' | 'install' | 'open-link' | 'open-file' | 'copy';
 
 /** Kinds that are used by copying their text into a session. */
 const copied = (item: Item) => !['skill', 'agent', 'instruction', 'link', 'file', 'image', 'reference', 'source'].includes(item.kind);
 export const firstLineIsUrl = (content: string) => /^https?:\/\/\S+$/i.test(content.trim().split('\n')[0]);
 
+/** Copies Kiln installed, unchanged since, that are behind the approved revision: what Update installs writes over. */
+export const outdatedCopies = (itemId: string, installations: Installation[]) => installations.filter(copy => copy.itemId === itemId && copy.state === 'installed' && copy.outdated);
+
 /**
  * The one step the header offers as its primary button, from the item's state. Everything else stays in the ⋯ menu.
  * Changed copies come first because they are a problem on disk; then an untested draft is tested, a passing draft is
- * approved (and installed, for a skill nobody has installed), and a finished item is used: copied, opened or installed.
+ * approved (and installed, for a skill nobody has installed, or its installed copies updated to it), copies behind the
+ * approved revision are updated, and a finished item is used: copied, opened or installed.
  */
 export function primaryAction({ detail, installations, locations }: { detail: ItemDetail; installations: Installation[]; /** Configured install locations on this machine. */ locations: number }): PrimaryAction {
   const { item, revision } = detail;
@@ -43,13 +47,16 @@ export function primaryAction({ detail, installations, locations }: { detail: It
   // Your own verdict on an experiment counts over the agent's.
   const judged = reviews(detail.trials), passed = finished.some(t => verdictOf(t, judged) === 'pass');
   if (!approved && !['archived', 'rejected'].includes(item.status)) {
-    if (passed) return installable && !copies.length && locations > 0 ? 'approve-install' : 'approve';
+    if (passed) return installable && copies.some(copy => copy.state === 'installed') ? 'approve-update-installs' : installable && !copies.length && locations > 0 ? 'approve-install' : 'approve';
     // A prompt is used by copying it, tested or not; everything else is tested before it is trusted.
     if (!copied(item)) return 'test';
   }
+  if (installable && outdatedCopies(item.id, copies).length) return 'update-installs';
   if (installable && !copies.length && locations > 0) return approved ? 'install' : 'approve-install';
   return 'copy';
 }
 
 /** Changed copies, as the header says it: "Resolve 1 changed copy". */
 export const changedCopiesLabel = (count: number) => `Resolve ${count} changed ${count === 1 ? 'copy' : 'copies'}`;
+/** Outdated copies, as the header says it: "Update installs (2)". */
+export const updateInstallsLabel = (count: number) => `Update installs (${count})`;

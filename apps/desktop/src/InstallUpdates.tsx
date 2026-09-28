@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CircleArrowUp, Save } from 'lucide-react';
+import { Save } from 'lucide-react';
 import type { Installation, Item, Snapshot } from '../../../packages/protocol/schema';
 import { api, shortHash } from './api';
 import { InlineError, Modal } from './components';
@@ -24,17 +24,6 @@ export function updateMessage(title: string, result: UpdateResult, quiet = false
 /** Updates every Kiln-written copy that is behind; `approve` approves the current revision first. */
 export async function updateInstalls(item: Item, approve: boolean) {
   return updateMessage(item.title, await api<UpdateResult>('skills.update', { itemId: item.id, approve, expect: item.revision }));
-}
-/**
- * Item header primary action while Kiln manages at least one copy: "Approve & update installs" for a
- * draft, "Update installs (N)" when approved copies are behind. Null means the header keeps its usual button.
- */
-export function installUpdatesButton({ settings, item, approved, copies, onAction }: { settings: Settings; item: Item; approved: boolean; copies: Installation[]; onAction: (name: string) => void }) {
-  if (item.deletedAt || !copies.some(c => c.state === 'installed')) return null;
-  const behind = copies.filter(c => c.outdated).length;
-  if (!approved) return <button className="button primary" title="Approve this revision, then update every copy Kiln installed. Copies edited outside Kiln are left alone." onClick={() => onAction('approve-update-installs')}><CircleArrowUp size={15} />Approve & update installs</button>;
-  if (behind) return <button className="button primary" title="Install the approved revision over copies Kiln installed earlier. Copies edited outside Kiln are left alone." onClick={() => onAction('update-installs')}><CircleArrowUp size={15} />Update installs ({behind})</button>;
-  return null;
 }
 /** Copies whose contents "Keep these changes" can bring into the item: edited after Kiln installed them, or external and different. */
 export const canKeep = (copy?: Installation) => Boolean(copy && copy.targetId && !copy.linked && (copy.state === 'drifted' || (copy.state === 'external' && !copy.matches)));
