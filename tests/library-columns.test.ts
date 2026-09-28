@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_ORDER, gridTracks, isDefaultOrder, moveColumn, normalizeOrder, stepColumn, visibleColumns } from '../apps/desktop/src/library-columns';
+import { COLUMNS, DEFAULT_ORDER, clampWidth, gridColumns, gridTracks, isDefaultLayout, isDefaultOrder, moveColumn, normalizeOrder, normalizeWidths, parseLayout, resetWidth, resizeEdge, setWidth, stepColumn, storedLayout, visibleColumns } from '../apps/desktop/src/library-columns';
 
 test('Collection leads the default order and gives way while a collection is chosen', () => {
   assert.deepEqual(DEFAULT_ORDER, ['collection', 'title', 'status', 'installed', 'test', 'updatedAt']);
@@ -32,7 +32,59 @@ test('Move left and Move right step one visible column and stop at the ends', ()
 });
 test('grid tracks follow the order, Title takes the flexible space, and narrow widths drop the same columns as the CSS', () => {
   const tracks = gridTracks(['title', 'collection', 'status']);
-  assert.equal(tracks.full, 'minmax(180px, 1fr) minmax(100px, 200px) 150px');
-  assert.equal(gridTracks(DEFAULT_ORDER).mid, 'minmax(100px, 200px) minmax(180px, 1fr) 150px 150px 110px');
-  assert.equal(gridTracks(DEFAULT_ORDER).narrow, 'minmax(180px, 1fr) 150px 110px');
+  assert.equal(tracks.full, 'minmax(180px, 1fr) minmax(80px, 200px) minmax(100px, 150px)');
+  assert.equal(gridTracks(DEFAULT_ORDER).mid, 'minmax(80px, 200px) minmax(180px, 1fr) minmax(100px, 150px) minmax(90px, 150px) minmax(80px, 110px)');
+  assert.equal(gridTracks(DEFAULT_ORDER).narrow, 'minmax(180px, 1fr) minmax(100px, 150px) minmax(80px, 110px)');
+});
+test('set widths cap the tracks, so a narrow window squeezes columns toward their minimums instead of overflowing', () => {
+  assert.equal(gridTracks(['collection', 'title', 'status'], { collection: 320, status: 110 }).full, 'minmax(80px, 320px) minmax(180px, 1fr) minmax(100px, 110px)');
+  // Title never takes a width, even one smuggled into storage.
+  assert.equal(gridTracks(['title'], { title: 500 }).full, 'minmax(180px, 1fr)');
+});
+test("widths are clamped to each column's bounds, and the default width is not kept as a setting", () => {
+  assert.equal(clampWidth('status', 10), COLUMNS.status.min);
+  assert.equal(clampWidth('status', 9999), COLUMNS.status.max);
+  assert.equal(clampWidth('updatedAt', 120.6), 121);
+  assert.deepEqual(setWidth({}, 'collection', 260), { collection: 260 });
+  assert.deepEqual(setWidth({ collection: 260 }, 'collection', 5), { collection: COLUMNS.collection.min });
+  assert.deepEqual(setWidth({ collection: 260, status: 100 }, 'collection', COLUMNS.collection.width), { status: 100 });
+  assert.deepEqual(setWidth({}, 'title', 400), {});
+  assert.deepEqual(resetWidth({ collection: 260, status: 100 }, 'status'), { collection: 260 });
+  assert.deepEqual(resetWidth({ collection: 260 }, 'status'), { collection: 260 });
+});
+test('stored widths are repaired: unknown keys, Title, non-numbers and defaults go, the rest are clamped', () => {
+  assert.deepEqual(normalizeWidths({ collection: 300, title: 400, nope: 100, status: 'wide', installed: Number.NaN, test: 5000, updatedAt: 110 }), { collection: 300, test: COLUMNS.test.max });
+  assert.deepEqual(normalizeWidths(null), {});
+  assert.deepEqual(normalizeWidths([120, 130]), {});
+});
+test('the layout reads the order-only format of 0.23.0, the current format, and anything broken as the default', () => {
+  assert.deepEqual(parseLayout(['title', 'collection']), { order: ['title', 'collection', 'status', 'installed', 'test', 'updatedAt'], widths: {} });
+  assert.deepEqual(parseLayout({ order: ['status', 'collection', 'title'], widths: { status: 200 } }), { order: ['status', 'collection', 'title', 'installed', 'test', 'updatedAt'], widths: { status: 200 } });
+  assert.deepEqual(parseLayout({ widths: { collection: 90 } }), { order: DEFAULT_ORDER, widths: { collection: 90 } });
+  for (const broken of [null, 'x', 7, { order: 'x', widths: 'y' }]) assert.ok(isDefaultLayout(parseLayout(broken)));
+});
+test('the default layout is not stored, an order alone is stored as 0.23.0 did, and widths store both', () => {
+  assert.equal(storedLayout({ order: [...DEFAULT_ORDER], widths: {} }), null);
+  const moved = moveColumn(DEFAULT_ORDER, 'title', 0, false);
+  assert.deepEqual(storedLayout({ order: moved, widths: {} }), moved);
+  assert.deepEqual(storedLayout({ order: [...DEFAULT_ORDER], widths: { status: 200 } }), { order: DEFAULT_ORDER, widths: { status: 200 } });
+  // A round trip through JSON, as localStorage does.
+  const layout = { order: moved, widths: { collection: 240, updatedAt: 90 } };
+  assert.deepEqual(parseLayout(JSON.parse(JSON.stringify(storedLayout(layout)))), layout);
+  // Reset columns: the default order and no widths, so nothing is stored.
+  assert.equal(storedLayout({ order: [...DEFAULT_ORDER], widths: resetWidth(resetWidth(layout.widths, 'collection'), 'updatedAt') }), null);
+});
+test('each column is resized from its edge away from Title; Title has no handle of its own', () => {
+  assert.equal(resizeEdge(DEFAULT_ORDER, 'collection'), 'right');
+  assert.equal(resizeEdge(DEFAULT_ORDER, 'status'), 'left');
+  assert.equal(resizeEdge(DEFAULT_ORDER, 'updatedAt'), 'left');
+  assert.equal(resizeEdge(DEFAULT_ORDER, 'title'), null);
+  assert.equal(resizeEdge(['status', 'installed', 'title'], 'installed'), 'right');
+  assert.equal(resizeEdge(['title', 'status'], 'collection'), null);
+});
+test("handles take their column's grid position at each window width, and none where the column is hidden", () => {
+  const at = gridColumns(DEFAULT_ORDER);
+  assert.deepEqual(at.collection, { full: 1, mid: 1, narrow: 0 });
+  assert.deepEqual(at.test, { full: 5, mid: 0, narrow: 0 });
+  assert.deepEqual(at.updatedAt, { full: 6, mid: 5, narrow: 3 });
 });
