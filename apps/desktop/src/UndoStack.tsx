@@ -7,19 +7,19 @@ import { fieldOf, fieldRequests, planUndo, progressLabel, pushUndo, runBatched, 
 
 /** What to set on one item: `{ deleted }`, `{ status }` or `{ favourite }`; null leaves it alone. */
 type Patch = Record<string, unknown> | null;
-type Options = { on: boolean; root: string | undefined; perform: (action: () => Promise<unknown>) => Promise<void>; refresh: () => Promise<void>; setMessage: (message: string) => void };
+type Options = { root: string | undefined; perform: (action: () => Promise<unknown>) => Promise<void>; refresh: () => Promise<void>; setMessage: (message: string) => void };
 const failure = (failed: { error: unknown }[], total: number, verb: string) => { const reason = failed[0].error instanceof Error ? (failed[0].error as Error).message : String(failed[0].error); return new Error(`${failed.length} of ${total} item${total === 1 ? '' : 's'} could not be ${verb}: ${reason.replace(/^[A-Z_]+: /, '')}`); };
 
 /**
- * Experimental keyboardUndo: the last 20 library actions (trash, restore, status, favourite, collection moves) and the
- * toasts that go with them. Changes run in small batches with a progress toast; an undo only touches items still as the
- * action left them. Cleared when the library changes or the flag goes off.
+ * The last 20 library actions (trash, restore, status and archive, favourite, collection moves) and the toasts that go with
+ * them. Changes run in small batches with a progress toast; an undo only touches items still as the action left them.
+ * Cleared when another library is opened.
  */
-export function useUndoStack({ on, root, perform, refresh, setMessage }: Options) {
+export function useUndoStack({ root, perform, refresh, setMessage }: Options) {
   const [stack, setStack] = useState<UndoEntry[]>([]), stackRef = useRef(stack); stackRef.current = stack;
   const [toast, setToast] = useState<UndoEntry | null>(null), [progress, setProgress] = useState<string | null>(null);
   const running = useRef(false), nextId = useRef(1);
-  useEffect(() => { setStack([]); setToast(null); }, [root, on]);
+  useEffect(() => { stackRef.current = []; setStack([]); setToast(null); }, [root]);
   /** Remembers an action that already happened, and offers to undo it. */
   const record = (label: string, changes: UndoChange[]) => { if (!changes.length) return; const entry = { id: nextId.current++, label, changes }; stackRef.current = pushUndo(stackRef.current, entry); setStack(stackRef.current); setToast(entry); };
   /** Sets fields in batches, showing "Moving 12 of 40…" while more than one item is involved. Returns the changes that went through. */
@@ -76,10 +76,20 @@ export function useUndoStack({ on, root, perform, refresh, setMessage }: Options
       } finally { running.current = false; }
     });
   };
+  /**
+   * Runs one request per item, one after another, for changes that cannot be undone (deleting permanently), showing
+   * "Deleting 3 of 40…" meanwhile. Keeps going past a failure and reports the failures at the end.
+   */
+  const each = async <T,>(tasks: T[], run: (task: T) => Promise<unknown>, label: (done: number, total: number) => string, verb: string) => {
+    const total = tasks.length, show = (done: number) => { if (total > 1) setProgress(label(done, total)); };
+    show(0);
+    try { const { failed } = await runBatched(tasks, run, { size: 1, onProgress: show }); if (failed.length) throw failure(failed, total, verb); }
+    finally { setProgress(null); }
+  };
   const toasts = (message: string) => <div className="toast-stack">
     {progress && <div className="toast progress-toast" role="status"><Loader2 className="spin" size={17} />{progress}</div>}
     {toast && <UndoToast key={toast.id} title="" label={toast.label} onUndo={() => undo(toast.id)} onExpire={() => setToast(current => current?.id === toast.id ? null : current)} />}
     {message && <div className="toast" role="status"><Check size={17} />{message}</div>}
   </div>;
-  return { apply, move, recordMove, undo, toasts, depth: stack.length };
+  return { apply, move, recordMove, undo, each, toasts, depth: stack.length };
 }

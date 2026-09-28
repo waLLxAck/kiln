@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
-import { ContextMenu, type MenuEntry } from './components';
+import { ContextMenu, menuPoint, type MenuEntry } from './components';
 import { COLUMNS, DEFAULT_ORDER, isDefaultOrder, moveColumn, normalizeOrder, sortKeyOf, stepColumn, type ColumnKey } from './library-columns';
 import type { Sort, SortKey } from './library-sort';
 
@@ -18,9 +18,10 @@ type Drag = { key: ColumnKey; index: number; line: number; depth: number };
 
 /**
  * The table's header. Clicking a sortable heading sorts by it; dragging a heading moves the column, with a line where it will
- * land. Right-click (or the menu key) offers Move left, Move right and Reset columns for the column under it.
+ * land. Right-click (or the menu key) offers Move left, Move right and Reset columns for the column under it. `sort` is null
+ * while a search orders the list by relevance: then no heading shows as sorted.
  */
-export function LibraryHead({ order, shown, collectionShown, sort, onSort, onOrder }: { order: ColumnKey[]; shown: ColumnKey[]; collectionShown: boolean; sort: NonNullable<Sort>; onSort: (key: SortKey) => void; onOrder: (order: ColumnKey[]) => void }) {
+export function LibraryHead({ order, shown, collectionShown, sort, onSort, onOrder }: { order: ColumnKey[]; shown: ColumnKey[]; collectionShown: boolean; sort: Sort; onSort: (key: SortKey) => void; onOrder: (order: ColumnKey[]) => void }) {
   const head = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; key?: ColumnKey } | null>(null);
@@ -68,8 +69,7 @@ export function LibraryHead({ order, shown, collectionShown, sort, onSort, onOrd
     event.preventDefault();
     const cell = (event.target as Element).closest<HTMLElement>('[data-col]'), key = cell?.dataset.col as ColumnKey | undefined;
     // The menu key and Shift+F10 fire at the focused heading with no pointer position; open under the heading then.
-    const box = cell?.getBoundingClientRect();
-    setMenu(event.clientX || event.clientY || !box ? { x: event.clientX, y: event.clientY, key } : { x: box.left, y: box.bottom + 4, key });
+    setMenu({ ...menuPoint({ clientX: event.clientX, clientY: event.clientY, currentTarget: cell ?? null }), key });
   };
   const entries = (key?: ColumnKey): MenuEntry[] => {
     const index = key ? shown.indexOf(key) : -1;
@@ -81,10 +81,10 @@ export function LibraryHead({ order, shown, collectionShown, sort, onSort, onOrd
   };
   return <><div ref={head} className={`lib-row head ${drag ? 'dragging' : ''}`} role="row" onContextMenu={openMenu}>
     {shown.map(key => {
-      const c = COLUMNS[key], sorted = c.sortable && sort.key === key;
+      const c = COLUMNS[key], dir = c.sortable && sort?.key === key ? sort.dir : null, sorted = dir !== null;
       const common = { 'data-col': key, role: 'columnheader', className: `lib-cell col-${key} ${sorted ? 'sorted' : ''} ${drag?.key === key ? 'moving' : ''}`, onPointerDown: (event: ReactPointerEvent<HTMLElement>) => pointerDown(event, key) };
       return c.sortable
-        ? <button key={key} {...common} type="button" onClick={() => click(key)} title={`Sort by ${c.label.toLowerCase()} · drag to move the column`} aria-sort={sorted ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>{c.label}{sorted && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}</button>
+        ? <button key={key} {...common} type="button" onClick={() => click(key)} title={`Sort by ${c.label.toLowerCase()} · drag to move the column`} aria-sort={dir ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}>{c.label}{dir && (dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}</button>
         : <span key={key} {...common} tabIndex={0} title="Drag to move the column">{c.label}</span>;
     })}
     {drag && <i className="col-drop" style={{ left: drag.line, height: drag.depth }} aria-hidden="true" />}

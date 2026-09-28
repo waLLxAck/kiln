@@ -113,6 +113,9 @@ body.col-dragging, body.col-dragging * { cursor: grabbing !important; user-selec
 .item-card.lib-row.picked { background: var(--accent-tint); }
 .lib-row .item-kind { width: 24px; height: 24px; border-radius: 6px; }
 .lib-row .item-kind svg { width: 14px; height: 14px; }
+/* The icon is the drag handle for filing a row in a collection (a sideways drag elsewhere on the row archives it). */
+.item-card.lib-row .item-kind { cursor: grab; }
+.context-menu:focus { outline: none; }
 .lib-title { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
 .lib-title .item-kind { flex-shrink: 0; }
 .lib-title .item-title { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
