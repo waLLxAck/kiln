@@ -3,7 +3,6 @@ import type { AgentJob } from '../../../packages/agent/service';
 import type { KnownProject, ProjectSource } from '../../../packages/deployment/projects';
 import { api } from './api';
 
-// Experimental: projectInstalls ("Install into project folders").
 export type { KnownProject };
 export const sourceLabel: Record<ProjectSource, string> = { installs: 'installs', experiments: 'experiments', config: 'config files' };
 /**

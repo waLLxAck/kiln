@@ -29,10 +29,17 @@ const stateHint: Record<SkillState, string> = {
   differs: 'The installed copy differs from the approved version. Click to replace or remove it.',
   drifted: 'Installed by Kiln, then edited outside Kiln. Click to reinstall the approved version or remove.',
 };
+/** The personal locations an item gets a toggle for: Agents and Claude for a skill, its own client for an agent definition. */
+function toggleLocations(item: Item, providers: Provider[], targets: Target[]) {
+  return providers.filter(p => item.kind === 'agent' ? p.id === item.agent?.provider : p.id !== 'copilot').map(p => ({ provider: p, target: personalTarget(targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: Target }[];
+}
+export const toggleTargets = (item: Item, providers: Provider[], targets: Target[]) => toggleLocations(item, providers, targets).map(l => l.target);
+/** Personal copies in the client-specific Codex or Copilot folders, listed in their own disclosure under the toggles. */
+export const clientSpecific = (item: Item, copy: Installation) => item.kind === 'skill' && copy.scope !== 'project' && (copy.location === 'codex' || copy.location === 'copilot');
 /** Primary folders stay visible; client-specific copies are available on demand. */
 export function SkillToggles({ item, providers, snapshot, installations, onToggle, onSetup }: { item: Item; providers: Provider[]; snapshot: Snapshot; installations: Installation[]; onToggle: (provider: ProviderId, targetId?: string) => void; onSetup: () => void }) {
-  const locations = providers.filter(p => item.kind === 'agent' ? p.id === item.agent?.provider : p.id !== 'copilot').map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) })).filter(l => l.target) as { provider: Provider; target: Target }[];
-  const extras = item.kind === 'skill' ? installations.filter(i => i.itemId === item.id && (i.location === 'codex' || i.location === 'copilot')) : [];
+  const locations = toggleLocations(item, providers, snapshot.targets);
+  const extras = installations.filter(i => i.itemId === item.id && clientSpecific(item, i));
   const extraTargets = item.kind === 'skill' ? snapshot.targets.filter(t => t.scope === 'personal' && (t.provider === 'copilot' || t.skillFolder)) : [];
   const toggle = (provider: Provider, target: Target) => {
     const { state } = skillState(item, target, installations);
@@ -55,9 +62,9 @@ export function SkillLocationSettings({ providers, targets, onSet, onScan }: { p
   return <><p>Install skills into shared Agents or Claude folders. Agent definitions keep their client’s format and folder. Removing an installation keeps the library item and its history.</p>{providers.filter(p => p.id !== 'copilot').map(p => row(p))}<p className="small muted">Agents is shared by Codex, Copilot, Cursor and other clients. Claude folders can also be read by some other clients. These labels describe locations, not exclusive access.</p><details><summary>Clients that read .agents/skills</summary><p className="small muted">Checked {compatibilityChecked}. Client versions, disabled skills, workspace trust and folder precedence affect what is loaded.</p><ul>{sharedSkillReaders.map(reader => <li key={reader.name}><a href={reader.url} target="_blank" rel="noreferrer">{reader.name}</a> — {reader.note}</li>)}</ul><p className="small muted">The <a href="https://github.com/vercel-labs/skills/blob/main/src/agents.ts" target="_blank" rel="noreferrer">skills installer registry</a> also uses this project convention for Antigravity, Antigravity CLI, Cline, Deep Agents, Dexto, Firebender, Loaf, Replit and PromptScript. Their personal-folder loading is not verified here.</p></details><details><summary>Client-specific locations</summary><p className="small muted">Optional separate copies. A missing folder does not mean skills are unavailable to that client. Codex’s .codex/skills folder is also used by older clients and installers.</p>{providers.filter(p => p.id === 'codex').map(p => row(p, true))}{providers.filter(p => p.id === 'copilot').map(p => row(p))}</details></>;
 }
 /** Explains exactly what will happen in the agent folder before installing or removing. */
-export function SkillInstallDialog({ item, provider, target, installations, approved, settings, onClose, onDone }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; /** Experimental flags: installUpdates adds Update, keepOutsideEdits adds Keep these changes. */ settings?: Snapshot['settings']; onClose: () => void; onDone: (message: string) => void }) {
+export function SkillInstallDialog({ item, provider, target, installations, approved, settings, onClose, onDone }: { item: Item; provider: Provider; target: Target; installations: Installation[]; approved: boolean; settings?: Snapshot['settings']; onClose: () => void; onDone: (message: string) => void }) {
   const { state, installation } = skillState(item, target, installations);
-  // Project copies (experimental projectInstalls) name their project, since every project has its own Claude or Agents folder.
+  // Project copies name their project, since every project has its own Claude or Agents folder.
   const label = `${target.scope === 'project' ? `${target.name} · ` : ''}${item.kind === 'agent' ? provider.label : skillLocationLabel[skillLocation(target)]}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   // A "differs" or "drifted" verdict opens with the file comparison visible, so the decision is made on evidence rather than a label.

@@ -6,12 +6,14 @@ import { targetSkillsFolder } from '../../../packages/providers/skill-locations'
 import { applyWanted, buildReport, cellFor, installable, isProject, latestApproval, localCopies, locationClient, summarise, type Cell, type CellState, type FleetLocation, type LocalLocation } from '../../../packages/fleet/model';
 import { api, date, shortHash } from './api';
 import { Badge, Empty, KindIcon, providerName } from './components';
+import { updateMessage } from './InstallUpdates';
+import type { UpdateResult } from '../../../packages/deployment/service';
 import './machines.css';
 
 type Props = {
   snapshot: Snapshot; installations: Installation[]; providers: Provider[];
   perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>; onMessage: (message: string) => void;
-  onSettings: () => void; onEnroll: () => void; onCompare: (itemId: string, targetId: string) => void; onUninstall: (receiptId: string) => void;
+  onSettings: () => void; /** Opens the project dialog without an item: add a project folder for a location. */ onAddProject: () => void; onCompare: (itemId: string, targetId: string) => void; onUninstall: (receiptId: string) => void;
   /** Opens the install dialog for one item and location on this machine (install, adopt, replace or remove). */
   onInstall?: (itemId: string, provider: ProviderId, targetId: string) => void;
   onOpenItem?: (itemId: string) => void;
@@ -38,12 +40,24 @@ function Glyph({ state }: { state: CellState }) {
   return <span className={`fleet-glyph ${state}`} aria-hidden="true">{state === 'installed' ? <Check size={13} strokeWidth={3} /> : state === 'changed' ? <AlertTriangle size={12} strokeWidth={2.4} /> : state === 'outdated' ? <ArrowUp size={13} strokeWidth={2.8} /> : state === 'marked' ? <Download size={11} strokeWidth={2.6} /> : null}</span>;
 }
 
+const names = (list: string[]) => list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`;
+/** What Update all outdated did, across items: what was updated, adopted as it was, and skipped with why. */
+export function updatedMessage(results: UpdateResult[]) {
+  const updated = results.flatMap(r => r.updated.map(c => `${r.title} in ${c.label}`)), adopted = results.flatMap(r => r.adopted.map(c => `${r.title} in ${c.label}`));
+  const skipped = results.flatMap(r => r.skipped.map(c => `${r.title} in ${c.label} (${c.reason})`));
+  const parts = updated.length ? [`Updated ${names(updated)} to the approved revision.`] : ['No copy needed updating.'];
+  if (adopted.length) parts.push(`${names(adopted)} already matched and ${adopted.length === 1 ? 'is' : 'are'} now managed by Kiln.`);
+  if (skipped.length) parts.push(`Skipped ${skipped.join('; ')}.`);
+  if (updated.length) parts.push('New agent sessions pick up the change.');
+  return parts.join(' ');
+}
+
 /**
  * Machines: every machine that shares this library, as an items × locations matrix per machine and an items × machines
  * overview. This machine is computed live from the snapshot; other machines are their last report on GitHub. Nothing here
  * reaches another machine directly: marks for another machine are committed to its report and take effect when it next syncs.
  */
-export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onEnroll, onCompare, onUninstall, onInstall, onOpenItem }: Props) {
+export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onAddProject, onCompare, onUninstall, onInstall, onOpenItem }: Props) {
   const [view, setView] = useState<FleetView | null>(null);
   const [selected, setSelected] = useState<Selection>('self');
   const [open, setOpen] = useState<{ itemId: string; key: string } | null>(null);
@@ -101,7 +115,9 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
     const installed = report.filter(r => r.result === 'installed approved revision').length, problems = report.filter(r => !/^(installed|already)/.test(r.result));
     onMessage(`${installed} installed${problems.length ? ` · ${problems.length} not installed: ${[...new Set(problems.map(p => p.result))].join('; ')}` : ''}`);
   });
-  const updateOutdated = (copies?: { itemId: string; targetId: string }[]) => void perform(async () => { const result = await api<{ result: string }[]>('fleet.update', copies ? { copies } : {}); setOpen(null); await refresh(); const failed = result.filter(r => !/^(installed|already)/.test(r.result)); onMessage(failed.length ? failed.map(f => f.result).join('\n') : `Updated ${result.length} cop${result.length === 1 ? 'y' : 'ies'} to the approved revision`); });
+  // The item page's update: Kiln's unchanged copies only; edited, different or linked copies are skipped and named.
+  const updateOne = (item: Item, targetId: string) => void perform(async () => { const result = await api<UpdateResult>('skills.update', { itemId: item.id, targetId }); setOpen(null); await refresh(); onMessage(updateMessage(item.title, result)); });
+  const updateAll = () => void perform(async () => { const results = await api<UpdateResult[]>('skills.updateOutdated'); await refresh(); onMessage(updatedMessage(results)); });
   const rename = (name: string) => void perform(async () => { await api('fleet.rename', { name }); setRenaming(null); await load(); }, 'Machine renamed');
 
   const publish = view?.publish;
@@ -144,7 +160,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
       </div>
       <span className="fleet-grow" />
       {machine?.self ? <>
-        <button className="button" disabled={!selfTotals.outdated} onClick={() => updateOutdated()}><ArrowUp size={15} />Update all outdated</button>
+        <button className="button" disabled={!selfTotals.outdated} onClick={updateAll}><ArrowUp size={15} />Update all outdated</button>
         <button className="button primary" disabled={!selfTotals.marked} onClick={syncMarked}><Download size={15} />Install everything marked for this machine{selfTotals.marked > 0 && <span className="fleet-count">{selfTotals.marked}</span>}</button>
       </> : machine ? <span className="fleet-strip-note">Marks take effect when {machine.name} next opens Kiln and syncs.</span> : <span className="fleet-strip-note">Click a cell to see that machine.</span>}
     </div>
@@ -159,7 +175,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
     </div>
 
     {!rows.length ? <Empty icon={<Monitor size={28} />} title="Nothing to install yet.">Approved skills and agents appear here with every place they’re installed.</Empty>
-      : machine ? (machine.locations.length ? Matrix() : machine.self ? <Empty icon={<Monitor size={28} />} title="Choose where approved skills belong." action={<div className="wrap-actions"><button className="button" onClick={onSettings}><Settings size={15} />Set up skill locations</button><button className="button" onClick={onEnroll}>Enroll project folder</button></div>}>Personal skill folders for Codex, Claude Code and Copilot are set up in Settings. Project folders are enrolled here.</Empty>
+      : machine ? (machine.locations.length ? Matrix() : machine.self ? <Empty icon={<Monitor size={28} />} title="Choose where approved skills belong." action={<div className="wrap-actions"><button className="button" onClick={onSettings}><Settings size={15} />Set up skill locations</button><button className="button" onClick={onAddProject}>Add project…</button></div>}>Personal skill folders for Codex, Claude Code and Copilot are set up in Settings. Project folders are added here.</Empty>
         : <Empty icon={<Laptop size={28} />} title={`${machine.name} has no skill locations set up.`}>Locations appear once they are set up in Kiln on that machine.</Empty>)
       : Overview()}
     {machine && !machine.self && (() => { const unknown = Object.keys(machine.report.copies).filter(id => !snapshot.items.some(i => i.id === id)).length; return unknown ? <p className="fleet-note">{unknown} item{unknown === 1 ? '' : 's'} installed on {machine.name} {unknown === 1 ? 'isn’t' : 'aren’t'} in this library yet. Pull from GitHub to see {unknown === 1 ? 'it' : 'them'}.</p> : null; })()}
@@ -227,7 +243,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
       <div className="fleet-popactions">
         {m.self ? <>
           {(cell.state === 'off' || cell.state === 'marked') && install && <button className="button primary" onClick={install}><Download size={14} />Install…</button>}
-          {cell.state === 'outdated' && target && <button className="button primary" onClick={() => updateOutdated([{ itemId: item.id, targetId: target.id }])}><ArrowUp size={14} />Update to {shortHash(rev)}</button>}
+          {cell.state === 'outdated' && target && <button className="button primary" onClick={() => updateOne(item, target.id)}><ArrowUp size={14} />Update to {shortHash(rev)}</button>}
           {(cell.state === 'changed' || cell.state === 'external') && install && <button className="button primary" onClick={install}>Review…</button>}
           {(cell.state === 'changed' || cell.state === 'outdated' || (cell.state === 'external' && !installation?.matches)) && target && <button className="button" onClick={() => { setOpen(null); onCompare(item.id, target.id); }}><FileDiff size={14} />Compare…</button>}
           {cell.state === 'installed' && installation && <button className="button" onClick={() => void api('desktop.revealPath', { path: installation.destination }).catch(e => onMessage(String(e)))}><FolderOpen size={14} />Open folder</button>}
@@ -261,7 +277,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   function ThisMachine() {
     const locations = self.locations.filter(l => l.targetId);
     return <section className="fleet-local" aria-label="Locations on this machine">
-      <div className="fleet-local-head"><h3>Locations on this machine</h3><span className="muted small">Personal locations are set up in <button className="text-button" onClick={onSettings}>Settings</button>; project folders are enrolled here.</span><span className="fleet-grow" />
+      <div className="fleet-local-head"><h3>Locations on this machine</h3><span className="muted small">Personal locations are set up in <button className="text-button" onClick={onSettings}>Settings</button>; projects are added with <button className="text-button" onClick={onAddProject}>Add project…</button></span><span className="fleet-grow" />
         <button className="button" onClick={() => void perform(async () => { setDrift(await api('deploy.drift')); await refresh(); }, 'Installed files checked')}><RefreshCw size={14} />Check drift</button>
         <button className="button" onClick={() => void perform(async () => { const result = await api<{ id: string; status: string }[]>('deploy.recover'); onMessage(result.length ? result.map(r => r.status).join('; ') : 'No interrupted installs'); await refresh(); })}>Recover interrupted installs</button></div>
       <div className="fleet-locations">{locations.map(l => { const t = snapshot.targets.find(x => x.id === l.targetId)!; return <div className="fleet-location" key={l.key}>
