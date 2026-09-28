@@ -37,7 +37,7 @@ function RunMeta({ job }: { job: AgentJob }) {
 }
 /** Compact one-line strip shown on every tab while a run is active, so the tab content underneath stays visible. */
 export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: AgentJob[]; onOpen: (kind: AgentKind) => void }) {
-  // A queued run (runNotifications) shows here too, as Queued, so it can be cancelled before it starts.
+  // A queued run shows here too, as Queued, so it can be cancelled before it starts.
   const running = jobs.filter(job => job.itemId === itemId && activeRun(job));
   return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}>{job.status === 'queued' ? <Clock size={14} /> : <Loader2 size={14} className="spin"/>}<b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.status === 'queued' && 'Queued · '}{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
 }
@@ -66,7 +66,7 @@ export function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
 }
 /** Runs a job again with its exact inputs: provider, project, context and revision, even if the item has been edited since. */
 export const retryJob = (job: AgentJob) => api('agent.start', { id: job.itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind));
-export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions, knownProjects = false }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** trialLoop: offer a Revision selector over this item's history. */ revisions?: ItemDetail; /** projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
+export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions, knownProjects = false }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** Offer a Revision selector over this item's history; without it the current revision runs. */ revisions?: ItemDetail; /** projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -131,7 +131,7 @@ export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, coll
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
   const retry = (job: AgentJob) => { void retryJob(job).catch(e => setError(String(e))); };
   return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
-    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' && <Loader2 size={14} className="spin"/>}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
+    <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' ? <Loader2 size={14} className="spin"/> : job.status === 'queued' && <Clock size={14} />}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
     <RunMeta job={job} />
     {activeRun(job) && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
     <Steps job={job} />

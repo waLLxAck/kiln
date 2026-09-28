@@ -5,7 +5,7 @@ import { inStage, matchesQuery, narrowest, parseTyped, sameToken, stages, status
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { SkillLocationSettings } from './Skills';
 import { useCallback, useEffect, useMemo, useState, useRef, type KeyboardEvent, type MouseEvent } from 'react';
-import { Activity, ArrowRight, Check, ChevronRight, Copy, Download, ExternalLink, FlaskConical, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, Loader2, MessageSquare, Pencil, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
+import { Activity, ArrowRight, Check, ChevronRight, Copy, Download, ExternalLink, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, Loader2, MessageSquare, Pencil, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
 import { Setup, type PreviousLibrary } from './Setup';
 import { ChatPopover } from './Chat';
 import { useKilnCommands } from './commands';
@@ -27,7 +27,7 @@ import { Rail, tools, UNFILED } from './Rail';
 import { repoName, StatusBar } from './StatusBar';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
 import { api, date, platform, shortHash, variablesIn } from './api';
-import { Badge, ContextMenu, Empty, Field, KilnMark, Modal, providerName, shortcutEntry, statusHelp, type MenuEntry } from './components';
+import { Badge, ContextMenu, Empty, Field, KilnMark, Modal, shortcutEntry, statusHelp, type MenuEntry } from './components';
 import { DeployDialog, ResultDialog, TargetDialog, TrialDialog, VariablesDialog } from './dialogs';
 import { ProjectInstallDialog } from './ProjectInstalls';
 import { Detail } from './Detail';
@@ -39,7 +39,8 @@ import { CompareDialog } from './Compare';
 import { canKeep, updateInstalls } from './InstallUpdates';
 import { HomeFilesView } from './HomeFiles';
 import { UpdatesPanel } from './Updates';
-import { ASK_AGENT_EVENT, type AskAgentDetail } from './TrialLoop';
+import { ASK_AGENT_EVENT, reviewOf, type AskAgentDetail } from './TrialLoop';
+import { ExperimentsPage } from './ExperimentsPage';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 
@@ -304,7 +305,7 @@ export default function App() {
   const madeCount = new Map<string, number>(); for (const i of live) if (i.origin) madeCount.set(i.origin.itemId, (madeCount.get(i.origin.itemId) ?? 0) + 1);
   // The newest experiment on each item, for the Last test column. Built once per render from the snapshot, never per row.
   const places = trialPlaces(jobs);
-  const lastTrial = new Map<string, Trial>(); for (const t of snapshot.trials) if (!t.deletedAt && (!lastTrial.has(t.itemId) || lastTrial.get(t.itemId)!.createdAt < t.createdAt)) lastTrial.set(t.itemId, t);
+  const lastTrial = new Map<string, Trial>(); for (const t of snapshot.trials) if (!t.deletedAt && !reviewOf(t) && (!lastTrial.has(t.itemId) || lastTrial.get(t.itemId)!.createdAt < t.createdAt)) lastTrial.set(t.itemId, t);
   // Each filter is a predicate, so the query bar can count what a token would show under all the others.
   const inSection = (i: Item) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i));
   // Until the first results arrive the list stays as it was; after that the previous results stay until the next ones replace them.
@@ -469,7 +470,7 @@ export default function App() {
         <div className="workspace-row"><div className="workspace-content">
         {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
         <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && machinesEnabled && <button className="button primary" onClick={() => setDialog({ name: 'target' })}><Plus size={16} />Enroll project folder</button>}</div>
-        {section === 'experiments' && <>{snapshot.trials.length ? <div className="experiments-table"><div className="table-head"><span>Resource / trial</span><span>Agent</span><span>Revision</span><span>Result</span><span /></div>{[...snapshot.trials].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(t => <div className="table-row" key={t.id}><div><button className="text-button table-title" title="Open the item this experiment tests" onClick={() => openTrialItem(t.itemId)}>{snapshot.items.find(i => i.id === t.itemId)?.title ?? t.itemId}</button><small>{t.case} case · {date(t.createdAt)}</small></div><span>{t.provider === 'manual' ? 'Manual' : providerName[t.provider]}</span><code>{shortHash(t.revision)}</code><Badge status={t.judgement ?? t.status} /><div className="wrap-actions"><button className="text-button" onClick={() => { if (t.status === 'prepared') setDialog({ name: 'result', trial: t }); else openTrialItem(t.itemId); }}>{t.status === 'prepared' ? 'Record result' : 'Open item'} <ArrowRight size={13} /></button><button className="text-button danger-text" disabled={busy} onClick={() => action('delete-trial', t)}><Trash2 size={14} />Delete experiment</button></div></div>)}</div> : <Empty icon={<FlaskConical size={30} />} title="A good prompt earns your trust." action={<button className="button" onClick={() => navigate('library')}>Choose an item to test <ArrowRight size={15} /></button>}>Start with a typical task. Add a boundary case. Record what happened.</Empty>}</>}
+        {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
         {section === 'machines' && !machinesEnabled && <MachinesSoon onSettings={() => navigate('settings')} />}
         {section === 'machines' && machinesEnabled && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onEnroll={() => setDialog({ name: 'target' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
         {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => openTrialItem(a.itemId!)}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
@@ -510,7 +511,7 @@ export default function App() {
     {dialog?.name === 'delete-collection' && dialog.collection && (() => { const name = dialog.collection; return <DeleteCollectionDialog name={name} names={snapshot.collections} items={snapshot.items} onClose={() => setDialog(null)} onDelete={(items, note) => void perform(async () => { await api('collections.delete', { name, confirm: true, items }); if (collection && isWithin(collection, name)) setCollection(''); if (items === 'trash' && itemsWithin(snapshot.items, name).some(i => i.id === selected)) setSelected(''); await completed(); }, note)} />; })()}
     {dialog?.name === 'move-items' && dialog.itemIds && <MoveItemsDialog names={snapshot.collections} items={snapshot.items.filter(i => dialog.itemIds!.includes(i.id))} onClose={() => setDialog(null)} onDone={async (to, moved) => { setDialog(null); setBulkIds([]); await refresh(); setMessage(moved ? `Moved ${moved === 1 ? '1 item' : `${moved} items`} to ${to ? `“${to}”` : 'no collection'}` : 'Already there'); }} />}
     {detail && dialog?.name === 'variables' && <VariablesDialog detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); setMessage('Copied to clipboard'); void refresh(); }} />}
-    {dialog?.name === 'trial' && (dialog.itemId ?? detail?.item.id) && <AgentTrialDialog itemId={dialog.itemId ?? detail!.item.id} providers={providers} targets={snapshot.targets} initialWorkspace={jobs.find(j => j.itemId === (dialog.itemId ?? detail?.item.id) && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} />}
+    {dialog?.name === 'trial' && (dialog.itemId ?? detail?.item.id) && <AgentTrialDialog itemId={dialog.itemId ?? detail!.item.id} providers={providers} targets={snapshot.targets} initialWorkspace={jobs.find(j => j.itemId === (dialog.itemId ?? detail?.item.id) && j.kind === 'trial')?.workspace} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onManual={workspace => setDialog({ name: 'manual-trial', workspace })} revisions={detail?.item.id === (dialog.itemId ?? detail?.item.id) ? detail ?? undefined : undefined} />}
     {detail && dialog?.name === 'manual-trial' && <TrialDialog detail={detail} providers={providers} targets={snapshot.targets} initialWorkspace={dialog.workspace} onClose={() => { setDialog(null); void refresh(); }} onDone={() => void completed()} />}
     {dialog?.name === 'result' && dialog.trial && <ResultDialog trial={dialog.trial} onClose={() => setDialog(null)} onDone={() => void completed()} />}
     {detail && dialog?.name === 'derive' && <CreateSkillDialog itemId={detail.item.id} title={detail.item.title} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} />}

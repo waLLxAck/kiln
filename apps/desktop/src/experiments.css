@@ -72,6 +72,11 @@
 .exp-chip.uncertain { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
 .exp-chip.waiting { color: var(--accent-text); background: var(--accent-tint); border-color: var(--accent-tint-2); border-style: dashed; }
 .exp-chip.neutral { color: var(--muted); background: var(--subtle); border-color: var(--line-strong); }
+/* Your verdict: a small round mark tucked against the chip. */
+.exp-chipset { display: inline-flex; align-items: center; gap: 3px; }
+.exp-you { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; border: 1px solid; flex-shrink: 0; }
+.exp-you.pass { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+.exp-you.fail { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
 
 .exp-cell.exp-isempty { text-align: center; }
 .exp-cell.exp-isempty > button { align-items: center; }
@@ -83,10 +88,13 @@
 .exp-cell.exp-isempty.exp-armed > button { background: var(--accent-tint); border: 1px dashed var(--accent); }
 
 .exp-running { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 7px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--accent-text); background: var(--accent-tint); border: 1px solid var(--accent-tint-2); }
+.exp-running.queued { color: var(--text-2); background: var(--subtle); border-color: var(--line-strong); border-style: dashed; }
 .exp-step { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
 .exp-legend { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
 .exp-legend .exp-chip { height: 20px; font-size: 11px; }
+.exp-legend-you { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.exp-legend-you .exp-you { width: 18px; height: 18px; }
 
 /* Result panel */
 .exp-panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); min-width: 0; }
@@ -101,11 +109,20 @@
 .exp-verdict.waiting { color: var(--accent-text); font-size: 22px; } .exp-verdict.neutral { color: var(--muted); font-size: 22px; }
 .exp-finding { font-size: 13.5px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
 .exp-ref { font-size: 12px; background: var(--accent-tint); color: var(--accent-text); padding: 1px 5px; border-radius: 4px; }
-.exp-human { padding-left: 10px; border-left: 2px solid var(--line-strong); }
+/* Agent's assessment and your verdict side by side; your verdict never replaces the agent's. */
+.exp-verdicts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.exp-verdicts > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.exp-yours { padding-left: 14px; border-left: 1px solid var(--line); }
+.exp-verdict.small { font-size: 20px; margin: 1px 0 0; }
+.exp-notyet { min-height: 20px; display: flex; align-items: center; }
+.exp-judge { display: flex; flex-wrap: wrap; gap: 6px; }
+.exp-judge .button { height: 28px; padding: 0 10px; font-size: 12.5px; box-shadow: none; }
+.exp-judge .button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
 .exp-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .exp-output { display: flex; flex-direction: column; gap: 6px; }
 .exp-output .prompt-preview { max-height: 320px; overflow: auto; margin: 0; }
 .exp-bigrunning { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-size: 20px; font-weight: 600; color: var(--accent-text); }
+.exp-bigrunning.queued { color: var(--text-2); }
 .exp-bigrunning .muted { font-family: var(--font); font-weight: 400; }
 .exp-details { border-top: 1px solid var(--line); padding-top: 6px; }
 .exp-details > summary { display: flex; align-items: center; gap: 6px; padding: 6px 0; color: var(--text-2); font-weight: 500; cursor: pointer; list-style: none; }
@@ -123,3 +140,34 @@
 .exp-others button { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px; border-radius: var(--r-sm); border: 1px solid transparent; }
 .exp-others button:hover { background: var(--subtle); }
 .exp-others button.active { border-color: var(--accent); background: var(--accent-tint); }
+
+/* The Experiments page: every experiment, grouped by item and revision (ExperimentsPage). */
+.exps { display: flex; flex-direction: column; gap: 14px; }
+.exps-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.exps-filter { display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--subtle); }
+.exps-filter button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: calc(var(--r-sm) - 2px); color: var(--text-2); font-size: 12.5px; font-weight: 500; }
+.exps-filter button small { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.exps-filter button:hover { color: var(--text); }
+.exps-filter button[aria-pressed="true"] { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
+.exps-filter button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.exps-none { padding: 8px 2px; }
+.exps-item { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
+.exps-item-head { display: flex; align-items: baseline; gap: 12px; padding: 11px 16px; }
+.exps-title { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--text); min-width: 0; }
+.exps-title svg { color: var(--muted); transition: transform .12s, color .12s; align-self: center; }
+button.exps-title:hover, button.exps-title:focus-visible { color: var(--accent-text); outline: none; }
+button.exps-title:hover svg, button.exps-title:focus-visible svg { color: var(--accent-text); transform: translateX(2px); }
+.exps-rev { border-top: 1px solid var(--line); }
+.exps-rev-head { display: flex; align-items: center; gap: 8px; padding: 6px 16px; background: var(--subtle); }
+.exps-rev-head code { font-weight: 600; color: var(--text); background: none; padding: 0; }
+.exps-row { display: grid; grid-template-columns: 150px 118px minmax(0, 150px) minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 7px 16px; border-top: 1px solid var(--line); font-size: 13px; min-height: 42px; }
+.exps-rev-head + .exps-row { border-top: 0; }
+.exps-row:hover { background: var(--subtle); }
+.exps-row > :first-child { justify-self: start; }
+.exps-who, .exps-where { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.exps-note { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.exps-case { margin-right: 6px; padding: 1px 6px; border-radius: 4px; background: var(--subtle-2); color: var(--text-2); font-size: 11.5px; }
+.exps-when { white-space: nowrap; }
+.exps-actions { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; min-width: 32px; }
+.exps-actions .icon-button { color: var(--muted); }
+.exps-actions .icon-button:hover:not(:disabled) { color: var(--bad); }

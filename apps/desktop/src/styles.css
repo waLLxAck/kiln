@@ -423,25 +423,6 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .timeline-row small { font-size: 12px; color: var(--muted); }
 .timeline-row .text-button { align-self: center; }
 
-/* Experiments table */
-.experiments-table { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
-.table-head, .table-row { display: grid; grid-template-columns: 2.2fr .7fr .7fr .8fr 1.4fr; gap: 16px; align-items: center; padding: 14px 20px; font-size: 13px; }
-.table-head { background: var(--subtle); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 10px; padding-bottom: 10px; }
-.table-row { border-top: 1px solid var(--line); }
-.table-row:hover { background: var(--subtle); }
-.table-row b { font-size: 13px; display: block; font-weight: 600; }
-.table-row small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
-.table-row code { font-size: 11.5px; width: max-content; }
-.table-row .wrap-actions { margin: 0; justify-content: flex-end; gap: 12px; }
-
-/* Trial / receipt cards */
-.trial-card { border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px 18px; margin: 12px 0; background: var(--panel); box-shadow: var(--shadow-sm); }
-.trial-card b { font-size: 13px; }
-.trial-card p { font-size: 13px; margin: 8px 0; color: var(--text-2); }
-.trial-card ul { font-size: 12.5px; color: var(--muted); line-height: 1.7; padding-left: 18px; margin: 6px 0 10px; }
-.trial-card .detail-meta { margin-top: 8px; }
-.trial-card .wrap-actions { margin-top: 12px; }
-
 /* Revisions & diff */
 .revision-list { margin: 16px 0; display: flex; flex-direction: column; gap: 6px; }
 .revision-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); text-align: left; background: var(--panel); transition: background-color .12s, border-color .12s; }
@@ -682,8 +663,6 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .title-row > div { min-width: 0; flex: 1; }
 .distill-counts { display: flex; flex-wrap: wrap; gap: 6px; }
 .distill-counts span { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--panel); border: 1px solid var(--accent-tint-2); color: var(--accent-text); }
-.table-title { font-weight: 600; color: var(--text); padding: 0; text-align: left; }
-.table-title:hover { color: var(--accent-text); }
 
 /* Config files tab: home-folder instruction files and shell profiles */
 .home-intro { padding: 0 20px 10px; line-height: 1.5; }
@@ -933,22 +912,6 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .sync-blockers { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 6px; }
 .sync-blockers li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--subtle); font-size: 13px; }
 
-/* Improve and re-test from experiments (trialLoop) */
-.trial-group { margin: 18px 0 8px; }
-.trial-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 0 2px 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
-.trial-group-head b { font-size: 13px; color: var(--text); }
-.trial-group-head .trial-tally { margin-left: auto; }
-.trial-loop-card .section-heading .inline { display: inline-flex; gap: 6px; align-items: center; }
-.trial-loop-card .detail-meta { margin-top: 4px; }
-.trial-output summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
-.experiment-filter { margin: 0 0 14px; }
-.experiment-filter .button small { margin-left: 6px; opacity: .75; }
-.experiments-grouped .table-group { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px 6px; border-top: 1px solid var(--line); }
-.experiments-grouped section:first-child .table-group { border-top: 0; }
-.experiments-grouped .table-group small { font-size: 12px; color: var(--muted); }
-.experiments-grouped .table-subgroup { display: flex; gap: 12px; align-items: baseline; padding: 6px 20px 6px 32px; font-size: 12px; color: var(--muted); background: var(--subtle); }
-.experiments-grouped .table-row { padding-left: 32px; }
-.trial-loop-card .button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 /* Experimental: Update installed copies (installUpdates). Solid accent, so "Update" stands apart from the tinted found/linked states. */
 .skill-toggle.outdated { color: var(--accent-text); background: var(--accent-tint-2); border-color: var(--accent); }
 .skill-toggle.outdated:hover { background: var(--accent-tint); border-color: var(--accent-strong); }
