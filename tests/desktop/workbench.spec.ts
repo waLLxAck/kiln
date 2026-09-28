@@ -41,8 +41,8 @@ test('real desktop capture → copy → trial → approval → deploy → edit �
     await page.getByLabel('What happened?').fill('Found the known boundary error with a concrete fix.');
     await page.getByLabel('Output transcript (stored only on this machine)').fill('Observed output: the loop includes an extra element.');
     await page.getByRole('button', { name: 'Save judgement' }).click();
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -84,8 +84,8 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     await expect(page.getByRole('button', { name: 'Capture your first item', exact: true })).toBeVisible({ timeout: 60000 });
     await createItem(page, { kind: 'prompt', title: 'Make the next step clear', content: 'Explain the next step clearly.' });
     await expect(page.getByRole('heading', { name: 'Make the next step clear' })).toBeVisible();
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     const approved = await page.evaluate(async () => {
@@ -94,12 +94,11 @@ test('palette keyboard copy, Escape clipboard preservation, persisted reopening 
     });
     expect(approved.note).toBe('Approved by clicking Approve in Kiln.');
     expect(approved.evidence).toEqual([]);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Unapprove', exact: true }).click();
+    await page.getByRole('complementary', { name: 'Item status and organisation' }).getByRole('button', { name: 'Unapprove', exact: true }).click();
     await expect(page.locator('.item-state .badge')).not.toHaveText('approved');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Approve', exact: true }).click();
+    // Approve is in the rail's Approval section, or the header's primary button when it is the next step.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('.item-state .badge')).toHaveText('approved');
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();
     // The item that was open comes back open, still approved; the list behind it has its card.
@@ -146,8 +145,7 @@ test('delete started experiments from both lists and keep them deleted after reo
     // The library comes back as it was left, open item included; Esc returns to the list.
     await page.keyboard.press('Escape');
     await page.locator('.item-card', { hasText: /Delete experiment fixture/ }).click();
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Open tests', exact: true }).click();
+    await page.getByRole('button', { name: 'Open tests', exact: true }).click();
     await page.getByRole('button', { name: 'Delete experiment', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Delete experiment', exact: true })).toHaveCount(0);
     await app.close(); app = await electron.launch({ ...executable, env }); page = await app.firstWindow();

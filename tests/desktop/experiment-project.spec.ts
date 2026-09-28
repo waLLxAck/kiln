@@ -20,8 +20,7 @@ test('experiments offer enrolled projects and browsing, preserve manual selectio
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
     await page.getByText('Project experiment fixture', { exact: true }).first().click();
     // Tests opens the experiments grid; Run options… opens the full run dialog from there.
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Open tests', exact: true }).click();
+    await page.getByRole('button', { name: 'Open tests', exact: true }).click();
     await page.getByRole('button', { name: 'Run options…', exact: true }).click();
     const selector = page.getByLabel('Project / repository', { exact: true });
     await expect(selector).toHaveValue('');
@@ -67,9 +66,8 @@ test('the experiments grid runs from an inline bar with the project fixed by its
     }, { project });
     await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
     await page.getByText('Grid experiment fixture', { exact: true }).first().click();
-    // A prompt's primary action is Copy, so Test is in the ⋯ menu; it opens the grid.
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Test', exact: true }).click();
+    // A prompt's primary action is Copy, so its tests open from the rail's Tests section.
+    await page.getByRole('button', { name: 'Open tests', exact: true }).click();
     const grid = page.getByRole('region', { name: 'Experiments', exact: true });
     // With nothing tested yet the run bar is already open, with a project choice.
     await expect(grid.getByText('No experiments yet')).toBeVisible();
