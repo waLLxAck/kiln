@@ -118,8 +118,10 @@ test('quick search copies on a fast Enter, confirms, hides on blur, remembers th
     await expect(palette.getByRole('group', { name: 'Items' })).toHaveCount(0);
     const actions = palette.getByRole('group', { name: 'Actions' });
     for (const name of ['Capture…', 'Go to Library', 'Go to Experiments', 'Go to Config files', 'Go to Activity', 'Go to Settings', 'Check for updates']) await expect(actions.getByRole('option', { name })).toBeVisible();
+    // "Go to Settings" matches too (its keywords name updates), but a label match leads and is the one Enter runs.
     await input.fill('>updates');
-    await expect(palette.getByRole('option')).toHaveCount(1);
+    await expect(palette.getByRole('option').first()).toHaveAccessibleName(/Check for updates/);
+    await expect(palette.getByRole('option', { name: 'Check for updates' })).toHaveAttribute('aria-selected', 'true');
     await input.press('Enter');
     await expect.poll(() => page.evaluate(() => localStorage.getItem('kiln-section'))).toBe('settings');
     await expect(page.getByText('Checked for updates')).toBeVisible();
