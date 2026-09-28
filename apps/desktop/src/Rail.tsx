@@ -3,6 +3,7 @@ import { Activity, Archive, ChevronDown, ChevronRight, Download, FileCog, FlaskC
 import type { Item } from '../../../packages/protocol/schema';
 import { ancestorsOf, depthOf, isWithin, leafOf } from '../../../packages/domain/collections';
 import { CollectionNameInput, type useCollectionDrag } from './Collections';
+import type { useItemDrag } from './ItemDrag';
 import { KilnMark } from './components';
 import { stages, type Stage } from './library-filters';
 import { machinesEnabled } from './features';
@@ -19,6 +20,8 @@ type Props = {
   section: string; collection: string; stage: Stage | '';
   collections: string[]; live: Item[]; trashed: number; hidden: (item: Item) => boolean; stageCount: (stage: Stage) => number;
   collapsed: string[]; onToggle: (name: string) => void; drag: ReturnType<typeof useCollectionDrag>;
+  /** Library rows dragged onto a collection, or onto Unfiled, are filed there. */
+  itemDrag: ReturnType<typeof useItemDrag>;
   renaming: string | null; onRename: (from: string, to: string) => Promise<unknown>; onRenaming: (name: string | null) => void; onError: (message: string) => void;
   onNavigate: (section: string) => void; onStage: (stage: Stage) => void; onCollection: (name: string) => void; onNewCollection: () => void; onCollectionMenu: (event: MouseEvent, name: string) => void;
 };
@@ -26,8 +29,9 @@ type Props = {
 /**
  * The left rail, grouped by what you are doing: the whole library, its lifecycle stages, your collections, the archive and
  * trash, then the tools. Collections keep their tree: nest and reorder by dragging, rename in place with F2, right-click for more.
+ * Library rows dropped on a collection or on Unfiled move there; Unfiled shows up while rows are dragged even when it is empty.
  */
-export function Rail({ style, theme, onTheme, section, collection, stage, collections, live, trashed, hidden, stageCount, collapsed, onToggle, drag, renaming, onRename, onRenaming, onError, onNavigate, onStage, onCollection, onNewCollection, onCollectionMenu }: Props) {
+export function Rail({ style, theme, onTheme, section, collection, stage, collections, live, trashed, hidden, stageCount, collapsed, onToggle, drag, itemDrag, renaming, onRename, onRenaming, onError, onNavigate, onStage, onCollection, onNewCollection, onCollectionMenu }: Props) {
   const libraryView = ['library', 'archive', 'trash'].includes(section);
   const inLibrary = live.filter(i => !hidden(i)).length, unfiled = live.filter(i => !i.collection && !hidden(i)).length;
   const nested = collections.some(c => c.includes('/'));
@@ -40,12 +44,12 @@ export function Rail({ style, theme, onTheme, section, collection, stage, collec
         <button className={`nav-item ${section === 'library' && stage === s.id ? 'active' : ''}`} onClick={() => onStage(s.id)} title={s.hint}>{stageIcon[s.id]}<span>{s.label}</span><small aria-hidden="true">{stageCount(s.id) || ''}</small></button>
       </div>)}</div>
       <div className="sidebar-label collection-label" {...drag.top}>Collections<button className="icon-button" aria-label="New collection" title="New collection; drop a collection here to move it to the top level" onClick={onNewCollection}><Plus size={13} /></button></div>
-      {collections.filter(c => !ancestorsOf(c).some(a => collapsed.includes(a))).map(c => { const parent = collections.some(n => n.startsWith(c + '/')), open = !collapsed.includes(c); return <div className="collection-node" key={c} style={{ paddingLeft: depthOf(c) * 14 }} {...drag.row(c, renaming !== c)}>
+      {collections.filter(c => !ancestorsOf(c).some(a => collapsed.includes(a))).map(c => { const parent = collections.some(n => n.startsWith(c + '/')), open = !collapsed.includes(c); return <div className="collection-node" key={c} style={{ paddingLeft: depthOf(c) * 14 }} {...itemDrag.target(c, drag.row(c, renaming !== c))}>
         {nested && (parent ? <button className="collection-toggle" aria-label={`${open ? 'Collapse' : 'Expand'} ${c}`} aria-expanded={open} onClick={() => onToggle(c)}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button> : <span className="collection-toggle" aria-hidden="true" />)}
         {renaming === c ? <div className="nav-item collection-rename"><Folder size={16} /><CollectionNameInput name={c} onRename={to => onRename(c, to)} onDone={() => onRenaming(null)} onError={onError} /></div>
           : <button className={`nav-item ${collection === c && libraryView ? 'active' : ''}`} onClick={() => onCollection(c)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); onRenaming(c); } }} onContextMenu={event => { event.preventDefault(); onCollectionMenu(event, c); }} title={parent ? `Show “${c}” and its subfolders in the library` : `Show only “${c}” in the library`}><Folder size={16} /><span>{leafOf(c)}</span><small>{live.filter(i => isWithin(i.collection, c) && !hidden(i)).length}</small></button>}
       </div>; })}
-      {(unfiled > 0 || collection === UNFILED) && <button className={`nav-item ${collection === UNFILED && libraryView ? 'active' : ''}`} onClick={() => onCollection(UNFILED)} title="Items outside every collection. They also show in the whole library."><Inbox size={16} /><span>Unfiled</span><small>{unfiled || ''}</small></button>}
+      {(unfiled > 0 || collection === UNFILED || itemDrag.active) && <button className={`nav-item ${collection === UNFILED && libraryView ? 'active' : ''}`} {...itemDrag.target('')} onClick={() => onCollection(UNFILED)} title="Items outside every collection. They also show in the whole library."><Inbox size={16} /><span>Unfiled</span><small>{unfiled || ''}</small></button>}
       <div className="rail-gap" />
       <button className={`nav-item ${section === 'archive' ? 'active' : ''}`} onClick={() => onNavigate('archive')}><Archive size={16} /><span>Archive</span><small aria-hidden="true">{live.filter(hidden).length || ''}</small></button>
       <button className={`nav-item ${section === 'trash' ? 'active' : ''}`} onClick={() => onNavigate('trash')}><Trash2 size={16} /><span>Trash</span><small aria-hidden="true">{trashed || ''}</small></button>

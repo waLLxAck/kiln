@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Archive, Check, Undo2 } from 'lucide-react';
 
-/** `label` replaces the archive wording for the other undoable actions (experimental keyboardUndo). */
+/** An action that can still be taken back. `label` replaces the archive wording (the library's undo stack names every action). */
 export function UndoToast({ title, label, onUndo, onExpire }: { title: string; label?: string; onUndo: () => void; onExpire: () => void }) {
   const [hovered, setHovered] = useState(false), [focused, setFocused] = useState(false);
   const remaining = useRef(8000), expire = useRef(onExpire);

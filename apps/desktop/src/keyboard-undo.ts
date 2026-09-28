@@ -2,8 +2,8 @@ import type { Item } from '../../../packages/protocol/schema';
 
 /*
  * Keyboard navigation and undo: the pure parts (list keys, type-ahead, the undo stack's rules, batching), kept free of the
- * bridge so unit tests can run them. The hooks and components that use them live in keyboard.ts, UndoStack.tsx,
- * ItemDrag.tsx and ShortcutSheet.tsx.
+ * bridge so unit tests can run them. The hooks and components that use them live in keyboard.ts (used by LibraryTable.tsx),
+ * UndoStack.tsx, ItemDrag.tsx and ShortcutSheet.tsx.
  */
 
 /** The ids from the anchor row to the target row, both included, in list order. Nothing when either is out of range. */

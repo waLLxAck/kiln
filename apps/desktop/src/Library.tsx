@@ -1,12 +1,12 @@
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { useRef, useState, type ReactNode } from 'react';
-import { ArrowDownUp, ArrowLeft, Check, ChevronDown, ChevronUp, Github, RefreshCw, Rows3 } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronUp, Github, RefreshCw, Rows3 } from 'lucide-react';
 import type { Approval, Installation, Item, Provider, Target, Trial } from '../../../packages/protocol/schema';
 import { Badge, ContextMenu, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
 import { skillState } from './Skills';
 import { installable } from './library-filters';
-import { sortChoices, sortLabel, type GroupKey, type Sort } from './library-sort';
+import type { GroupKey } from './library-sort';
 import './library.css';
 
 export { arrangeItems, defaultSort, groupItems, KINDS, kindPlural, moveInOrder, nextSort, sortItems, type GroupKey, type Sort, type SortKey } from './library-sort';
@@ -67,7 +67,7 @@ export function TestCell({ item, trial, place = 'Unknown project' }: { item: Ite
   return <span className="lib-test" title={`${v.label} on ${place} · ${trial.case} case · ${date(trial.createdAt)}${older}`}><span className={`lib-pill ${v.tone}`}>{v.label}</span><span className="muted ellipsis">{place}</span></span>;
 }
 
-/** A pill that opens a menu of choices, used for Sort and Group by. */
+/** A pill that opens a menu of choices, used for Sort and Group by (QueryBar.tsx). */
 export function MenuPill({ icon, name, value, entries, title }: { icon: ReactNode; name: string; value: string; entries: MenuEntry[]; title: string }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
@@ -75,10 +75,6 @@ export function MenuPill({ icon, name, value, entries, title }: { icon: ReactNod
     <button ref={ref} type="button" aria-haspopup="menu" aria-expanded={Boolean(open)} title={title} onClick={() => { const box = ref.current!.getBoundingClientRect(); setOpen({ x: box.right - 220, y: box.bottom + 4 }); }}>{icon}<span className="faint">{name}:</span> <b>{value}</b><ChevronDown size={12} /></button>
     {open && <ContextMenu x={open.x} y={open.y} entries={entries} onClose={() => setOpen(null)} />}
   </span>;
-}
-export function SortMenu({ sort, onSort }: { sort: NonNullable<Sort>; onSort: (sort: Sort) => void }) {
-  const entries: MenuEntry[] = sortChoices.flatMap(c => [...(c.sort.key === 'order' ? ['separator' as const] : []), { label: c.label, hint: c.hint, checked: c.sort.key === sort.key && c.sort.dir === sort.dir, onSelect: () => onSort(c.sort) }]);
-  return <MenuPill icon={<ArrowDownUp size={13} />} name="Sort" value={sortLabel(sort)} entries={entries} title="Order of the list" />;
 }
 const groupLabel: Record<GroupKey, string> = { none: 'None', collection: 'Collection', kind: 'Kind', status: 'Status' };
 export function GroupMenu({ group, onGroup }: { group: GroupKey; onGroup: (group: GroupKey) => void }) {
