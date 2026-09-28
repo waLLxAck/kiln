@@ -21,7 +21,9 @@ export function useUndoStack({ root, perform, refresh, setMessage }: Options) {
   const running = useRef(false), nextId = useRef(1);
   useEffect(() => { stackRef.current = []; setStack([]); setToast(null); }, [root]);
   /** Remembers an action that already happened, and offers to undo it. */
-  const record = (label: string, changes: UndoChange[]) => { if (!changes.length) return; const entry = { id: nextId.current++, label, changes }; stackRef.current = pushUndo(stackRef.current, entry); setStack(stackRef.current); setToast(entry); };
+  const record = (label: string, changes: UndoChange[], run?: UndoEntry['run']) => { if (!changes.length && !run) return; const entry = { id: nextId.current++, label, changes, run }; stackRef.current = pushUndo(stackRef.current, entry); setStack(stackRef.current); setToast(entry); };
+  /** Remembers an action whose undo is its own request (a consolidation); `run` puts it back and returns what to say. */
+  const recordRun = (label: string, run: () => Promise<string>) => record(label, [], run);
   /** Sets fields in batches, showing "Moving 12 of 40…" while more than one item is involved. Returns the changes that went through. */
   const execute = async <C extends { id: string; expect: string; field: UndoField; to: UndoValue }>(changes: C[], label: (done: number, total: number) => string) => {
     const requests = fieldRequests(changes), total = changes.length;
@@ -60,6 +62,8 @@ export function useUndoStack({ root, perform, refresh, setMessage }: Options) {
     if (running.current || (only !== undefined && top?.id !== only)) return;
     if (!top) { setMessage('Nothing to undo'); return; }
     running.current = true; stackRef.current = stackRef.current.slice(0, -1); setStack(stackRef.current); setToast(null);
+    // Its own undo either works or explains why not (something changed since); either way it is not offered again.
+    if (top.run) { const run = top.run; void perform(async () => { try { const said = await run(); await refresh(); setMessage(said); } finally { running.current = false; } }); return; }
     void perform(async () => {
       let left: UndoEntry | null = top;
       try {
@@ -91,5 +95,5 @@ export function useUndoStack({ root, perform, refresh, setMessage }: Options) {
     {toast && <UndoToast key={toast.id} title="" label={toast.label} onUndo={() => undo(toast.id)} onExpire={() => setToast(current => current?.id === toast.id ? null : current)} />}
     {message && <div className="toast" role="status"><Check size={17} />{message}</div>}
   </div>;
-  return { apply, move, recordMove, undo, each, toasts, depth: stack.length };
+  return { apply, move, recordMove, recordRun, undo, each, toasts, depth: stack.length };
 }

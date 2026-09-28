@@ -30,6 +30,8 @@ export const itemSchema = z.object({
   createdAt: z.string(), updatedAt: z.string(), deletedAt: z.string().nullable(),
   origin: z.object({ itemId: idSchema, revision: hashSchema }).nullable(),
   conflictHeads: z.array(hashSchema).optional(),
+  /** Set on a copy moved to the trash by consolidation: the item it was merged into. Cleared when it is restored. */
+  mergedInto: idSchema.optional(),
 });
 export const revisionSchema = z.object({
   hashVersion: z.literal(2).optional(),
@@ -84,6 +86,14 @@ export type Trial = z.infer<typeof trialSchema>;
 export type Target = z.infer<typeof targetSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type Bundle = z.infer<typeof bundleSchema>;
+/**
+ * Items that look like copies of one another: same kind, and the same text, or the same name with mostly the same text.
+ * `match` is the loosest link in the group: identical (text and bundled files), same-text (bundled files differ) or similar.
+ * `similarity` is the lowest estimated overlap of the text between linked copies, 0 to 1.
+ */
+export type DuplicateGroup = { ids: string[]; match: 'identical' | 'same-text' | 'similar'; similarity: number };
+/** Pairs of items the user said are not duplicates, stored in the library (`workbench/distinct.json`) so every machine agrees. */
+export const distinctSchema = z.object({ schemaVersion: z.literal(1), pairs: z.array(z.tuple([idSchema, idSchema])).max(20_000) });
 export type ItemDetail = { item: Item; revision: Revision; revisions: Revision[]; approvals: Approval[]; trials: Trial[]; observations: Observation[]; validation: string[]; duplicates: Item[]; /** Recorded analyses of this source, newest first. */ analyses: Analysis[] };
 export type Plan = { id: string; itemId: string; revision: string; targetId: string; destination: string; operation: 'create' | 'replace'; expectedState: string | null; proposedHash: string; files: Record<string, string>; createdAt: string; expiresAt: string; blocked: string | null };
 export type Receipt = { id: string; planId: string; itemId: string; revision: string; targetId: string; destination: string; hash: string; previousHash: string | null; previousFiles: Record<string, string> | null; previousRevision: string | null; status: 'applied' | 'rolled_back' | 'uninstalled' | 'partial'; createdAt: string; newSessionRequired: true; error?: string };
@@ -107,7 +117,7 @@ export type PublishJob = { id: string; itemId: string; revision: string; title: 
 /** Result of a local update check. `available` is the newest installer in the update source whose version is above the running app. */
 export type UpdateStage = { state: 'idle' } | { state: 'preparing'; version: string; progress: number } | { state: 'ready'; version: string } | { state: 'failed'; message: string };
 export type UpdateStatus = { current: string; source: string; /** github: published releases (the default for published builds); setting: a folder chosen in Settings; build: the release folder of the repository this build came from; off: checks disabled; none: nothing to watch. */ sourceKind: 'github' | 'setting' | 'build' | 'off' | 'none'; packaged: boolean; /** For GitHub, `path` is the release page. */ available: { version: string; path: string } | null; stage: UpdateStage; /** Git commit this build was made from, when known. */ commit: string; /** False for a watched folder on macOS and Linux: that path runs the Windows installer. */ supported?: boolean; /** GitHub only. app: downloads and installs in place; download: the new version is downloaded from the release page by hand. */ install?: 'app' | 'download'; /** GitHub only: when the last check finished. */ checkedAt?: string; error?: string };
-export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; /** Commits on GitHub, as of the last fetch, that this machine has not pulled. */ behind: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string; /** Per item id: times copied, and every usage observation (copies, opens, tests, agent use). Items never used are absent. */ usage: Usage };
+export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; /** Commits on GitHub, as of the last fetch, that this machine has not pulled. */ behind: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string; /** Per item id: times copied, and every usage observation (copies, opens, tests, agent use). Items never used are absent. */ usage: Usage; /** Likely duplicates among live items, not counting pairs marked as distinct. */ duplicates: DuplicateGroup[] };
 export type Usage = Record<string, { copied: number; used: number }>;
 /**
  * Where a copy sits, as a key that means the same thing on every machine and names no path: a personal skill location

@@ -139,6 +139,37 @@ export class FleetService {
     this.schedule(0);
     return { pending: edits.length };
   }
+  /**
+   * Consolidation: every machine's marks for the merged copies move to the kept item, as ordinary mark edits. Returns the marks
+   * moved (and whether the kept item was already marked there) so an undo can move them back. With no marks anywhere, as while
+   * Machines is off, it reads the reports and changes nothing.
+   */
+  repoint(from: string[], to: string) {
+    const self = this.identity(), commit = this.readable().commit;
+    const machines = [{ id: self.id, wanted: this.wanted() }, ...(commit ? this.reports(commit).filter(r => r.id !== self.id).map(r => ({ id: r.id, wanted: this.withEdits(r.wanted, r.id) })) : [])];
+    const moved: { machineId: string; itemId: string; location: string; had: boolean }[] = [], edits: WantedEdit[] = [], at = now();
+    for (const machine of machines) {
+      const marked = new Set(machine.wanted[to] ?? []);
+      for (const id of from) for (const location of machine.wanted[id] ?? []) {
+        moved.push({ machineId: machine.id, itemId: id, location, had: marked.has(location) });
+        edits.push({ machineId: machine.id, itemId: id, location, wanted: false, at });
+        if (!marked.has(location)) { edits.push({ machineId: machine.id, itemId: to, location, wanted: true, at }); marked.add(location); }
+      }
+    }
+    this.applyEdits(edits);
+    return moved;
+  }
+  /** Moves marks that `repoint` moved back to the copies they came from. */
+  unpoint(moved: { machineId: string; itemId: string; location: string; had: boolean }[], to: string) {
+    const at = now();
+    this.applyEdits(moved.flatMap(m => [{ machineId: m.machineId, itemId: m.itemId, location: m.location, wanted: true, at }, ...(m.had ? [] : [{ machineId: m.machineId, itemId: to, location: m.location, wanted: false, at }])]));
+  }
+  private applyEdits(edits: WantedEdit[]) {
+    if (!edits.length) return;
+    const same = (a: WantedEdit, b: WantedEdit) => a.machineId === b.machineId && a.itemId === b.itemId && a.location === b.location;
+    this.savePending([...this.pending().filter(e => !edits.some(n => same(e, n))), ...edits]);
+    this.schedule(0);
+  }
   /** Publishes this machine's report now if it changed, together with any unsent marks. */
   report() { this.schedule(0); return this.publishState(); }
   /**

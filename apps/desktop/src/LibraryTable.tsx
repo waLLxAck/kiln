@@ -1,5 +1,5 @@
 import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type UIEvent } from 'react';
-import { ChevronDown, ChevronRight, Copy, Download, FlaskConical, Star, Tags, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Download, Files, FlaskConical, Star, Tags, X } from 'lucide-react';
 import type { Approval, Installation, Item, Trial } from '../../../packages/protocol/schema';
 import { ContextMenu, KindIcon, type MenuEntry } from './components';
 import { date } from './api';
@@ -13,7 +13,7 @@ import { DraftMark } from './item-editing';
 import { useListKeys } from './keyboard';
 import type { useItemDrag } from './ItemDrag';
 
-type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number };
+type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number; /** Other copies of it in the library (a duplicate group). */ copies?: number; /** In Trash after a consolidation: the title of the item it was merged into ('' when that is gone too). */ mergedInto?: string };
 type Props = {
   groups: { key: string; label: string; items: Item[] }[]; group: GroupKey; collectionShown: boolean;
   row: (item: Item) => Row; locations: Location[]; installations: Installation[]; approvals: Approval[];
@@ -70,11 +70,11 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
           {shut ? <ChevronRight size={14} /> : <ChevronDown size={14} />}<span className="ellipsis">{g.label}</span><span className="lib-group-count">{g.items.length}</span>
           {shut && <span className="faint ellipsis lib-group-hint">{g.items.slice(0, 3).map(i => i.title).join(', ')}{g.items.length > 3 ? '…' : ''}</span>}
         </button>}
-        {!shut && g.items.map(item => { const { published, trial, place, from, made } = row(item), isPicked = many && picked.includes(item.id);
+        {!shut && g.items.map(item => { const { published, trial, place, from, made, copies, mergedInto } = row(item), isPicked = many && picked.includes(item.id);
           // The description is left out of the row to save space; it stays discoverable as the row's tooltip.
           const about = item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '));
           const cells: Record<ColumnKey, ReactNode> = {
-            title: <span className="lib-title"><span className={`item-kind ${item.kind}`} title={`${item.kind} · drag onto a collection to move it`}><KindIcon kind={item.kind} size={14} /></span><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} />{from && <span className="lib-from" title={`From ${from.full}`}>from {from.label}</span>}</span>,
+            title: <span className="lib-title"><span className={`item-kind ${item.kind}`} title={`${item.kind} · drag onto a collection to move it`}><KindIcon kind={item.kind} size={14} /></span><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} />{from && <span className="lib-from" title={`From ${from.full}`}>from {from.label}</span>}{copies ? <span className="lib-dup" aria-label={`${copies + 1} copies`} title={`${copies} other ${copies === 1 ? 'copy' : 'copies'} of this ${item.kind} in your library. Open it to consolidate.`}><Files size={11} aria-hidden="true" />{copies + 1}</span> : null}{mergedInto !== undefined && <span className="lib-from" title="Consolidated: restore it to have it back as its own item">merged into {mergedInto || 'a deleted item'}</span>}</span>,
             collection: <span className="muted" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>,
             status: <StatusCell item={item} approvals={approvals} published={published} made={made} />,
             installed: <InstalledCell item={item} locations={locations} installations={installations} />,

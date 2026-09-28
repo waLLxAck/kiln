@@ -37,6 +37,10 @@ items create --file draft.md --title "Title" [--kind prompt] [--from <id>] [--in
                             # --from links the new item to the current revision of <id>; meta.json may set description, tags, collection, source
 items update <id> --file draft.md --expect <hash> [--summary "what changed"] [--input meta.json]
 items restore <id> --revision <hash> --expect <hash>
+items duplicates            # groups of likely copies: same kind, same text, or same name with mostly the same text
+items consolidate --input request.json   # { keep, expect, merge: [{ id, expect }], content?, tags?, collection? }; the others go to the trash as merged
+items unconsolidate --input undo.json    # the undo object items consolidate returned, while nothing changed since
+items distinct --input request.json      # { ids: [id, id], distinct?: false }: not duplicates (false: flag them again)
 trials create --input request.json
 trials finish --input judgement.json
 skills draft --input draft.json
