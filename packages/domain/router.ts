@@ -27,7 +27,7 @@ const sourceSchema = z.object({ source: z.string().min(1).optional() });
 const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles; /** Machine reports: app version, publish timing. Reporting after changes starts only with `fleet.start`. */ fleet?: Omit<FleetOptions, 'log'> };
 /** Calls that change what this machine's report says; each schedules a publish once reporting has started. */
-const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore']);
+const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore']);
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
@@ -160,8 +160,8 @@ export class Router {
       case 'fleet.start': return this.fleet.start();
       case 'fleet.rename': return this.fleet.rename(args);
       case 'fleet.mark': return this.fleet.mark(args);
-      case 'fleet.update': return this.fleet.update(args);
       case 'skills.update': return this.published(this.deployments.updateInstalls(args));
+      case 'skills.updateOutdated': return this.deployments.updateOutdated(args);
       case 'deploy.keepCopy': return this.deployments.keepCopy(args);
       case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
       case 'projects.known': return this.projects.known(args);

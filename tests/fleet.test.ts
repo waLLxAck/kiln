@@ -168,22 +168,48 @@ test('when this checkout and GitHub have both moved, reports and marks wait for 
   } finally { f.close(); }
 });
 
-test('outdated copies update to the latest approval without approving drafts', async () => {
+test('Update all outdated uses the one update path: latest approval, drafts stay unapproved, edited copies are skipped and reported', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    const agents = a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    const claude = a.wb.enroll({ name: 'Claude', root: a.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    for (const target of [agents, claude]) a.router.call('skills.install', { itemId: item.id, targetId: target.id, confirm: true });
+    const edited = path.join(a.home, '.claude', 'skills', 'careful-review', 'SKILL.md');
+    fs.appendFileSync(edited, 'Edited by hand.\n');
+    const v2 = a.wb.update({ id: item.id, expect: item.revision, summary: 'Second', value: { ...a.wb.authoring(item.id), content: skill('careful-review') + '\nCheck tests.\n' } });
+    a.wb.approve(approveArgs(v2));
+    let report = a.router.call('fleet.live') as MachineReport;
+    assert.equal(report.copies[item.id].agents.state, 'outdated');
+    assert.equal(report.copies[item.id].claude.state, 'changed');
+    const v3 = a.wb.update({ id: item.id, expect: v2.revision, summary: 'Third', value: { ...a.wb.authoring(item.id), content: skill('careful-review') + '\nDraft only.\n' } });
+    const [result, ...rest] = a.router.call('skills.updateOutdated') as { itemId: string; title: string; revision: string; approved: boolean; updated: { label: string }[]; skipped: { label: string; reason: string }[] }[];
+    assert.equal(rest.length, 0, 'one entry per item with an outdated copy');
+    assert.deepEqual({ itemId: result.itemId, title: result.title, revision: result.revision, approved: result.approved }, { itemId: item.id, title: 'Careful review', revision: v2.revision, approved: false });
+    assert.deepEqual(result.updated.map(c => c.label), ['Agents']);
+    assert.deepEqual(result.skipped.map(c => [c.label, c.reason]), [['Claude', 'edited outside Kiln']]);
+    assert.match(fs.readFileSync(edited, 'utf8'), /Edited by hand/, 'an edited copy is never overwritten');
+    report = a.router.call('fleet.live') as MachineReport;
+    assert.deepEqual(report.copies[item.id].agents, { revision: v2.revision, state: 'installed' });
+    assert.ok(!a.wb.approvals().some(x => x.revision === v3.revision), 'the newer draft stays unapproved');
+    assert.deepEqual(a.router.call('skills.updateOutdated'), [], 'nothing left to update');
+  } finally { f.close(); }
+});
+
+test('a copy installed from an earlier revision with the same files is not outdated', async () => {
   const f = fleet();
   try {
     const { a } = f;
     const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
     const agents = a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
     a.router.call('skills.install', { itemId: item.id, targetId: agents.id, confirm: true });
-    const v2 = a.wb.update({ id: item.id, expect: item.revision, summary: 'Second', value: { ...a.wb.authoring(item.id), content: skill('careful-review') + '\nCheck tests.\n' } });
+    // Only the tags change: a new revision, but the installed files are what it would write.
+    const v2 = a.wb.update({ id: item.id, expect: item.revision, summary: 'Tagged', value: { ...a.wb.authoring(item.id), tags: ['review'] } });
     a.wb.approve(approveArgs(v2));
-    let report = a.router.call('fleet.live') as MachineReport;
-    assert.equal(report.copies[item.id].agents.state, 'outdated');
-    const v3 = a.wb.update({ id: item.id, expect: v2.revision, summary: 'Third', value: { ...a.wb.authoring(item.id), content: skill('careful-review') + '\nDraft only.\n' } });
-    assert.deepEqual((a.router.call('fleet.update') as { result: string }[]).map(r => r.result), ['installed approved revision']);
-    report = a.router.call('fleet.live') as MachineReport;
+    const report = a.router.call('fleet.live') as MachineReport;
     assert.deepEqual(report.copies[item.id].agents, { revision: v2.revision, state: 'installed' });
-    assert.ok(!a.wb.approvals().some(x => x.revision === v3.revision), 'the newer draft stays unapproved');
+    assert.deepEqual(a.router.call('skills.updateOutdated'), []);
   } finally { f.close(); }
 });
 

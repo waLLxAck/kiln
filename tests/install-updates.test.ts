@@ -76,6 +76,24 @@ test('Update installs the approved revision over unchanged copies with a new rec
   } finally { f.close(); }
 });
 
+test('Update all outdated goes item by item through the same update; given copies limit it to those', () => {
+  const f = fixture();
+  try {
+    const item = f.wb.create({ title: 'Careful review', kind: 'skill', content: skill('Version one.') });
+    for (const target of [f.codex, f.claude]) f.deployment.installSkill({ itemId: item.id, targetId: target.id, confirm: true });
+    const other = f.wb.create({ title: 'Other', kind: 'skill', content: skill('Other.').replace('careful-review', 'other-skill') });
+    f.deployment.installSkill({ itemId: other.id, targetId: f.codex.id, confirm: true });
+    edit(f.wb, item.id, skill('Version two.')); approve(f.wb, item.id);
+    // Only the Agents copy of the first item is asked for: Claude stays behind, the other item isn't touched.
+    const one = f.deployment.updateOutdated({ copies: [{ itemId: item.id, targetId: f.codex.id }] });
+    assert.deepEqual(one.map(r => [r.title, r.updated.map(u => u.label), r.skipped.length, r.approved]), [['Careful review', ['Agents'], 0, false]]);
+    assert.equal(copy(f, item.id, f.claudeCopy)?.outdated, true);
+    const rest = f.deployment.updateOutdated();
+    assert.deepEqual(rest.map(r => [r.title, r.updated.map(u => u.label), r.current]), [['Careful review', ['Claude'], 1]]);
+    assert.deepEqual(f.deployment.updateOutdated(), []);
+  } finally { f.close(); }
+});
+
 test('Approve & update installs approves exactly the revision the user saw, then updates', () => {
   const f = fixture();
   try {

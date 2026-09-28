@@ -166,18 +166,6 @@ export class FleetService {
     this.changed();
     return entries;
   }
-  /** Updates copies Kiln installed, unchanged since, to the latest approval. All outdated copies, or the ones given. */
-  update(input: unknown = {}) {
-    const { copies } = z.object({ copies: z.array(z.object({ itemId: idSchema, targetId: idSchema })).max(5000).optional() }).parse(input);
-    const receipts = new Map(this.deployments.receipts().map(r => [r.id, r])), approvals = this.wb.approvals(), targets = this.wb.targets();
-    const outdated = this.deployments.installations().filter(i => {
-      const receipt = i.receiptId ? receipts.get(i.receiptId) : undefined, latest = latestApproval(approvals, i.itemId)?.revision;
-      return i.state === 'installed' && receipt && latest && receipt.revision !== latest && (!copies || copies.some(c => c.itemId === i.itemId && c.targetId === i.targetId));
-    });
-    const results = outdated.map(i => ({ itemId: i.itemId, targetId: i.targetId, result: this.deployments.installApproved(i.itemId, targets.find(t => t.id === i.targetId)!) }));
-    this.changed();
-    return results;
-  }
   /** Turns on reporting after changes and publishes once; the desktop app calls it at start when Machines is enabled. */
   start() { this.auto = true; this.schedule(0); return this.publishState(); }
   stop() { this.auto = false; clearTimeout(this.timer); this.timer = undefined; }
