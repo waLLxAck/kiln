@@ -1,10 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, CircleSlash, Clock, Copy, FileText, FlaskConical, FolderOpen, Hand, Loader2, Play, Plus, RotateCcw, ShieldCheck, SlidersHorizontal, Trash2, X, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, CircleSlash, Clock, Copy, FileText, FlaskConical, FolderOpen, Hand, Loader2, MessageSquare, Play, Plus, RotateCcw, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserX, X, XCircle } from 'lucide-react';
 import type { AgentJob } from '../../../packages/agent/service';
+import { activeRun } from '../../../packages/agent/run-notice';
 import type { ItemDetail, Provider, RunProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
-import { ProviderSelect, retryJob, Steps, tokens, useElapsed, useStart } from './AgentPanel';
+import { agentStarted, ProviderSelect, retryJob, Steps, tokens, useElapsed, useStart } from './AgentPanel';
 import { ContextMenu, providerName, type MenuEntry } from './components';
+import { askAgent, experimentsOf, improveMessage, reviews } from './TrialLoop';
 import './experiments.css';
 
 export type ExperimentsGridProps = {
@@ -20,8 +22,11 @@ type Verdict = 'pass' | 'fail' | 'uncertain';
  * record; a manual handoff's folder stays in its private run folder, and a trial with no job here cannot be placed.
  */
 type Column = { key: string; kind: 'project' | 'isolated' | 'manual' | 'unknown'; label: string; path?: string };
-/** One experiment: its canonical trial and, when it ran on this machine, the job that ran it. A job can arrive before the trial is refreshed. */
-type Run = { id: string; trial?: Trial; job?: AgentJob; revision: string; column: string; at: string };
+/**
+ * One experiment: its canonical trial, the job that ran it when that was on this machine (a job can arrive before the trial
+ * is refreshed), and the user's own verdict on it when there is one.
+ */
+export type Run = { id: string; trial?: Trial; job?: AgentJob; review?: Trial; revision: string; column: string; at: string };
 
 const isolated: Column = { key: 'isolated', kind: 'isolated', label: 'Isolated example' };
 const manual: Column = { key: 'manual', kind: 'manual', label: 'Manual' };
@@ -32,9 +37,16 @@ const cellKey = (revision: string, column: string) => `${revision}|${column}`;
 
 const verdictLabel: Record<Verdict, string> = { pass: 'Pass', fail: 'Fail', uncertain: 'Uncertain' };
 const VerdictIcon = ({ verdict, size = 14 }: { verdict: Verdict; size?: number }) => verdict === 'pass' ? <CheckCircle2 size={size} /> : verdict === 'fail' ? <XCircle size={size} /> : <CircleHelp size={size} />;
+/** The run's own verdict: the agent's assessment, or the recorded result of a manual handoff. */
 const verdictOf = (run: Run): Verdict | null => run.trial?.judgement ?? (run.job?.result && 'judgement' in run.job.result ? run.job.result.judgement : null);
-const running = (run: Run) => run.job?.status === 'running';
-const waiting = (run: Run) => !running(run) && run.trial?.status === 'prepared' && run.trial.mode === 'manual';
+/** The verdict that counts for approval and the Experiments filter: yours when you gave one, else the run's own. */
+export const countedVerdict = (run: Run): Verdict | null => run.review?.judgement ?? verdictOf(run);
+/** Running now, or waiting for one of the two run slots. */
+const live = (run: Run) => Boolean(run.job && activeRun(run.job));
+const queued = (run: Run) => run.job?.status === 'queued';
+const waiting = (run: Run) => !live(run) && run.trial?.status === 'prepared' && run.trial.mode === 'manual';
+/** An agent run that finished with an assessment, which you can then mark as passed or failed. */
+const judgeable = (run: Run) => run.trial?.mode === 'codex' && run.trial.status === 'completed';
 /** Why a run has no verdict: the job's own ending when it is on this machine, otherwise the trial's. */
 const stopped = (run: Run) => run.job && ['failed', 'cancelled', 'interrupted'].includes(run.job.status) ? run.job.status : run.trial?.status === 'cancelled' ? 'cancelled' : '';
 /** "Sep 27" for grid cells, where the full date and time would not fit; the full one is in the tooltip and the panel. */
@@ -48,19 +60,22 @@ function withRefs(text: string): ReactNode[] {
 }
 
 /** An item's experiments as a revision × project grid with a verdict-first result panel. */
-export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, onAction }: ExperimentsGridProps) {
+export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, refresh, onAction }: ExperimentsGridProps) {
   const { item } = detail;
   const current = item.revision;
   const approved = new Set(detail.approvals.filter(a => a.trust === 'local' && !a.revokedAt).map(a => a.revision));
   const trialJobs = jobs.filter(j => j.itemId === item.id && j.kind === 'trial');
-  const active = trialJobs.find(j => j.status === 'running');
+  // Only one experiment per item is active at a time, running or queued behind the two run slots.
+  const active = trialJobs.find(activeRun);
   // Folders picked with Add project… stay as columns while the grid is open, even before anything has run there.
   const [added, setAdded] = useState<Column[]>([]);
 
   const runs = useMemo(() => {
     const byTrial = new Map(trialJobs.filter(j => j.trialId).map(j => [j.trialId!, j]));
-    const list: Run[] = detail.trials.map(trial => { const job = byTrial.get(trial.id); return { id: trial.id, trial, job, revision: trial.revision, column: columnOf(trial, job).key, at: trial.createdAt }; });
-    for (const job of trialJobs) if (!job.trialId || !detail.trials.some(t => t.id === job.trialId)) if (job.status === 'running' || job.result) list.push({ id: job.trialId ?? job.id, job, revision: job.revision, column: columnOf(undefined, job).key, at: job.startedAt });
+    // Your verdicts are stored as trials of their own; they sit on the run they judge, never in a cell of their own.
+    const judged = reviews(detail.trials);
+    const list: Run[] = experimentsOf(detail.trials).map(trial => { const job = byTrial.get(trial.id); return { id: trial.id, trial, job, review: judged.get(trial.id), revision: trial.revision, column: columnOf(trial, job).key, at: trial.createdAt }; });
+    for (const job of trialJobs) if (!job.trialId || !detail.trials.some(t => t.id === job.trialId)) if (activeRun(job) || job.result) list.push({ id: job.trialId ?? job.id, job, revision: job.revision, column: columnOf(undefined, job).key, at: job.startedAt });
     return list.sort((a, b) => b.at.localeCompare(a.at));
   }, [detail.trials, jobs, item.id]);
 
@@ -131,19 +146,19 @@ export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, on
   };
 
   const selectedRuns = selected ? cells.get(selected.cell) ?? [] : [];
-  const shown = selectedRuns.find(r => r.id === selected?.run) ?? selectedRuns.find(running) ?? selectedRuns[0];
+  const shown = selectedRuns.find(r => r.id === selected?.run) ?? selectedRuns.find(live) ?? selectedRuns[0];
   const [selRevision, selColumnKey] = selected?.cell.split('|') ?? ['', ''];
   const selColumn = columns.find(c => c.key === selColumnKey);
-  const total = runs.filter(r => !running(r)).length;
+  const total = runs.filter(r => !live(r)).length;
   // With nothing tested yet the run bar is simply there, ready to go.
   const shownBar = bar ?? (!runs.length && !active && !busy ? { revision: current, free: true } : null);
 
   return <section className="exp-page" aria-label="Experiments">
     <header className="exp-head">
-      <div className="exp-head-text"><h2>Experiments</h2><p className="muted small">{runs.length ? <>One cell per revision and project · {total} run{total === 1 ? '' : 's'}{active ? ' · 1 running' : ''}</> : 'Nothing tested yet'}</p></div>
+      <div className="exp-head-text"><h2>Experiments</h2><p className="muted small">{runs.length ? <>One cell per revision and project · {total} run{total === 1 ? '' : 's'}{active ? ` · 1 ${active.status}` : ''}</> : 'Nothing tested yet'}</p></div>
       <div className="exp-head-actions">
         <button className="button" onClick={() => onAction('trial')} title="Open the full run dialog"><SlidersHorizontal size={15} />Run options…</button>
-        <button className="button primary" aria-haspopup="menu" disabled={Boolean(active)} title={active ? 'An experiment is already running for this item.' : undefined} onClick={runCurrentOn}><Play size={15} />Run current revision on…<ChevronDown size={14} /></button>
+        <button className="button primary" aria-haspopup="menu" disabled={Boolean(active)} title={active ? `An experiment is already ${active.status} for this item.` : undefined} onClick={runCurrentOn}><Play size={15} />Run current revision on…<ChevronDown size={14} /></button>
       </div>
     </header>
 
@@ -181,11 +196,13 @@ export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, on
         </table>
         <div className="exp-legend">
           <span className="exp-chip pass"><CheckCircle2 size={12} />Pass</span><span className="exp-chip fail"><XCircle size={12} />Fail</span><span className="exp-chip uncertain"><CircleHelp size={12} />Uncertain</span>
-          <span className="muted">Chips are the agent’s assessment, or your result for a manual handoff · hover an empty cell to run it</span>
+          <span className="muted">Chips are the agent’s assessment, or your result for a manual handoff</span>
+          <span className="exp-legend-you"><span aria-hidden="true"><YourMark judgement="pass" /></span>Your verdict, when you marked a run</span>
+          <span className="muted">Hover an empty cell to run it</span>
         </div>
       </div>
       <aside className="exp-panel" aria-label="Experiment result">
-        {shown ? <Result key={shown.id} run={shown} others={selectedRuns} column={selColumn} current={current} approved={approved.has(current)} perform={perform} onAction={onAction} onPick={id => setSelected(s => s && { ...s, run: id })} />
+        {shown ? <Result key={shown.id} run={shown} others={selectedRuns} column={selColumn} detail={detail} approved={approved.has(current)} active={active} perform={perform} refresh={refresh} onAction={onAction} onPick={id => setSelected(s => s && { ...s, run: id })} />
           : selected && busy ? <div className="exp-result"><p className="exp-bigrunning"><Loader2 size={20} className="spin" />Starting…</p></div>
           : <div className="exp-panel-empty"><FileText size={20} /><p>{selected ? `Nothing has run on ${selColumn?.label ?? 'this project'} at ${shortHash(selRevision)} yet.` : 'Select a cell to see its result.'}</p></div>}
       </aside>
@@ -195,31 +212,41 @@ export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, on
 }
 
 function Cell({ revision, column, runs, current, selected, armed, blocked, onSelect, onRun }: { revision: string; column: Column; runs: Run[]; current: string; selected: boolean; armed: boolean; blocked: boolean; onSelect: () => void; onRun: () => void }) {
-  const latest = runs.find(running) ?? runs[0];
+  const latest = runs.find(live) ?? runs[0];
   const where = `${shortHash(revision)} on ${column.label}`;
   if (!latest) {
     // Unknown-project runs cannot be repeated here, and a manual handoff always tests the current revision.
     const canRun = !blocked && (column.kind === 'project' || column.kind === 'isolated' || column.kind === 'manual' && revision === current);
     return <td className={`exp-cell exp-isempty ${armed ? 'exp-armed' : ''}`}>{canRun
       ? <button onClick={onRun} aria-label={`Run ${where}`}><span className="exp-dash">—</span><span className="exp-runhint"><Play size={12} />{column.kind === 'manual' ? 'Hand off' : 'Run'}</span></button>
-      : <span className="exp-dash" title={blocked ? 'An experiment is already running for this item.' : undefined}>—</span>}</td>;
+      : <span className="exp-dash" title={blocked ? 'Another experiment for this item is running or queued.' : undefined}>—</span>}</td>;
   }
   const verdict = verdictOf(latest), job = latest.job, ended = stopped(latest);
   const who = job ? providerName[job.provider] : latest.trial?.provider === 'manual' ? 'Manual' : latest.trial ? providerName[latest.trial.provider] : '';
-  const label = running(latest) ? 'running' : verdict ? verdictLabel[verdict] : waiting(latest) ? 'waiting for result' : ended || 'no result';
+  const label = queued(latest) ? 'queued' : live(latest) ? 'running' : verdict ? verdictLabel[verdict] : waiting(latest) ? 'waiting for result' : ended || 'no result';
+  const yours = latest.review?.judgement && !live(latest) ? `, your verdict ${latest.review.judgement === 'pass' ? 'passed' : 'failed'}` : '';
   return <td className={`exp-cell ${selected ? 'exp-active' : ''}`}>
-    <button onClick={onSelect} aria-pressed={selected} aria-label={`${where}: ${label}`}>
-      {running(latest) ? <><span className="exp-running"><Loader2 size={13} className="spin" />Running</span><span className="exp-step">{job!.steps.at(-1) ? firstLine(job!.steps.at(-1)!.text) : job!.phase}</span></>
+    <button onClick={onSelect} aria-pressed={selected} aria-label={`${where}: ${label}${yours}`}>
+      {queued(latest) ? <><span className="exp-running queued"><Clock size={13} />Queued</span><span className="exp-step">Starts when a run slot is free</span></>
+        : live(latest) ? <><span className="exp-running"><Loader2 size={13} className="spin" />Running</span><span className="exp-step">{job!.steps.at(-1) ? firstLine(job!.steps.at(-1)!.text) : job!.phase}</span></>
         : <><CellChip run={latest} /><span className="exp-cell-meta">{who}{who && ' · '}<span title={date(latest.at)}>{day(latest.at)}</span>{runs.length > 1 && <span className="exp-more" title={`${runs.length} runs in this cell`}>+{runs.length - 1}</span>}</span></>}
     </button>
   </td>;
 }
-function CellChip({ run }: { run: Run }) {
-  const verdict = verdictOf(run);
-  if (verdict) return <span className={`exp-chip ${verdict}`}><VerdictIcon verdict={verdict} size={13} />{verdictLabel[verdict]}</span>;
+/** The run's own verdict as a chip, with your verdict as a small mark beside it when you gave one. */
+export function CellChip({ run }: { run: Run }) {
+  const verdict = verdictOf(run), mark = run.review?.judgement && <YourMark judgement={run.review.judgement} />;
+  if (queued(run)) return <span className="exp-chip waiting"><Clock size={13} />Queued</span>;
+  if (live(run)) return <span className="exp-chip waiting"><Loader2 size={13} className="spin" />Running</span>;
+  if (verdict) return <span className="exp-chipset"><span className={`exp-chip ${verdict}`}><VerdictIcon verdict={verdict} size={13} />{verdictLabel[verdict]}</span>{mark}</span>;
   if (waiting(run)) return <span className="exp-chip waiting"><Clock size={13} />Waiting for result</span>;
   const ended = stopped(run);
   return <span className="exp-chip neutral"><CircleSlash size={13} />{ended ? ended[0].toUpperCase() + ended.slice(1) : 'No result'}</span>;
+}
+/** Your verdict on an agent run, next to its chip: a person with a tick or a cross. */
+function YourMark({ judgement }: { /** Always pass or fail: trials.judge offers no uncertain. */ judgement: Verdict }) {
+  const words = judgement === 'pass' ? 'Your verdict: passed' : 'Your verdict: failed';
+  return <span className={`exp-you ${judgement}`} title={words} role="img" aria-label={words}>{judgement === 'pass' ? <UserCheck size={12} /> : <UserX size={12} />}</span>;
 }
 
 /** Inline replacement for the run dialog: same start call, consent and errors, with the project fixed by the cell. */
@@ -240,9 +267,10 @@ function RunBar({ free, closable, revision, current, column, columns, providers,
   </div>;
 }
 
-/** The selected cell's result, verdict first; how it ran is folded away under Run details. */
-function Result({ run, others, column, current, approved, perform, onAction, onPick }: { run: Run; others: Run[]; column?: Column; current: string; approved: boolean; perform: ExperimentsGridProps['perform']; onAction: ExperimentsGridProps['onAction']; onPick: (id: string) => void }) {
-  const { trial, job } = run;
+/** The selected cell's result, verdicts first; how it ran is folded away under Run details. */
+function Result({ run, others, column, detail, approved, active, perform, refresh, onAction, onPick }: { run: Run; others: Run[]; column?: Column; detail: ItemDetail; approved: boolean; /** This item's running or queued experiment, which blocks starting another. */ active?: AgentJob; perform: ExperimentsGridProps['perform']; refresh: ExperimentsGridProps['refresh']; onAction: ExperimentsGridProps['onAction']; onPick: (id: string) => void }) {
+  const { trial, job, review } = run;
+  const { item } = detail, current = item.revision;
   const verdict = verdictOf(run), isManual = trial?.mode === 'manual', ended = stopped(run);
   const [output, setOutput] = useState<{ output: string; reference: string } | null>(null), [error, setError] = useState('');
   const inline = job?.result && 'output' in job.result ? job.result.output : '';
@@ -253,31 +281,49 @@ function Result({ run, others, column, current, approved, perform, onAction, onP
   const history = others.length > 1 && <div className="exp-others"><span className="eyebrow">Runs in this cell</span>{others.map(other => <button key={other.id} className={other.id === run.id ? 'active' : ''} aria-pressed={other.id === run.id} onClick={() => onPick(other.id)}><CellChip run={other} /><span className="muted small">{date(other.at)}</span></button>)}</div>;
   const remove = trial && <button className="button danger-text" onClick={() => onAction('delete-trial', trial)}><Trash2 size={14} />Delete experiment</button>;
 
-  if (running(run)) return <div className="exp-result">
+  if (live(run)) return <div className="exp-result">
     {where}
-    <div className="eyebrow">Agent run in progress</div>
+    <div className="eyebrow">{queued(run) ? 'Agent run queued' : 'Agent run in progress'}</div>
     <RunningHeadline job={job!} />
     <p className="muted small" role="status">{job!.phase}{job!.context ? ` · asked to try “${job!.context}”` : ''}</p>
-    <Steps job={job!} />
-    <div className="exp-actions"><button className="button" onClick={() => void api('agent.cancel', { id: job!.id })}><X size={14} />Cancel run</button></div>
+    {!queued(run) && <Steps job={job!} />}
+    <div className="exp-actions"><button className="button" onClick={() => void api('agent.cancel', { id: job!.id }).catch(e => setError(String(e)))}><X size={14} />Cancel run</button></div>
+    {error && <p role="alert" className="error-box">{error}</p>}
     <p className="muted small">Read-only: the agent can’t change files in {column?.label ?? 'the project'}.</p>
     {history}
   </div>;
 
+  const blocked = active ? `Another experiment for this item is ${active.status}. Wait for it or cancel it first.` : undefined;
+  // Re-testing keeps the agent, project and context but runs the item as it is now. Without this machine's job record the project and context are unknown, so the full dialog asks.
+  const retest = () => { if (!job) { onAction('trial'); return; } void api('agent.start', { id: item.id, kind: 'trial', provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted('trial')).catch(e => setError(String(e))); };
+  const judge = (judgement: 'pass' | 'fail') => void perform(async () => { await api('trials.judge', { id: trial!.id, judgement }); await refresh(); }, judgement === 'pass' ? 'Marked as passed' : 'Marked as failed');
+  const counted = countedVerdict(run), earlier = run.revision !== current, agentRun = Boolean(job) || trial?.mode === 'codex';
   return <div className="exp-result">
     {where}
-    {verdict ? <><div className="eyebrow">{isManual ? 'Your result' : 'Agent’s assessment'}</div>
-      <div className={`exp-verdict ${verdict}`}><VerdictIcon verdict={verdict} size={26} />{verdictLabel[verdict]}</div></>
+    {verdict && !isManual ? <div className="exp-verdicts">
+      <div><div className="eyebrow">Agent’s assessment</div><div className={`exp-verdict ${verdict}`}><VerdictIcon verdict={verdict} size={24} />{verdictLabel[verdict]}</div></div>
+      {/* An earlier revision can no longer be judged, so its column only appears when you judged it while it was current. */}
+      {judgeable(run) && (!earlier || review) && <div className="exp-yours" role="group" aria-label="Your verdict">
+        <div className="eyebrow">Your verdict</div>
+        {review?.judgement ? <div className={`exp-verdict small ${review.judgement}`}>{review.judgement === 'pass' ? <UserCheck size={20} /> : <UserX size={20} />}{review.judgement === 'pass' ? 'Passed' : 'Failed'}</div> : <p className="muted small exp-notyet">Not given yet</p>}
+        {!earlier && <div className="exp-judge">
+          <button className="button" aria-pressed={review?.judgement === 'pass'} onClick={() => judge('pass')}><Check size={14} />Mark as passed</button>
+          <button className="button" aria-pressed={review?.judgement === 'fail'} onClick={() => judge('fail')}><X size={14} />Mark as failed</button>
+        </div>}
+      </div>}
+    </div>
+      : verdict ? <><div className="eyebrow">Your result</div><div className={`exp-verdict ${verdict}`}><VerdictIcon verdict={verdict} size={26} />{verdictLabel[verdict]}</div></>
       : waiting(run) ? <><div className="eyebrow">Manual handoff</div><div className="exp-verdict waiting"><Clock size={24} />Waiting for result</div><p className="muted">Run the handoff prompt in your own agent session, then record what happened.</p></>
       : <><div className="eyebrow">{isManual ? 'Manual handoff' : 'Agent run'}</div><div className="exp-verdict neutral"><CircleSlash size={24} />{ended ? ended[0].toUpperCase() + ended.slice(1) : 'No result'}</div></>}
     {note && <p className="exp-finding">{withRefs(note)}</p>}
     {job?.error && <p className="error-box">{job.error}</p>}
     {job?.context && <p className="muted small">Asked to try: “{job.context}”</p>}
-    {verdict && !isManual && <p className="muted small exp-human">This is the agent’s view, not yours. To record your own result, run a manual handoff.</p>}
     <div className="exp-actions">
-      {run.revision === current && verdict === 'pass' && !approved && <button className="button primary" onClick={() => onAction('approve')}><ShieldCheck size={15} />Approve {shortHash(current)}</button>}
+      {!earlier && counted === 'pass' && !approved && <button className="button primary" onClick={() => onAction('approve')}><ShieldCheck size={15} />Approve this revision</button>}
       {waiting(run) && <><button className="button primary" onClick={() => onAction('result', trial)}>Record result</button><button className="button" onClick={() => void perform(() => api('desktop.copyTrial', { id: trial!.id }), 'Handoff copied')}><Copy size={14} />Copy handoff</button></>}
-      {job && !running(run) && <button className="button" onClick={() => void retryJob(job).catch(e => setError(String(e)))} title="Same provider, project, context and revision"><RotateCcw size={14} />{ended ? `Retry with ${providerName[job.provider]}` : 'Run again'}</button>}
+      {agentRun && earlier && <button className="button" disabled={Boolean(active)} title={blocked ?? `Same agent${job ? ', project and context' : ''}, on the current revision ${shortHash(current)}`} onClick={retest}><RotateCcw size={14} />Re-test current revision</button>}
+      {job && <button className="button" disabled={Boolean(active)} onClick={() => void retryJob(job).catch(e => setError(String(e)))} title={blocked ?? `Same agent, project, context and revision${earlier ? ` (${shortHash(run.revision)}, as it was)` : ''}`}><RotateCcw size={14} />{ended ? `Retry with ${providerName[job.provider]}` : 'Run again'}</button>}
+      {trial?.status === 'completed' && <button className="button" title="Open the chat with a message about this result, ready to edit and send" onClick={() => askAgent(item.id, improveMessage(trial, item, job, review))}><MessageSquare size={14} />Improve with agent</button>}
       {remove}
     </div>
     {error && <p role="alert" className="error-box">{error}</p>}
@@ -289,7 +335,8 @@ function Result({ run, others, column, current, approved, perform, onAction, onP
 }
 function RunningHeadline({ job }: { job: AgentJob }) {
   const elapsed = useElapsed(job);
-  return <p className="exp-bigrunning"><Loader2 size={20} className="spin" />Running with {providerName[job.provider]}<span className="muted small">{elapsed}</span></p>;
+  return job.status === 'queued' ? <p className="exp-bigrunning queued"><Clock size={20} />Queued for {providerName[job.provider]}<span className="muted small">{elapsed}</span></p>
+    : <p className="exp-bigrunning"><Loader2 size={20} className="spin" />Running with {providerName[job.provider]}<span className="muted small">{elapsed}</span></p>;
 }
 function RunDetails({ run, perform }: { run: Run; perform: ExperimentsGridProps['perform'] }) {
   const { trial, job } = run;
