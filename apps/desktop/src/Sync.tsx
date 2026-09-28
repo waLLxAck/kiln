@@ -1,24 +1,25 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { ArrowDown, CloudOff, GitMerge, Loader2, RefreshCw, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowDown, CloudOff, Github, GitMerge, Loader2, RefreshCw, Upload, X } from 'lucide-react';
 import { api, date } from './api';
 import { Modal } from './components';
 import type { Snapshot } from '../../../packages/protocol/schema';
 import type { PullResult, SyncStatus } from '../../../packages/git/sync';
 
 /**
- * Background sync with GitHub (autoSync experiment): the top-bar indicator that fetches on a timer and on focus, Pull and Merge
- * with named blockers, and the wording the Settings card uses. Mounted only while the experiment is on.
+ * Background sync with GitHub, in the status bar's repository segment: where the library stands (Up to date, N new on GitHub
+ * with Pull, N waiting to push, Offline), the popover with what is on its way, and the fetches behind it: shortly after
+ * start, on a timer and when the window comes back. The backend runs them in its Git queue, after any commit or push.
  */
 let current: SyncStatus | null = null;
 const listeners = new Set<() => void>();
 const publish = (next: SyncStatus | null) => { current = next; listeners.forEach(l => l()); };
-/** The last fetch result, shared by the top bar and the Settings card. */
+/** The last fetch result, shared by the status bar and the Settings card. */
 export function useSyncStatus() { return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => current); }
-/** Asks the indicator to pull or merge, so Settings buttons share its explanations when something blocks. */
+/** Asks the status bar to fetch, pull or merge, so Settings buttons share its explanations when something blocks. */
 export const requestSync = (action: 'fetch' | 'pull' | 'merge') => window.dispatchEvent(new CustomEvent('kiln:sync', { detail: action }));
 
-/** "owner/name" for GitHub, the folder name for any other remote. */
-const repoLabel = (remote: string) => /github\.com[/:]/.test(remote) ? remote.replace(/^(https:\/\/github\.com\/|git@github\.com:)/, '').replace(/\.git$/, '') : remote.split(/[\\/]/).filter(Boolean).pop()?.replace(/\.git$/, '') || 'GitHub';
+/** "owner/name" from a GitHub remote URL, the folder name for any other remote. */
+export const repoName = (remote: string) => !/github\.com[/:]/.test(remote) && remote ? remote.split(/[\\/]/).filter(Boolean).at(-1)!.replace(/\.git$/, '') : remote.replace(/^(https:\/\/github\.com\/|git@github\.com:)/, '').replace(/\.git$/, '') || 'GitHub remote';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** "just now", "4 min ago", "2 h ago", else the date. */
 export function ago(value: string | null | undefined) {
@@ -33,7 +34,7 @@ function waiting(snapshot: Snapshot) {
   return { pending, failed, count: snapshot.git.ahead + pending.filter(j => !j.commit).length + failed.filter(j => !j.commit).length };
 }
 
-/** Settings → Kiln repository line when the experiment is on: what the last fetch found, instead of a blanket "up to date". */
+/** Settings → Kiln repository line: what the last fetch found, instead of a blanket "up to date". */
 export function SyncSummary({ git }: { git: Snapshot['git'] }) {
   const status = useSyncStatus();
   const parts = [git.behind ? `${git.behind} new on GitHub` : '', git.ahead ? `${plural(git.ahead, 'commit')} not on GitHub yet` : ''].filter(Boolean);
@@ -43,24 +44,22 @@ export function SyncSummary({ git }: { git: Snapshot['git'] }) {
 
 type Problem = { kind: 'blocked'; items: { id: string; title: string }[]; paths: string[] } | { kind: 'diverged'; ahead: number; behind: number } | null;
 type Props = { snapshot: Snapshot; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, success?: string) => Promise<void>; onMessage: (message: string) => void; onConflicts: (conflicts: unknown) => void; onReveal: (id: string) => void; onSettings: () => void };
-/** Replaces the branch pill in the top bar: Up to date, N new on GitHub · Pull, N waiting to push, or Offline. */
-export function SyncIndicator({ snapshot, refresh, perform, onMessage, onConflicts, onReveal, onSettings }: Props) {
+/** The repository segment: `owner/name · branch · state`, Pull when GitHub has new commits, and the sync popover. */
+export function RepoStatus({ snapshot, refresh, perform, onMessage, onConflicts, onReveal, onSettings }: Props) {
   const status = useSyncStatus();
-  const [open, setOpen] = useState(false);
-  const [problem, setProblem] = useState<Problem>(null);
-  const [checking, setChecking] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  const ready = snapshot.repository.ready;
+  const [open, setOpen] = useState(false), [problem, setProblem] = useState<Problem>(null), [checking, setChecking] = useState(false);
+  const box = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
+  const attached = snapshot.git.attached;
   const fetchNow = useCallback(async (maxAgeMs: number) => {
     try {
       const next = await api<SyncStatus>('sync.fetch', { maxAgeMs });
       const changed = next.checkedAt !== current?.checkedAt; publish(next);
       if (changed) await refresh().catch(() => undefined);
-    } catch { /* Switched off meanwhile, or the library changed; the next render decides. */ }
+    } catch { /* The library changed meanwhile; the next check starts over. */ }
   }, [refresh]);
   // Shortly after start, then on a timer, and on focus once the first check has run. The backend skips a fetch younger than asked.
   useEffect(() => {
-    if (!ready) return;
+    if (!attached) return;
     let active = true, started = false, timer: ReturnType<typeof setTimeout> | undefined, focusMs = 60_000;
     void api<SyncStatus>('sync.status').then(first => {
       if (!active) return; publish(first); focusMs = first.focusMs;
@@ -70,8 +69,14 @@ export function SyncIndicator({ snapshot, refresh, perform, onMessage, onConflic
     const onFocus = () => { if (started) void fetchNow(focusMs); };
     window.addEventListener('focus', onFocus);
     return () => { active = false; clearTimeout(timer); window.removeEventListener('focus', onFocus); };
-  }, [ready, snapshot.root, fetchNow]);
-  useEffect(() => { if (!open) return; const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); }; window.addEventListener('mousedown', away); return () => window.removeEventListener('mousedown', away); }, [open]);
+  }, [attached, snapshot.root, fetchNow]);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); trigger.current?.focus(); } };
+    window.addEventListener('mousedown', away); window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('mousedown', away); window.removeEventListener('keydown', key, true); };
+  }, [open]);
   const pull = useCallback(() => perform(async () => {
     setOpen(false); setProblem(null);
     await fetchNow(0);
@@ -92,23 +97,27 @@ export function SyncIndicator({ snapshot, refresh, perform, onMessage, onConflic
   useEffect(() => { const listen = (event: Event) => { const action = (event as CustomEvent<string>).detail; if (action === 'pull') void pull(); else if (action === 'merge') void merge(); else if (action === 'fetch') void check(); }; window.addEventListener('kiln:sync', listen); return () => window.removeEventListener('kiln:sync', listen); }, [pull, merge, check]);
 
   const git = snapshot.git, { pending, failed, count } = waiting(snapshot);
-  if (!git.attached) return <span className="git-indicator"><span className="live-dot neutral" />Local library</span>;
+  const where = <><b>{repoName(git.remote)}</b><span className="status-sep">·</span>{git.branch || 'no branch'}<span className="status-sep">·</span></>;
+  if (!attached) return <button type="button" className="status-item repo" onClick={onSettings} title="Not connected to GitHub · open Settings & repository"><Github size={12} /><span className="repo-state">Local library</span></button>;
   const offline = Boolean(status?.error);
-  const state = git.behind ? 'behind' : count ? 'waiting' : offline ? 'offline' : 'current';
-  const label = state === 'behind' ? `${git.behind} new on GitHub` : state === 'waiting' ? `${count} waiting to push` : state === 'offline' ? 'Offline' : status?.fetchedAt || !ready ? 'Up to date' : 'Not checked yet';
-  const title = `${git.branch || 'Git attached'}${status?.fetchedAt ? ` · checked GitHub ${ago(status.fetchedAt)}` : ''}${offline ? ` · couldn’t reach GitHub: ${status!.error}` : ''}`;
-  const icon = checking || status?.fetching || pending.length ? <Loader2 className="spin" size={12} aria-hidden="true" /> : state === 'offline' ? <CloudOff size={13} aria-hidden="true" /> : <span className={`live-dot ${state === 'current' ? '' : state === 'behind' ? 'info' : 'warn'}`} aria-hidden="true" />;
-  return <div className={`sync-indicator ${state}`} ref={box} onKeyDown={event => { if (event.key === 'Escape' && open) { event.stopPropagation(); setOpen(false); } }}>
-    <button type="button" className="sync-pill" aria-haspopup="dialog" aria-expanded={open} title={title} onClick={() => setOpen(o => !o)}>{icon}<span>{label}</span></button>
-    {state === 'behind' && <button type="button" className="sync-action" title="Bring GitHub’s changes to this machine. Drafts stay as they are." onClick={() => void pull()}><ArrowDown size={13} aria-hidden="true" />Pull</button>}
-    {open && <div className="sync-popover" role="dialog" aria-label="Sync with GitHub">
-      <p className="sync-where"><b>{repoLabel(git.remote)}</b> · {git.branch}</p>
-      <p className="muted small">{offline ? `Couldn’t reach GitHub ${ago(status!.checkedAt)}. Kiln tries again in a few minutes; nothing is lost meanwhile.` : status?.fetchedAt ? `Checked GitHub ${ago(status.fetchedAt)}.` : 'Kiln has not checked GitHub yet.'}</p>
-      {git.behind > 0 && <div className="sync-row"><span>{git.behind} new on GitHub</span><button className="button primary" onClick={() => void pull()}><ArrowDown size={14} />Pull</button></div>}
+  const failedText = `${failed.length} failed to publish`;
+  const state = git.behind ? 'behind' : failed.length ? 'bad' : pending.length ? 'busy' : count ? 'warn' : offline ? 'offline' : 'ok';
+  const label = state === 'behind' ? `${git.behind} new on GitHub${failed.length ? ` · ${failedText}` : ''}` : state === 'bad' ? failedText : state === 'busy' ? `publishing ${pending.length}…` : state === 'warn' ? `${count} waiting to push` : state === 'offline' ? 'Offline' : status?.fetchedAt ? 'Up to date' : 'Not checked yet';
+  const title = `${git.remote || 'No remote'}${status?.fetchedAt ? ` · checked GitHub ${ago(status.fetchedAt)}` : ''}${offline ? ` · couldn’t reach GitHub: ${status!.error}` : ''}`;
+  const icon = checking || status?.fetching || state === 'busy' ? <Loader2 size={12} className="spin" /> : state === 'offline' ? <CloudOff size={12} /> : state === 'bad' ? <AlertTriangle size={12} /> : <Github size={12} />;
+  return <div className="status-repo" ref={box}>
+    <button type="button" ref={trigger} className={`status-item repo ${state} ${open ? 'on' : ''}`} aria-haspopup="dialog" aria-expanded={open} aria-label={`Repository: ${label}`} title={title} onClick={() => setOpen(value => !value)}>
+      {icon}{where}<span className="repo-state">{label}</span>
+    </button>
+    {state === 'behind' && <button type="button" className="status-item repo-pull" title="Bring GitHub’s changes to this machine. Drafts stay as they are." onClick={() => void pull()}><ArrowDown size={12} />Pull</button>}
+    {open && <div className="sync-pop" role="dialog" aria-label="Sync with GitHub">
+      <div className="runs-head"><span>{repoName(git.remote)} · {git.branch}</span><button type="button" className="icon-button" aria-label="Close sync" title="Close (Esc)" onClick={() => { setOpen(false); trigger.current?.focus(); }}><X size={14} /></button></div>
+      <p className="muted small sync-checked">{offline ? `Couldn’t reach GitHub ${ago(status!.checkedAt)}. Kiln tries again in a few minutes; nothing is lost meanwhile.` : status?.fetchedAt ? `Checked GitHub ${ago(status.fetchedAt)}.` : 'Kiln has not checked GitHub yet.'}</p>
+      {git.behind > 0 && <div className="sync-row"><span>{git.behind} new on GitHub</span><button type="button" className="button primary" onClick={() => void pull()}><ArrowDown size={14} />Pull</button></div>}
       {pending.map(j => <div className="sync-row" key={j.id}><span>{j.title}</span><small className="muted"><Loader2 className="spin" size={12} /> {j.status}</small></div>)}
-      {failed.slice(0, 5).map(j => <div className="sync-row failed" key={j.id}><span><b>{j.title}</b><small>{j.error}</small></span><button className="button" onClick={() => void perform(async () => { await api('publish.retry', { id: j.id }); await refresh(); })}>Retry</button></div>)}
-      {git.ahead > 0 && !pending.length && <div className="sync-row"><span>{plural(git.ahead, 'commit')} not on GitHub yet</span><button className="button" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button></div>}
-      <div className="wrap-actions"><button className="button" disabled={checking || status?.fetching} onClick={() => void check()}><RefreshCw size={14} />Check now</button><button className="text-button" onClick={() => { setOpen(false); onSettings(); }}>Repository settings</button></div>
+      {failed.slice(0, 5).map(j => <div className="sync-row failed" key={j.id}><span><b>{j.title}</b><small>{j.error}</small></span><button type="button" className="button" onClick={() => void perform(async () => { await api('publish.retry', { id: j.id }); await refresh(); })}>Retry</button></div>)}
+      {git.ahead > 0 && !pending.length && <div className="sync-row"><span>{plural(git.ahead, 'commit')} not on GitHub yet</span><button type="button" className="button" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button></div>}
+      <div className="sync-foot"><button type="button" className="button" disabled={checking || status?.fetching} onClick={() => void check()}><RefreshCw size={14} />Check now</button><button type="button" className="text-button" onClick={() => { setOpen(false); onSettings(); }}>Repository settings</button></div>
     </div>}
     {problem?.kind === 'blocked' && <Modal title="Can’t pull yet" subtitle="GitHub changed things you also changed on this machine. Nothing was changed here." onClose={() => setProblem(null)}>
       <ul className="sync-blockers">{problem.items.map(i => <li key={i.id}><span>{i.title}</span><button className="text-button" onClick={() => { setProblem(null); onReveal(i.id); }}>Open</button></li>)}{problem.paths.map(p => <li key={p}><code>{p}</code></li>)}</ul>
@@ -121,4 +130,3 @@ export function SyncIndicator({ snapshot, refresh, perform, onMessage, onConflic
     </Modal>}
   </div>;
 }
-

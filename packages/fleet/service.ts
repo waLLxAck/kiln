@@ -2,20 +2,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFile, execFileSync } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileSync } from 'node:child_process';
 import { z } from 'zod';
 import type { Workbench } from '../domain/workbench';
 import type { DeploymentService } from '../deployment/service';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { atomicWrite, now, readJson, writeJson } from '../storage/files';
 import { commitSnapshot, push } from '../git/service';
+import { GitQueue } from '../git/queue';
+import { BackgroundFetch } from '../git/sync';
 import { idSchema, locationKeySchema, machineIdentitySchema, machineReportSchema, type FleetPublish, type FleetView, type MachineIdentity, type MachineReport, type ProviderId, type WantedEdit } from '../protocol/schema';
 import { applyWanted, buildReport, latestApproval, locationClient, sameReport, targetLocations, type FleetInputs } from './model';
 
-const run = promisify(execFile);
 const MAX_MACHINES = 200, MAX_REPORT_BYTES = 2_000_000;
-export type FleetOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Version of the running app; empty keeps the one already published (the CLI doesn't know it). */ appVersion?: string; /** Quiet time after a change before the report is published. */ debounceMs?: number; /** A report older than this is published again even when nothing changed, so "last reported" stays meaningful. */ heartbeatMs?: number; /** Minimum time between fetches when the Machines view opens. */ fetchEveryMs?: number };
+export type FleetOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Version of the running app; empty keeps the one already published (the CLI doesn't know it). */ appVersion?: string; /** Quiet time after a change before the report is published. */ debounceMs?: number; /** A report older than this is published again even when nothing changed, so "last reported" stays meaningful. */ heartbeatMs?: number; /** Minimum time between fetches when the Machines view opens; a report rides a background fetch younger than this. */ fetchEveryMs?: number };
+/** The Git queue and background fetch shared with approvals and background sync, so reports never race them. */
+export type FleetGit = { queue: GitQueue; fetcher: BackgroundFetch };
 export type SyncEntry = { itemId: string; provider?: ProviderId | 'codex-native'; location?: string; label?: string; result: string };
 
 /**
@@ -24,8 +26,9 @@ export type SyncEntry = { itemId: string; provider?: ProviderId | 'codex-native'
  * Reports travel only through the Kiln repository on GitHub; no other machine is ever contacted. Each machine owns
  * `workbench/machines/<its id>.json`. Race rules:
  * - Only the owner writes a report's locations and copies. Other machines change only its `wanted` list.
- * - Every write is a read-modify-write of the file as GitHub has it (fetched just before), made in one synchronous
- *   commit-and-push, so it can't interleave with an approval's commit and push in this process.
+ * - Every write is a read-modify-write of the file as GitHub has it (as last fetched), made in one commit-and-push in its turn
+ *   in the Git queue shared with approvals, organisation commits and background fetches and pulls, so none of them interleave.
+ *   A background fetch younger than `fetchEveryMs` counts as fresh: if it missed something, GitHub rejects the push.
  * - A write is published only as a fast-forward of GitHub's branch. If GitHub moves between the fetch and the push, the push
  *   is rejected, any local commit is undone, and the write is rebuilt on the newer file once more. If this checkout and GitHub
  *   have both moved (unmerged approvals), the change stays pending in private data until the next pull or merge. So two
@@ -39,13 +42,12 @@ export class FleetService {
   private timer?: NodeJS.Timeout;
   private queued = false;
   private auto = false;
-  private lastFetch = 0;
-  private fetchedAt: string | null = null;
-  private fetchError: string | undefined;
+  private readonly background: FleetGit;
   private readonly folder: string;
   private readonly identityFile: string;
   private readonly log: NonNullable<FleetOptions['log']>;
-  constructor(private wb: Workbench, private deployments: DeploymentService, private options: FleetOptions = {}) {
+  constructor(private wb: Workbench, private deployments: DeploymentService, private options: FleetOptions = {}, shared?: FleetGit) {
+    this.background = shared ?? (queue => ({ queue, fetcher: new BackgroundFetch(wb, queue) }))(new GitQueue());
     this.folder = path.join(wb.local, 'fleet');
     // One identity per machine, shared by every library opened on it.
     this.identityFile = path.join(path.dirname(wb.local), 'machine.json');
@@ -108,19 +110,14 @@ export class FleetService {
   async view(input: unknown = {}): Promise<FleetView> {
     const { fetch } = z.object({ fetch: z.boolean().default(false) }).parse(input);
     const ready = this.wb.repositoryState().ready;
-    if (fetch && ready && Date.now() - this.lastFetch > (this.options.fetchEveryMs ?? 60_000)) {
-      this.lastFetch = Date.now();
-      try {
-        await run('git', ['-c', 'core.hooksPath=', '-C', this.wb.root, 'fetch', '--quiet', '--no-tags', 'origin'], { windowsHide: true, timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
-        this.fetchedAt = now(); this.fetchError = undefined; this.wb.invalidateGit();
-      } catch (error) { this.fetchError = String((error as { stderr?: string }).stderr || (error instanceof Error ? error.message : error)).trim().split('\n').filter(Boolean).at(-1)?.slice(0, 300) ?? 'git fetch failed'; }
-    }
+    // The background sync's fetch: one fetched a moment ago (by it or by a report) is not repeated.
+    const fetched = fetch && ready ? await this.background.fetcher.fetch(this.fetchEveryMs) : this.background.fetcher.status();
     const self = this.identity(), { commit, source } = this.readable();
     const machines = commit ? this.reports(commit).filter(r => r.id !== self.id).sort((a, b) => a.name.localeCompare(b.name)) : [];
     const publish = this.publishState();
     // Merged outside Kiln since the report had to wait: try again now.
     if (publish.state === 'behind' && !this.diverged()) this.schedule(0);
-    return { self, wanted: this.wanted(), publish, machines, source: commit ? source : 'none', fetchedAt: this.fetchedAt, ...(this.fetchError ? { fetchError: this.fetchError } : {}), pending: this.pending(), appVersion: this.appVersion, ready };
+    return { self, wanted: this.wanted(), publish, machines, source: commit ? source : 'none', fetchedAt: fetched.fetchedAt, ...(fetched.error ? { fetchError: fetched.error.slice(0, 300) } : {}), pending: this.pending(), appVersion: this.appVersion, ready };
   }
   /** Both this checkout and the fetched branch have commits the other lacks. */
   private diverged() { const head = this.resolve('HEAD'), upstream = this.resolve('@{u}'); return Boolean(head && upstream && !this.ancestor(head, upstream) && !this.ancestor(upstream, head)); }
@@ -149,9 +146,8 @@ export class FleetService {
    * Fetches first: marks are made on other machines and pushed to GitHub, and nobody should have to pull just to see them.
    * Offline, it installs what the last fetch saw.
    */
-  sync(): SyncEntry[] {
-    const tracking = this.tracking();
-    if (tracking && this.wb.repositoryState().ready) { this.fetchNow(tracking.remote); this.wb.invalidateGit(); }
+  async sync(): Promise<SyncEntry[]> {
+    if (this.tracking() && this.wb.repositoryState().ready) await this.background.fetcher.fetch();
     const entries: SyncEntry[] = this.deployments.syncInstalls();
     const locations = targetLocations(this.wb.targets(), os.homedir()), targets = this.wb.targets();
     const token = (key: string): ProviderId | 'codex-native' | undefined => key === 'agents' ? 'codex' : key === 'codex' ? 'codex-native' : key === 'claude' || key === 'copilot' ? key : undefined;
@@ -187,6 +183,7 @@ export class FleetService {
   afterPull() { if (this.auto || this.pending().length || this.publishState().state === 'behind') this.schedule(0); }
   /** Resolves once queued publishing has finished; a publish still waiting for its quiet time runs now. */
   async idle() { if (this.timer) { clearTimeout(this.timer); this.timer = undefined; this.enqueue(); } await this.chain; }
+  private get fetchEveryMs() { return this.options.fetchEveryMs ?? 60_000; }
   private schedule(delay: number) {
     if (this.queued) return;
     clearTimeout(this.timer);
@@ -197,7 +194,7 @@ export class FleetService {
   private enqueue() {
     if (this.queued) return;
     this.queued = true;
-    this.chain = this.chain.then(() => { this.queued = false; this.publish(); }).catch(error => this.log('fleet.failed', { message: error instanceof Error ? error.message : String(error) }));
+    this.chain = this.chain.then(() => this.background.queue.run(() => { this.queued = false; return this.publish(); })).catch(error => this.log('fleet.failed', { message: error instanceof Error ? error.message : String(error) }));
   }
   /** Remote, branch and remote-tracking ref this checkout pushes to; null before the first push. */
   private tracking() {
@@ -220,30 +217,28 @@ export class FleetService {
       return tree === run(['rev-parse', `${base}^{tree}`]) ? null : run(['commit-tree', tree, '-p', base, '-m', message]);
     } finally { fs.rmSync(index, { force: true }); }
   }
-  private fetchNow(remote: string) {
-    try { this.git(['fetch', '--quiet', '--no-tags', remote]); this.fetchedAt = now(); this.fetchError = undefined; }
-    catch (error) { this.fetchError = String((error as { stderr?: string }).stderr || error).trim().split('\n').filter(Boolean).at(-1)?.slice(0, 300); }
-  }
   /**
-   * Publishes whatever changed in one synchronous commit and push (see the race rules above). Built on HEAD when HEAD has
+   * Publishes whatever changed in one commit and push, in its turn in the Git queue (see the race rules above). Built on HEAD when HEAD has
    * everything GitHub has, pushing HEAD as an approval does. When HEAD is only behind, it is built on the fetched branch and
    * pushed there, leaving HEAD and the checkout alone: the next pull fast-forwards over it, and nobody has to pull just to
    * report or mark. When both have new commits, it waits for a pull or merge.
    */
-  private publish() {
+  private async publish() {
     const previous = this.publishState();
     const finish = (state: FleetPublish) => { this.saveState({ ...state, finishedAt: now() }); this.log('fleet.published', { state: state.state, commit: state.commit, error: state.error }); };
     if (!this.wb.repositoryState().ready) return finish({ state: 'unavailable', sharedAt: previous.sharedAt, commit: previous.commit });
+    // The first try rides a recent background fetch; when GitHub has moved since, the push is rejected and later tries fetch first.
+    const tries = this.fetchEveryMs ? 3 : 2;
     for (let attempt = 0; ; attempt++) {
-      const result = this.attempt(previous);
+      const result = await this.attempt(previous, attempt ? 0 : this.fetchEveryMs);
       if (result.state !== 'retry') return finish(result);
-      // GitHub moved between the fetch and the push: fetch and build again once, then wait.
-      if (attempt) return finish({ state: 'behind', sharedAt: result.sharedAt, commit: previous.commit });
+      // GitHub moved between the fetch and the push: fetch and build again, then wait.
+      if (attempt + 1 >= tries) return finish({ state: 'behind', sharedAt: result.sharedAt, commit: previous.commit });
     }
   }
-  private attempt(previous: FleetPublish): FleetPublish | { state: 'retry'; sharedAt: string | null } {
+  private async attempt(previous: FleetPublish, fetchAgeMs: number): Promise<FleetPublish | { state: 'retry'; sharedAt: string | null }> {
     const self = this.identity(), tracking = this.tracking();
-    if (tracking) this.fetchNow(tracking.remote);
+    if (tracking) await this.background.fetcher.fetchHeld(fetchAgeMs);
     const head = this.resolve('HEAD'), upstream = tracking ? this.resolve('@{u}') : null;
     const onUpstream = Boolean(head && upstream && head !== upstream && this.ancestor(head, upstream));
     const base = onUpstream ? upstream : head;
