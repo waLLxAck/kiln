@@ -1,3 +1,4 @@
+import { activeRun } from '../../../packages/agent/run-notice';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowRight, ChevronDown, ChevronRight, CircleSlash, Folder, Layers3, Loader2, MessageSquare, Pencil, RotateCcw, ScanSearch, ScrollText, Sparkles, Star, X, ZoomIn } from 'lucide-react';
 import type { AgentJob } from '../../../packages/agent/service';
@@ -87,7 +88,8 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
   }
   const kept = active.filter(e => e.item.favourite).length;
 
-  const running = jobs.find(j => j.itemId === item.id && j.status === 'running' && ['capture', 'distill'].includes(j.kind));
+  // Running or waiting its turn: either way the source is being analysed and Analyze again waits.
+  const running = jobs.find(j => j.itemId === item.id && activeRun(j) && ['capture', 'distill'].includes(j.kind));
   const localJob = latest ? jobs.find(j => j.id === latest.id) : undefined;
   // A run on this machine shows as its live card (steps, run files, retry); others show the record kept in the library.
   const recorded = detail.analyses.filter(a => !jobs.some(j => j.id === a.id));
@@ -153,7 +155,7 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
         </div>}
 
         {(latest || runCount > 0) && <div className="source-analysis">
-          {running ? <span className="source-analysis-line"><Loader2 size={12} className="spin" />{providerName[running.provider]} · {running.phase}</span>
+          {running ? <span className="source-analysis-line"><Loader2 size={12} className="spin" />{providerName[running.provider]} · {running.status === 'queued' ? 'Queued' : running.phase}</span>
             : latest && !historyOpen && <span className="source-analysis-line" title={latest.usage ? `Input ${latest.usage.input.toLocaleString()} (cached ${latest.usage.cached.toLocaleString()}) · output ${latest.usage.output.toLocaleString()}` : undefined}>
               {[providerName[latest.provider], latest.model || 'CLI default model', latest.effort ? `${latest.effort} effort` : '', latest.usage ? `${tokens(latest.usage.input)} in · ${tokens(latest.usage.output)} out` : '', took(latest), date(latest.finishedAt)].filter(Boolean).join(' · ')}
               {localJob && <> · <button className="source-link" onClick={() => void perform(() => api('desktop.openAgentJob', { id: localJob.id }))}>Run files</button></>}

@@ -1,3 +1,4 @@
+import { activeRun } from '../../../packages/agent/run-notice';
 import { MAX_ATTACHMENT_BYTES } from '../../../packages/protocol/limits';
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
 import { AlertTriangle, Bot, Check, Clapperboard, File, FileText, Globe, Loader2, Paperclip, Plus, Sparkles, Type, Upload, X } from 'lucide-react';
@@ -170,8 +171,8 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
 /** Analyses running now, and those that finished in the last half hour, newest first. Hidden when there are none. */
 function RecentCaptures({ jobs, items, onOpenItem, onOpenCollection }: { jobs: AgentJob[]; items: Item[]; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void }) {
   const [now, setNow] = useState(Date.now()), [dismissed, setDismissed] = useState<string[]>([]);
-  const recent = jobs.filter(j => (j.kind === 'distill' || j.kind === 'capture') && !dismissed.includes(j.id) && (j.status === 'running' || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
-  const running = recent.some(j => j.status === 'running');
+  const recent = jobs.filter(j => (j.kind === 'distill' || j.kind === 'capture') && !dismissed.includes(j.id) && (activeRun(j) || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
+  const running = recent.some(activeRun);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), running ? 1000 : 30_000); return () => clearInterval(timer); }, [running]);
   if (!recent.length) return null;
   return <section className="capture-recent" aria-label="Recent captures">
@@ -180,10 +181,10 @@ function RecentCaptures({ jobs, items, onOpenItem, onOpenCollection }: { jobs: A
       const item = items.find(i => i.id === job.itemId), made = job.createdItemIds?.length ?? 0, done = job.status === 'completed';
       const icon = item?.tags.includes('youtube') ? <Clapperboard size={14} /> : item?.kind === 'link' || /^https?:\/\//.test(item?.source ?? '') ? <Globe size={14} /> : item?.kind === 'file' || item?.kind === 'image' ? <Paperclip size={14} /> : <FileText size={14} />;
       return <div key={job.id} className={`capture-card ${job.status}`}>
-        <div className="capture-card-top"><span className="capture-card-icon">{icon}</span><span className="capture-card-text"><b className="ellipsis" title={item?.title}>{item?.title ?? 'Removed item'}</b><small className="ellipsis">{providerName[job.provider]} · {job.status === 'running' ? elapsed(job.startedAt, now) : done ? 'finished' : job.status}</small></span>
+        <div className="capture-card-top"><span className="capture-card-icon">{icon}</span><span className="capture-card-text"><b className="ellipsis" title={item?.title}>{item?.title ?? 'Removed item'}</b><small className="ellipsis">{providerName[job.provider]} · {job.status === 'running' ? elapsed(job.startedAt, now) : job.status === 'queued' ? 'queued' : done ? 'finished' : job.status}</small></span>
           <button type="button" className="icon-button" aria-label="Hide from recent captures" onClick={() => setDismissed(current => [...current, job.id])}><X size={12} /></button></div>
         <div className={`capture-progress ${job.status}`}><i /></div>
-        <div className="capture-card-foot">{job.status === 'running' ? <span className="capture-state"><Loader2 size={12} className="spin" /><span className="ellipsis">{job.phase}</span></span>
+        <div className="capture-card-foot">{activeRun(job) ? <span className="capture-state"><Loader2 size={12} className="spin" /><span className="ellipsis">{job.status === 'queued' ? 'Waiting for a free run slot' : job.phase}</span></span>
           : done ? <><span className="capture-done"><Check size={12} />Done · {made} entr{made === 1 ? 'y' : 'ies'}</span><span className="capture-grow" />{job.collection && made ? <button type="button" className="text-button" onClick={() => onOpenCollection(job.collection!)}>Open collection</button> : item && <button type="button" className="text-button" onClick={() => onOpenItem(item.id)}>Open</button>}</>
           : <><span className="capture-failed" title={job.error}><AlertTriangle size={12} />{job.status === 'cancelled' ? 'Cancelled' : 'Did not finish'}</span><span className="capture-grow" />{item && <button type="button" className="text-button" onClick={() => onOpenItem(item.id)}>Open</button>}</>}</div>
       </div>;
