@@ -18,7 +18,7 @@ test('the library table keeps one line per item, Title and Status visible, acros
     // Collection comes first; the Title cell holds only the title, and the description moved to the row's tooltip. A skill is
     // listed, so Invoked by shows too.
     const head = page.locator('.lib-row.head');
-    await expect(head.getByRole('columnheader')).toHaveText(['Collection', 'Title', 'Status', 'Installed', 'Invoked by', 'Last test', 'Updated']);
+    await expect(head.getByRole('columnheader')).toHaveText(['Collection', 'Title', 'Status', 'Invoked by', 'Installed', 'Last test', 'Updated']);
     await expect(page.getByText('A description that runs on past the edge of the title column.')).toHaveCount(0);
     await expect(page.locator('.item-card').first()).toHaveAttribute('title', 'A description that runs on past the edge of the title column.');
     for (const width of [1000, 1300, 1900]) {

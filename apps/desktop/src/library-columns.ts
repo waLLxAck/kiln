@@ -17,8 +17,11 @@ export const COLUMNS: Record<ColumnKey, Column> = {
   test: { key: 'test', label: 'Last test', sortable: false, width: 130, min: 90, max: 400 },
   updatedAt: { key: 'updatedAt', label: 'Updated', sortable: true, width: 110, min: 80, max: 200 },
 };
-/** Collection first: it is what people look at before the title. */
-export const DEFAULT_ORDER: ColumnKey[] = ['collection', 'title', 'status', 'installed', 'model', 'test', 'updatedAt'];
+/**
+ * Collection first: it is what people look at before the title. Invoked by comes before Installed so a row's hover actions,
+ * which cover the right end of the row, never hide its switch.
+ */
+export const DEFAULT_ORDER: ColumnKey[] = ['collection', 'title', 'status', 'model', 'installed', 'test', 'updatedAt'];
 export const sortKeyOf = (key: ColumnKey) => key as SortKey;
 
 /** A stored order made whole: unknown keys and repeats dropped, columns it does not name added where the default has them. */
