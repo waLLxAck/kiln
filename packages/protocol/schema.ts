@@ -44,6 +44,8 @@ export const approvalSchema = z.object({
   evidence: z.array(idSchema), waivedChecks: z.string(), createdAt: z.string(),
   trust: z.enum(['local', 'imported']).default('local'),
   revokedAt: z.string().optional(),
+  /** Set when Kiln carried an approval over a change that only turned model invocation on or off: the approved revision it came from. */
+  carriedFrom: hashSchema.optional(),
 });
 export const trialSchema = z.object({
   schemaVersion: z.literal(1), id: idSchema, itemId: idSchema, revision: hashSchema,
@@ -117,8 +119,16 @@ export type PublishJob = { id: string; itemId: string; revision: string; title: 
 /** Result of a local update check. `available` is the newest installer in the update source whose version is above the running app. */
 export type UpdateStage = { state: 'idle' } | { state: 'preparing'; version: string; progress: number } | { state: 'ready'; version: string } | { state: 'failed'; message: string };
 export type UpdateStatus = { current: string; source: string; /** github: published releases (the default for published builds); setting: a folder chosen in Settings; build: the release folder of the repository this build came from; off: checks disabled; none: nothing to watch. */ sourceKind: 'github' | 'setting' | 'build' | 'off' | 'none'; packaged: boolean; /** For GitHub, `path` is the release page. */ available: { version: string; path: string } | null; stage: UpdateStage; /** Git commit this build was made from, when known. */ commit: string; /** False for a watched folder on macOS and Linux: that path runs the Windows installer. */ supported?: boolean; /** GitHub only. app: downloads and installs in place; download: the new version is downloaded from the release page by hand. */ install?: 'app' | 'download'; /** GitHub only: when the last check finished. */ checkedAt?: string; error?: string };
-export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; /** Commits on GitHub, as of the last fetch, that this machine has not pulled. */ behind: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string; /** Per item id: times copied, and every usage observation (copies, opens, tests, agent use). Items never used are absent. */ usage: Usage; /** Likely duplicates among live items, not counting pairs marked as distinct. */ duplicates: DuplicateGroup[] };
+export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; /** Commits on GitHub, as of the last fetch, that this machine has not pulled. */ behind: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string; /** Per item id: times copied, and every usage observation (copies, opens, tests, agent use). Items never used are absent. */ usage: Usage; /** Likely duplicates among live items, not counting pairs marked as distinct. */ duplicates: DuplicateGroup[]; /** Per live skill id: whether its current revision lets each client's model invoke it (packages/domain/invocation.ts). */ invocation: Record<string, SkillListing> };
 export type Usage = Record<string, { copied: number; used: number }>;
+/**
+ * Whether a skill's own files let the model invoke it on its own (packages/domain/invocation.ts). `claude`: no
+ * `disable-model-invocation: true` in SKILL.md (Claude Code, and clients reading the same key). `codex`: no
+ * `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex only).
+ */
+export type SkillInvocation = { claude: boolean; codex: boolean };
+/** A live skill's invocation switches and the size (characters) of the entry harnesses list for it at session start. */
+export type SkillListing = SkillInvocation & { chars: number };
 /**
  * Where a copy sits, as a key that means the same thing on every machine and names no path: a personal skill location
  * (`agents`, `claude`, `codex`, `copilot`) or an enrolled project folder by its folder name (`project:<name>`, plus `:<location>`
