@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, Copy, FolderOpen, ShieldCheck } from 'lucide-react';
-import type { ItemDetail, Plan, Provider, Snapshot, Target, Trial } from '../../../packages/protocol/schema';
+import type { ItemDetail, Plan, Provider, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, shortHash, variablesIn } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { Badge, Field, InlineError, Modal, Submit } from './components';
@@ -23,7 +23,7 @@ export function VariablesDialog({ detail, onClose, onDone }: Common & { detail: 
   </form></Modal>;
 }
 
-export function TrialDialog({ detail, providers, targets, initialWorkspace = '', knownProjects = false, onClose, onDone }: Common & { detail: ItemDetail; providers: Provider[]; targets: Target[]; initialWorkspace?: string; /** Experimental projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
+export function TrialDialog({ detail, providers, initialWorkspace = '', onClose, onDone }: Common & { detail: ItemDetail; providers: Provider[]; initialWorkspace?: string }) {
   const { busy, error, run } = useSubmit(); const [prepared, setPrepared] = useState<{ trial: Trial; folder: string; prompt: string } | null>(null);
   const [provider, setProvider] = useState('codex'), [workspace, setWorkspace] = useState(initialWorkspace);
   return <Modal title={prepared ? 'Your trial is ready' : 'Test this revision'} subtitle={`${detail.item.title} · ${shortHash(detail.item.revision)}`} onClose={onClose} wide>
@@ -32,7 +32,7 @@ export function TrialDialog({ detail, providers, targets, initialWorkspace = '',
       <p className="muted">{provider === 'manual' ? 'Use the agent you choose.' : providers.find(p => p.id === provider)?.available ? `${providers.find(p => p.id === provider)?.version} · authentication stays in the official client` : 'Client not detected on PATH. You can still hand off to your installed app.'}</p>
       {variablesIn(detail.revision.content).map(key => <Field label={`${key} (optional)`} hint={`Leave blank to keep {{${key}}} in the prompt.`} key={key}><textarea name={`var:${key}`} rows={2} /></Field>)}
       <Field label="Representative task"><textarea name="task" required rows={4} placeholder="What should this prompt accomplish? Include a realistic input." /></Field><Field label="Evaluation rubric" hint="One criterion per line."><textarea name="rubric" required rows={3} placeholder={'Produces a usable result\nDoes not invent facts\nHandles missing inputs clearly'} /></Field>
-      <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} known={knownProjects} />
+      <ExperimentProject value={workspace} onChange={setWorkspace} disabled={busy} />
       <label className="check-row"><input type="checkbox" name="retainInput" /><span>Include task inputs and variables in the Git-owned experiment summary</span></label><p className="muted small">By default, inputs and output transcripts remain only in this machine’s private run folder.</p>
       <InlineError error={error} /><div className="modal-actions"><span className="muted">No API key. No automatic execution.</span><Submit busy={busy}>Prepare trial <ArrowRight size={15} /></Submit></div>
     </form>}

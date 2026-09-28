@@ -34,7 +34,7 @@ const stateBadge: Record<ProjectPreview['state'], string> = { absent: 'create', 
  * column appears in the matrix, without writing anything into it. Either way a project with no Kiln copies can be forgotten.
  */
 export function ProjectInstallDialog({ item, onClose, onDone }: { item?: Item; onClose: () => void; onDone: (message: string) => void }) {
-  const { projects, error: listError, reload } = useKnownProjects(true);
+  const { projects, error: listError, reload } = useKnownProjects();
   const [chosen, setChosen] = useState<string[]>([]), [root, setRoot] = useState(''), [location, setLocation] = useState<ProjectLocation>('agents');
   const [preview, setPreview] = useState<ProjectPreview | null>(null), [replace, setReplace] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const skill = !item || item.kind === 'skill';

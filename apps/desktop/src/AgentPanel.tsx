@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, Brain, Clock, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep } from '../../../packages/agent/service';
 import { activeRun } from '../../../packages/agent/run-notice';
-import type { Analysis, ItemDetail, Provider, RunProviderId, Target } from '../../../packages/protocol/schema';
+import type { Analysis, ItemDetail, Provider, RunProviderId } from '../../../packages/protocol/schema';
 import { api, date } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { RevisionSelect } from './TrialLoop';
@@ -66,7 +66,7 @@ export function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
 }
 /** Runs a job again with its exact inputs: provider, project, context and revision, even if the item has been edited since. */
 export const retryJob = (job: AgentJob) => api('agent.start', { id: job.itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind));
-export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace = '', defaultProvider, onClose, onManual, revisions, knownProjects = false }: { itemId: string; providers: Provider[]; targets: Target[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** Offer a Revision selector over this item's history; without it the current revision runs. */ revisions?: ItemDetail; /** projectInstalls: offer every known project folder. */ knownProjects?: boolean }) {
+export function AgentTrialDialog({ itemId, providers, initialWorkspace = '', defaultProvider, onClose, onManual, revisions }: { itemId: string; providers: Provider[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** Offer a Revision selector over this item's history; without it the current revision runs. */ revisions?: ItemDetail }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -74,7 +74,7 @@ export function AgentTrialDialog({ itemId, providers, targets, initialWorkspace 
   return <Modal title="Run an experiment" subtitle="Test this revision against a project or an isolated example. The output and agent assessment are saved together." onClose={onClose}>
     <ProviderSelect providers={providers} value={provider} onChange={setProvider} />
     {revisions && <RevisionSelect detail={revisions} value={revision} onChange={setRevision} disabled={busy} />}
-    <ExperimentProject targets={targets} value={workspace} onChange={setWorkspace} disabled={busy} known={knownProjects} />
+    <ExperimentProject value={workspace} onChange={setWorkspace} disabled={busy} />
     <p className="muted small">Experiments inspect files read-only. Tasks that require edits or unavailable tools are reported as uncertain.</p>
     <Field label="What should it try? (optional)"><textarea rows={4} value={context} onChange={e => setContext(e.target.value)} placeholder="Add an example input or the situation to test." /></Field>
     {error && <p role="alert" className="error-box">{error}</p>}

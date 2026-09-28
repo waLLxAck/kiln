@@ -90,7 +90,7 @@ test('the experiments grid runs from an inline bar with the project fixed by its
     await page.getByRole('button', { name: 'Prepare trial', exact: false }).click();
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await expect(grid.getByRole('columnheader', { name: /Manual/ })).toBeVisible();
-    // Add project… offers enrolled projects; picking one adds its column and arms the bar on that cell.
+    // Add project… offers the known projects (the enrolled one here), as the Test dialogs do; picking one adds its column and arms the bar on that cell.
     await grid.getByRole('button', { name: 'Add project…' }).click();
     await page.getByRole('menuitem', { name: /my-game/ }).click();
     await expect(grid.getByRole('columnheader', { name: /my-game/ })).toBeVisible();

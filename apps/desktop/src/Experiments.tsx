@@ -7,6 +7,7 @@ import { api, date, shortHash } from './api';
 import { agentStarted, ProviderSelect, retryJob, Steps, tokens, useElapsed, useStart } from './AgentPanel';
 import { ContextMenu, providerName, type MenuEntry } from './components';
 import { askAgent, experimentsOf, improveMessage, reviews } from './TrialLoop';
+import { useKnownProjects } from './KnownProjects';
 import './experiments.css';
 
 export type ExperimentsGridProps = {
@@ -69,6 +70,8 @@ export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, re
   const active = trialJobs.find(activeRun);
   // Folders picked with Add project… stay as columns while the grid is open, even before anything has run there.
   const [added, setAdded] = useState<Column[]>([]);
+  // The same list of projects the Test dialogs and Install into project offer.
+  const { projects: knownProjects } = useKnownProjects();
 
   const runs = useMemo(() => {
     const byTrial = new Map(trialJobs.filter(j => j.trialId).map(j => [j.trialId!, j]));
@@ -124,12 +127,12 @@ export function ExperimentsGrid({ detail, snapshot, providers, jobs, perform, re
   const addProject = (event: MouseEvent<HTMLButtonElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const has = (key: string) => columns.some(c => c.key === key);
-    const enrolled = [...new Map(snapshot.targets.filter(t => t.scope === 'project').map(t => [t.root, t])).values()].filter(t => !has(`path:${t.root}`));
+    const projects = (knownProjects ?? []).filter(p => p.exists && !has(`path:${p.root}`));
     const pick = (column: Column) => { setAdded(list => [...list, column]); openBar(current, column); };
     setMenu({ x: rect.left, y: rect.bottom + 4, entries: [
-      ...(enrolled.length ? [{ heading: 'Enrolled projects' }, ...enrolled.map(t => ({ label: t.name, hint: t.root, icon: <FolderOpen />, onSelect: () => pick(projectColumn(t.root)) }))] : []),
+      ...(projects.length ? [{ heading: 'Projects' }, ...projects.map(p => ({ label: p.name, hint: p.root, icon: <FolderOpen />, onSelect: () => pick(projectColumn(p.root)) }))] : []),
       ...(has('isolated') ? [] : [{ label: 'Isolated example', hint: 'No project folder; the agent works from a scratch example.', icon: <FlaskConical />, onSelect: () => pick(isolated) }]),
-      ...(enrolled.length || !has('isolated') ? ['separator' as const] : []),
+      ...(projects.length || !has('isolated') ? ['separator' as const] : []),
       { label: 'Choose folder…', icon: <FolderOpen />, onSelect: () => void choose().then(column => { if (column) openBar(current, column); }) },
     ] });
   };
