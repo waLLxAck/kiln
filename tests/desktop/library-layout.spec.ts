@@ -78,3 +78,84 @@ test('library columns move by dragging a heading or from the header menu, and th
     await expect(headings).toHaveText(['Title', 'Status', 'Installed', 'Last test', 'Updated']);
   } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('library columns resize from their edges without sorting or moving, and the widths survive a reload', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-library-widths-'));
+  const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
+  try {
+    const page = await app.firstWindow();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1500, 900));
+    await page.evaluate(async () => {
+      for (const title of ['Beta', 'Alpha']) await window.kiln.call('items.create', { kind: 'prompt', title, content: 'Widths fixture', collection: 'A collection with a long enough name/and a nested folder' });
+    });
+    await page.getByRole('button', { name: 'Refresh library' }).click();
+    const head = page.locator('.lib-row.head'), headings = head.getByRole('columnheader');
+    const order = ['Collection', 'Title', 'Status', 'Installed', 'Last test', 'Updated'];
+    await expect(headings).toHaveText(order);
+    const width = async (key: string) => (await head.locator(`[data-col=${key}]`).boundingBox())!.width;
+    const sorted = head.locator('[aria-sort="ascending"], [aria-sort="descending"]'), sortedBefore = await sorted.count();
+    // Each column but Title has one handle, on its side away from Title (Title takes the space left over).
+    const collectionEdge = page.getByRole('separator', { name: 'Resize Collection column' }), statusEdge = page.getByRole('separator', { name: 'Resize Status column' });
+    await expect(head.getByRole('separator')).toHaveCount(5);
+    await expect(page.getByRole('separator', { name: 'Resize Title column' })).toHaveCount(0);
+    await expect(statusEdge).toHaveAttribute('aria-orientation', 'vertical');
+    await expect(statusEdge).toHaveAttribute('aria-valuenow', '150');
+    await expect(statusEdge).toHaveAttribute('aria-valuemin', '100');
+    // Dragging the Collection edge right widens Collection by as much, in the header and every row; Title gives up the space.
+    const collectionBefore = await width('collection'), titleBefore = await width('title');
+    let edge = (await collectionEdge.boundingBox())!;
+    await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2); await page.mouse.down();
+    await page.mouse.move(edge.x + edge.width / 2 + 30, edge.y + edge.height / 2, { steps: 3 });
+    await page.mouse.move(edge.x + edge.width / 2 + 60, edge.y + edge.height / 2, { steps: 3 });
+    await expect(page.locator('.col-drop')).toHaveCount(0);
+    await page.mouse.up();
+    await expect.poll(() => width('collection')).toBeCloseTo(collectionBefore + 60, 0);
+    expect(await width('title')).toBeCloseTo(titleBefore - 60, 0);
+    expect((await page.locator('.item-card').first().locator('.col-collection').boundingBox())!.width).toBeCloseTo(collectionBefore + 60, 0);
+    // Resizing neither sorts nor moves a column.
+    await expect(headings).toHaveText(order);
+    await expect(sorted).toHaveCount(sortedBefore);
+    // Status's edge is on its left, so dragging it left widens Status.
+    edge = (await statusEdge.boundingBox())!;
+    await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2); await page.mouse.down();
+    await page.mouse.move(edge.x + edge.width / 2 - 40, edge.y + edge.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await expect(statusEdge).toHaveAttribute('aria-valuenow', '190');
+    await expect(headings).toHaveText(order);
+    await expect(sorted).toHaveCount(sortedBefore);
+    // A plain click on an edge does not sort either.
+    await statusEdge.click();
+    await expect(sorted).toHaveCount(sortedBefore);
+    await page.reload();
+    await expect(headings).toHaveText(order);
+    expect(await width('collection')).toBeCloseTo(collectionBefore + 60, 0);
+    expect(await width('status')).toBeCloseTo(190, 0);
+    // Keyboard: the arrows move the edge 16px (Left widens Status, whose edge is on its left); Home and End go to the limits.
+    await statusEdge.focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect(statusEdge).toHaveAttribute('aria-valuenow', '206');
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
+    await expect(statusEdge).toHaveAttribute('aria-valuenow', '174');
+    await page.keyboard.press('Home');
+    await expect(statusEdge).toHaveAttribute('aria-valuenow', '100');
+    expect(await width('status')).toBeCloseTo(100, 0);
+    await expect(headings).toHaveText(order);
+    // Reset width from the header menu, for that column only.
+    await head.locator('[data-col=status]').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Reset width' }).click();
+    await expect(statusEdge).toHaveAttribute('aria-valuenow', '150');
+    expect(await width('collection')).toBeCloseTo(collectionBefore + 60, 0);
+    // Double-clicking an edge fits the column to its content: the long collection name is no longer cut off.
+    const cut = () => page.locator('.item-card .col-collection').first().evaluate(cell => cell.scrollWidth > cell.clientWidth);
+    expect(await cut()).toBe(true);
+    await collectionEdge.dblclick();
+    await expect.poll(cut).toBe(false);
+    await expect(sorted).toHaveCount(sortedBefore);
+    // Reset columns puts the widths back too, and leaves nothing stored.
+    await head.locator('[data-col=title]').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Reset columns' }).click();
+    await expect.poll(() => width('collection')).toBeCloseTo(200, 0);
+    expect(await width('status')).toBeCloseTo(150, 0);
+    expect(await page.evaluate(() => localStorage.getItem('kiln-library-columns'))).toBeNull();
+  } finally { await app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
