@@ -12,6 +12,7 @@ import { updateMessage } from './InstallUpdates';
 import type { UpdateResult } from '../../../packages/deployment/service';
 import { applicable, attention, cellStates, counts, isFiltered, noFilter, preset, rowMatches, showsColumn, toggleState } from './machines-filter';
 import { useMachinesFilter } from './view-memory';
+import { InvocationToggle, invocationOf } from './Invocation';
 import './machines.css';
 
 type Props = {
@@ -23,6 +24,8 @@ type Props = {
   onOpenItem?: (itemId: string) => void;
   /** Keep these changes: saves a changed copy on this machine as a new draft of the item (KeepChanges.tsx). */
   onKeep?: (itemId: string, targetId: string) => void;
+  /** The model-invocation switch (Invocation.tsx), beside each skill's approved revision. */
+  onInvocation?: (item: Item, model: boolean) => void;
 };
 type Machine = { id: string; name: string; platform: string; self: boolean; reportedAt: string | null; report: MachineReport; locations: (FleetLocation & Partial<LocalLocation>)[]; pending: Set<string> };
 type Selection = 'self' | 'all' | string;
@@ -71,7 +74,7 @@ export function updatedMessage(results: UpdateResult[]) {
  * reaches another machine directly: marks for another machine are committed to its report and take effect when it next syncs.
  * While `multiMachine` is off it is this machine's matrix alone: no reports are read or shared, and adding a machine is coming soon.
  */
-export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onAddProject, onCompare, onUninstall, onInstall, onOpenItem, onKeep }: Props) {
+export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onAddProject, onCompare, onUninstall, onInstall, onOpenItem, onKeep, onInvocation }: Props) {
   const [view, setView] = useState<FleetView | null>(null);
   // Only the name while multi-machine is off: fleet.view reads other machines' reports and may publish this one.
   const [identity, setIdentity] = useState<MachineIdentity | null>(null);
@@ -121,11 +124,11 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   const explicit = (m: Machine, itemId: string, key: string) => Boolean((m.self ? view?.wanted : view?.machines.find(x => x.id === m.id)?.wanted)?.[itemId]?.includes(key)) || view?.pending.some(e => e.machineId === m.id && e.itemId === itemId && e.location === key && e.wanted);
   // Kind and column choices only when there is something to choose between; a stored choice that no longer applies is ignored.
   const shownMachines = machine ? [machine] : machines;
-  const choices = { kinds: new Set(rows.map(item => item.kind)).size > 1, columns: shownMachines.some(m => m.locations.some(l => isProject(l.key))) && shownMachines.some(m => m.locations.some(l => !isProject(l.key))) };
+  const choices = { invocation: rows.some(item => snapshot.invocation[item.id]), kinds: new Set(rows.map(item => item.kind)).size > 1, columns: shownMachines.some(m => m.locations.some(l => isProject(l.key))) && shownMachines.some(m => m.locations.some(l => !isProject(l.key))) };
   const active = applicable(stored, choices), filter = { ...active, text: typed };
   const columnsOf = (m: Machine) => m.locations.filter(l => showsColumn(filter.columns, isProject(l.key)));
   const cells = (m: Machine, item: Item) => columnsOf(m).map(location => ({ location, cell: cellFor(item, approved.get(item.id), m.report, location) }));
-  const filterRows = rows.map(item => ({ item, row: { title: item.title, kind: item.kind, states: shownMachines.flatMap(m => cells(m, item).map(({ cell }) => cell.state)) } }));
+  const filterRows = rows.map(item => ({ item, row: { title: item.title, kind: item.kind, states: shownMachines.flatMap(m => cells(m, item).map(({ cell }) => cell.state)), ...(snapshot.invocation[item.id] ? { invocation: invocationOf(snapshot.invocation[item.id]) } : {}) } }));
   const tally = counts(filterRows.map(r => r.row), filter), shownPreset = preset(active);
   const visible = filterRows.filter(r => rowMatches(r.row, filter)).map(r => r.item);
   // Within the rows kept by state chips, cells in other states fade so the matching ones stand out.
@@ -190,6 +193,9 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
         if (state === 'marked' && !n && !on) return null;
         return <button key={state} type="button" className={`chip fleet-state ${on ? 'active' : ''}`} aria-pressed={on} disabled={!n && !on} title={chipHint[state]} onClick={() => setFilter(toggleState(stored, state))}><Glyph state={state} />{chipLabel[state]}<span>{n}</span></button>;
       })}</div>
+      {/* The library's is:model-invoked: skills whose descriptions load in every new session. */}
+      {choices.invocation && (() => { const on = active.invocation === 'model', n = filterRows.filter(r => rowMatches(r.row, { ...filter, states: [], invocation: 'model' })).length;
+        return <button type="button" className={`chip fleet-state fleet-invoked ${on ? 'active' : ''}`} aria-pressed={on} disabled={!n && !on} title="Skills a model may invoke on its own: their descriptions load in every new session" onClick={() => setFilter({ ...stored, invocation: on ? 'all' : 'model' })}><i className="inv-switch" aria-hidden="true" />Model can invoke<span>{n}</span></button>; })()}
     </div>
 
     <div className="fleet-toolbar">
@@ -228,7 +234,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
         return <tr key={item.id} className={open?.itemId === item.id ? 'active' : ''}>
           <th className="fleet-item" scope="row"><span className="fleet-kind"><KindIcon kind={item.kind} size={15} /></span><span className="fleet-itemtext">
             {onOpenItem ? <button className="fleet-title" onClick={() => onOpenItem(item.id)} title="Open this item">{item.title}</button> : <span className="fleet-title">{item.title}</span>}{item.kind === 'agent' && <span className="fleet-kindtag">{item.agent ? providerName[item.agent.provider] : 'agent'}</span>}
-            <span className="fleet-rev">{rev ? <><Check size={11} className="fleet-ok" /><code>{shortHash(rev)}</code></> : <span>Draft · not approved</span>}{rev && rev !== item.revision && <span className="fleet-draft" title={`Draft ${shortHash(item.revision)} is newer than the approved revision. Sync and Update install ${shortHash(rev)} until you approve it.`}>newer draft</span>}</span>
+            <span className="fleet-rev">{rev ? <><Check size={11} className="fleet-ok" /><code>{shortHash(rev)}</code></> : <span>Draft · not approved</span>}{rev && rev !== item.revision && <span className="fleet-draft" title={`Draft ${shortHash(item.revision)} is newer than the approved revision. Sync and Update install ${shortHash(rev)} until you approve it.`}>newer draft</span>}{onInvocation && item.kind === 'skill' && snapshot.invocation[item.id] && <InvocationToggle compact item={item} listing={snapshot.invocation[item.id]} onToggle={onInvocation} />}</span>
           </span></th>
           {row.map(({ location, cell }, n) => {
             const isOpen = open?.itemId === item.id && open.key === location.key;

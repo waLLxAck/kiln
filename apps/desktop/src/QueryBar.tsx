@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { ArrowDown, ArrowDownUp, ArrowUp, Bookmark, Check, CornerDownLeft, Loader2, Plus, Search, Star, X } from 'lucide-react';
-import type { Installation, Item } from '../../../packages/protocol/schema';
+import type { Installation, Item, Snapshot } from '../../../packages/protocol/schema';
 import { KindIcon, type MenuEntry } from './components';
-import { candidateTokens, facets, matchesQuery, parseTyped, sameToken, stateHint, tokenLabel, type Facet, type InstallState, type QueryToken } from './library-filters';
+import { candidateTokens, facets, matchesQuery, parseTyped, sameToken, stateHint, isHint, tokenLabel, type Facet, type InstallState, type QueryToken } from './library-filters';
 import { GroupMenu, MenuPill } from './Library';
 import { sortChoices, sortLabel, type GroupKey, type Sort } from './library-sort';
 import type { SavedView } from './view-memory';
@@ -12,7 +12,7 @@ type Suggestion = { token: QueryToken; count: number };
 type Props = {
   tokens: QueryToken[]; onTokens: (tokens: QueryToken[]) => void; query: string; onQuery: (query: string) => void;
   /** Items the view shows before any token applies: its section, collection or stage, and the search text. Counts come from these. */
-  pool: Item[]; installations: Installation[]; sources: Item[]; /** Ids of items in a duplicate group, for `is:duplicate`. */ duplicates?: ReadonlySet<string>;
+  pool: Item[]; installations: Installation[]; sources: Item[]; /** Ids of items in a duplicate group, for `is:duplicate`. */ duplicates?: ReadonlySet<string>; /** Model-invocation switches per skill, for `is:model-invoked` and `is:user-only`. */ invocation?: Snapshot['invocation'];
   saved: { views: SavedView[]; save: (name: string, tokens: QueryToken[], query: string) => void; remove: (id: string) => void };
   sort: NonNullable<Sort>; onSort: (sort: Sort) => void; group: GroupKey; onGroup: (group: GroupKey) => void;
   canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean];
@@ -41,7 +41,7 @@ const sameSet = (a: QueryToken[], b: QueryToken[]) => a.length === b.length && a
  * One field for finding things: filter tokens as chips (picked from suggestions grouped by facet, each with the count it would
  * show) and free text that searches titles, descriptions, content and tags, best match first. Saved views, Group and Sort sit on the row under it.
  */
-export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations, sources, duplicates, saved, sort, onSort, group, onGroup, canReorder, reorder, reorderDisabled, relevance, searching, close, onLeave }: Props) {
+export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations, sources, duplicates, invocation, saved, sort, onSort, group, onGroup, canReorder, reorder, reorderDisabled, relevance, searching, close, onLeave }: Props) {
   const [open, setOpen] = useState(false), [active, setActive] = useState(-1), [naming, setNaming] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null), box = useRef<HTMLDivElement>(null);
   useEffect(() => { const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); }; window.addEventListener('mousedown', away); return () => window.removeEventListener('mousedown', away); }, []);
@@ -54,15 +54,15 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
     for (const facet of facets) {
       if (typed.facet && facet.key !== typed.facet) continue;
       // Values come from what the other facets leave, so a second value of this facet (matching either) is still offered.
-      const others = tokens.filter(t => t.facet !== facet.key), base = pool.filter(i => matchesQuery(i, installations, others, duplicates));
-      const matching = candidateTokens(base, installations, sources, duplicates).filter(t => t.facet === facet.key && !tokens.some(u => sameToken(t, u)))
+      const others = tokens.filter(t => t.facet !== facet.key), base = pool.filter(i => matchesQuery(i, installations, others, duplicates, invocation));
+      const matching = candidateTokens(base, installations, sources, duplicates, invocation).filter(t => t.facet === facet.key && !tokens.some(u => sameToken(t, u)))
         .filter(t => { const q = typed.rest; if (!q) return true; const label = tokenLabel(t, title).toLowerCase(); return label.includes(q) || t.value.toLowerCase().includes(q) || (!typed.facet && facet.key.startsWith(q)); })
-        .map(token => ({ token, count: pool.filter(i => matchesQuery(i, installations, [...tokens, token], duplicates)).length })).filter(s => s.count > 0);
+        .map(token => ({ token, count: pool.filter(i => matchesQuery(i, installations, [...tokens, token], duplicates, invocation)).length })).filter(s => s.count > 0);
       const limit = typed.facet ? 12 : typed.rest ? 4 : 3;
       if (matching.length) rows.push({ facet: facet.key, rows: facet.key === 'kind' || facet.key === 'tag' ? matching.sort((a, b) => b.count - a.count).slice(0, limit) : matching.slice(0, limit) });
     }
     return rows;
-  }, [open, pool, installations, sources, duplicates, tokens, query]);
+  }, [open, pool, installations, sources, duplicates, invocation, tokens, query]);
   const flat = suggestions.flatMap(g => g.rows);
   useEffect(() => setActive(-1), [query, tokens]);
   /** Adds a token; whatever was typed to find it is cleared by the caller, so it does not also search. */
@@ -84,7 +84,7 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
     <div className="query-box" ref={box}>
       <div className={`query-field ${open ? 'open' : ''}`} onMouseDown={event => { if (event.target === event.currentTarget) { event.preventDefault(); input.current?.focus(); setOpen(true); } }}>
         {searching ? <Loader2 size={15} className="query-icon spin" aria-label="Searching" /> : <Search size={15} className="query-icon" aria-hidden="true" />}
-        {tokens.map(token => <span key={token.facet + token.value} className={`q-token f-${token.facet}`} title={token.facet === 'state' ? stateHint[token.value as InstallState] : undefined}>
+        {tokens.map(token => <span key={token.facet + token.value} className={`q-token f-${token.facet}`} title={token.facet === 'state' ? stateHint[token.value as InstallState] : token.facet === 'is' ? isHint[token.value] : undefined}>
           <span className="q-facet">{token.facet}:</span><span className="q-value">{tokenLabel(token, title)}</span>
           <button type="button" onClick={() => remove(token)} aria-label={`Remove ${token.facet}: ${tokenLabel(token, title)}`}><X size={12} /></button>
         </span>)}

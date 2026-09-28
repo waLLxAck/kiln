@@ -64,8 +64,20 @@ test('a choice the view does not offer is ignored, and anything left is a filter
   assert.equal(showsColumn('projects', false), false);
 });
 
+test('the invocation filter keeps skills a model may invoke (mixed included) or only you can; other kinds drop out', () => {
+  const skills: FilterRow[] = [{ title: 'a', kind: 'skill', states: [], invocation: 'model' }, { title: 'b', kind: 'skill', states: [], invocation: 'mixed' }, { title: 'c', kind: 'skill', states: [], invocation: 'user' }, { title: 'd', kind: 'agent', states: [] }];
+  const kept = (invocation: MachinesFilter['invocation']) => skills.filter(r => rowMatches(r, f({ invocation }))).map(r => r.title);
+  assert.deepEqual(kept('all'), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(kept('model'), ['a', 'b']);
+  assert.deepEqual(kept('user'), ['c']);
+  assert.equal(isFiltered(f({ invocation: 'user' })), true);
+  assert.equal(applicable(f({ invocation: 'user' }), { kinds: true, columns: true }).invocation, 'all', 'no skills to choose between');
+  assert.equal(counts(skills, f({ invocation: 'model' })).all, 2);
+});
+
 test('the stored filter is checked on the way in', () => {
   assert.deepEqual(filterSchema.parse({ states: ['off', 'bogus', 'installed', 'off'], text: 'x', kind: 'skill', columns: 'personal' }), f({ states: ['installed', 'off'], text: 'x', kind: 'skill', columns: 'personal' }));
-  assert.deepEqual(filterSchema.parse({ states: 'installed', kind: 'prompt', columns: 3, text: 'x'.repeat(500) }), noFilter);
+  assert.deepEqual(filterSchema.parse({ states: 'installed', kind: 'prompt', columns: 3, text: 'x'.repeat(500), invocation: 'nobody' }), noFilter);
+  assert.equal(filterSchema.parse({ states: [], invocation: 'user' }).invocation, 'user');
   assert.throws(() => filterSchema.parse(null));
 });

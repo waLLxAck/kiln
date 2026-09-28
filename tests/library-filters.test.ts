@@ -72,3 +72,15 @@ test('stages follow the status, and Installed follows the copies', async () => {
   assert.equal(inStage(item, 'installed', copies), true);
   assert.equal(inStage(item, '', []), true);
 });
+
+test('is:model-invoked and is:user-only read the skills\' model-invocation switches', () => {
+  const skill = (id: string) => ({ id, kind: 'skill', status: 'approved', tags: [], favourite: false, collection: '', origin: null } as unknown as Item);
+  const items = [skill('a'), skill('b'), skill('c'), { ...skill('d'), kind: 'prompt' } as Item];
+  const invocation = { a: { claude: true, codex: true, chars: 10 }, b: { claude: false, codex: true, chars: 10 }, c: { claude: false, codex: false, chars: 10 } };
+  const ids = (value: string) => items.filter(i => matchesQuery(i, [], [{ facet: 'is', value }], undefined, invocation)).map(i => i.id);
+  assert.deepEqual(ids('model-invoked'), ['a', 'b'], 'a model may invoke it in at least one client');
+  assert.deepEqual(ids('user-only'), ['c']);
+  assert.deepEqual(candidateTokens(items, [], [], undefined, invocation).filter(t => t.facet === 'is').map(t => t.value), ['model-invoked', 'user-only']);
+  assert.deepEqual(candidateTokens(items, [], [], undefined, {}).filter(t => t.facet === 'is'), [], 'nothing to offer without switches');
+  assert.equal(tokenLabel({ facet: 'is', value: 'user-only' }), 'you only');
+});

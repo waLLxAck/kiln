@@ -181,5 +181,5 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 @media (max-width: 1080px) {
   .lib-row { grid-template-columns: var(--lib-cols-narrow); }
   .col-edge { grid-column: var(--at-narrow) / span 1; }
-  .lib-row .col-test, .lib-row .col-installed, .lib-row .col-collection, .lib-row.head :is(.col-test, .col-installed, .col-collection) { display: none; }
+  .lib-row .col-test, .lib-row .col-installed, .lib-row .col-model, .lib-row .col-collection, .lib-row.head :is(.col-test, .col-installed, .col-model, .col-collection) { display: none; }
 }

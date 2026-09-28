@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, MoveHorizontal, RotateCcw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, EyeOff, MoveHorizontal, RotateCcw } from 'lucide-react';
 import { ContextMenu, menuPoint, type MenuEntry } from './components';
-import { COLUMNS, DEFAULT_ORDER, gridColumns, gridTracks, isDefaultLayout, moveColumn, parseLayout, resetWidth, resizeEdge, setWidth, sortKeyOf, stepColumn, storedLayout, widthOf, type ColumnKey, type Layout } from './library-columns';
+import { COLUMNS, DEFAULT_ORDER, gridColumns, gridTracks, hideable, isDefaultLayout, moveColumn, parseLayout, resetWidth, resizeEdge, setHidden, setWidth, sortKeyOf, stepColumn, storedLayout, widthOf, type ColumnKey, type Layout } from './library-columns';
 import type { Sort, SortKey } from './library-sort';
 
 const storageKey = 'kiln-library-columns';
@@ -23,11 +23,11 @@ const trackVars = ['--lib-cols', '--lib-cols-mid', '--lib-cols-narrow'] as const
 /**
  * The table's header. Clicking a sortable heading sorts by it; dragging a heading moves the column, with a line where it will
  * land. The edge of each heading away from Title resizes that column: drag it, use the arrow keys on it, or double-click it to
- * fit the column to its content. Right-click (or the menu key) offers Move left, Move right, Reset width and Reset columns for
- * the column under it. `sort` is null while a search orders the list by relevance: then no heading shows as sorted.
+ * fit the column to its content. Right-click (or the menu key) offers Move left, Move right, Reset width and Hide column for the
+ * column under it, the hidden columns to show again, and Reset columns. `sort` is null while a search orders the list by relevance: then no heading shows as sorted.
  */
 export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLayout }: { layout: Layout; shown: ColumnKey[]; collectionShown: boolean; sort: Sort; onSort: (key: SortKey) => void; onLayout: (layout: Layout) => void }) {
-  const { order, widths } = layout;
+  const { order, widths } = layout, hidden = layout.hidden ?? [];
   const head = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [resizing, setResizing] = useState<ColumnKey | null>(null);
@@ -37,7 +37,7 @@ export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLa
   // A drag ends with a click on the heading it started from; that click must not sort.
   const swallowClick = useRef(false);
   useEffect(() => () => { press.current?.detach(); resize.current?.detach(); }, []);
-  const onOrder = (next: ColumnKey[]) => onLayout({ order: next, widths });
+  const onOrder = (next: ColumnKey[]) => onLayout({ ...layout, order: next });
   const cells = () => [...head.current?.querySelectorAll<HTMLElement>('[data-col]') ?? []].filter(cell => cell.offsetWidth > 0);
   const focusColumn = (key: ColumnKey) => requestAnimationFrame(() => head.current?.querySelector<HTMLElement>(`[data-col="${key}"]`)?.focus());
   /** Where a drag at `x` would drop: the index among the visible columns and the x of the line to draw. */
@@ -65,7 +65,7 @@ export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLa
       p.detach(); press.current = null;
       if (!p.dragging) return;
       swallowClick.current = true; setTimeout(() => { swallowClick.current = false; }, 0);
-      onOrder(moveColumn(order, key, target(e.clientX).index, collectionShown));
+      onOrder(moveColumn(order, key, target(e.clientX).index, collectionShown, hidden));
     };
     const cancel = () => { press.current?.detach(); press.current = null; };
     const escape = (e: KeyboardEvent) => { if (e.key === 'Escape' && press.current?.dragging) { e.stopPropagation(); cancel(); } };
@@ -81,7 +81,7 @@ export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLa
   /** The widest `key` can be made now: Title gives up space down to its minimum and no further, so the table never overflows. */
   const widest = (key: ColumnKey) => Math.max(COLUMNS[key].min, Math.min(COLUMNS[key].max, drawn(key) + Math.max(0, drawn('title') - COLUMNS.title.min)));
   const bounded = (key: ColumnKey, width: number) => Math.round(Math.max(COLUMNS[key].min, Math.min(widest(key), width)));
-  const resizeTo = (key: ColumnKey, width: number) => onLayout({ order, widths: setWidth(widths, key, width) });
+  const resizeTo = (key: ColumnKey, width: number) => onLayout({ ...layout, widths: setWidth(widths, key, width) });
   /**
    * Dragging an edge. The rows take their tracks from custom properties on the table, so each frame sets those directly and
    * nothing re-renders until the pointer is let go; Esc puts the old widths back.
@@ -147,12 +147,14 @@ export function LibraryHead({ layout, shown, collectionShown, sort, onSort, onLa
   };
   const entries = (key?: ColumnKey): MenuEntry[] => {
     const index = key ? shown.indexOf(key) : -1;
-    const step = (direction: -1 | 1) => () => { if (key) { onOrder(stepColumn(order, key, direction, collectionShown)); focusColumn(key); } };
+    const step = (direction: -1 | 1) => () => { if (key) { onOrder(stepColumn(order, key, direction, collectionShown, hidden)); focusColumn(key); } };
     return [
       ...(key ? [{ heading: COLUMNS[key].label }, { label: 'Move left', icon: <ArrowLeft size={14} />, disabled: index <= 0, onSelect: step(-1) }, { label: 'Move right', icon: <ArrowRight size={14} />, disabled: index < 0 || index >= shown.length - 1, onSelect: step(1) }] : []),
-      ...(key && key !== 'title' ? [{ label: 'Reset width', icon: <MoveHorizontal size={14} />, disabled: widths[key] === undefined, hint: `${COLUMNS[key].width}px`, onSelect: () => onLayout({ order, widths: resetWidth(widths, key) }) }] : []),
+      ...(key && key !== 'title' ? [{ label: 'Reset width', icon: <MoveHorizontal size={14} />, disabled: widths[key] === undefined, hint: `${COLUMNS[key].width}px`, onSelect: () => onLayout({ ...layout, widths: resetWidth(widths, key) }) }] : []),
+      ...(key && hideable(key) ? [{ label: 'Hide column', icon: <EyeOff size={14} />, hint: 'Show it again from this menu', onSelect: () => onLayout(setHidden(layout, key, true)) }] : []),
       ...(key ? ['separator' as const] : []),
-      { label: 'Reset columns', icon: <RotateCcw size={14} />, disabled: isDefaultLayout(layout), hint: 'Collection, Title, Status, Installed, Last test, Updated, at their default widths', onSelect: () => { onLayout({ order: [...DEFAULT_ORDER], widths: {} }); if (key) focusColumn(key); } },
+      ...(hidden.length ? [{ heading: 'Hidden columns' }, ...hidden.map(k => ({ label: `Show ${COLUMNS[k].label}`, onSelect: () => onLayout(setHidden(layout, k, false)) })), 'separator' as const] : []),
+      { label: 'Reset columns', icon: <RotateCcw size={14} />, disabled: isDefaultLayout(layout), hint: `${DEFAULT_ORDER.map(k => COLUMNS[k].label).join(', ')}, at their default widths`, onSelect: () => { onLayout({ order: [...DEFAULT_ORDER], widths: {} }); if (key) focusColumn(key); } },
     ];
   };
   const at = gridColumns(shown);

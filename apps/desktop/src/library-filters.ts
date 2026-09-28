@@ -3,7 +3,7 @@
  * tested. Two tokens of one facet match either value; different facets must all match. Copy facets (`in:`, `scope:`,
  * `provider:` and the copy kinds of `state:`) describe one local copy, so together they must hold for the same copy.
  */
-import type { Installation, Item, ProviderId } from '../../../packages/protocol/schema';
+import type { Installation, Item, ProviderId, SkillInvocation } from '../../../packages/protocol/schema';
 import type { SkillLocation } from '../../../packages/providers/skill-locations';
 import { isWithin } from '../../../packages/domain/collections';
 
@@ -17,7 +17,7 @@ export const facets: { key: Facet; label: string; hint: string }[] = [
   { key: 'status', label: 'Status', hint: 'draft, testing, approved' },
   { key: 'state', label: 'Installed', hint: 'installed, not installed, changed outside Kiln' },
   { key: 'in', label: 'Installed in', hint: 'a skill folder, personal or in a project' },
-  { key: 'is', label: 'Is', hint: 'favourite, duplicate' },
+  { key: 'is', label: 'Is', hint: 'favourite, duplicate, model-invoked, you only' },
   { key: 'tag', label: 'Tag', hint: 'a tag' },
   { key: 'from', label: 'From source', hint: 'what one source produced, wherever it is filed' },
   { key: 'collection', label: 'Collection', hint: 'a collection and its subfolders' },
@@ -46,23 +46,32 @@ export function tokenLabel(token: QueryToken, sourceTitle?: (id: string) => stri
     case 'provider': return providerLabel[token.value as ProviderId] ?? token.value;
     case 'state': return stateLabel[token.value as InstallState] ?? token.value;
     case 'from': return sourceTitle?.(token.value) ?? 'a removed source';
-    case 'is': return token.value === 'duplicate' ? 'a duplicate' : token.value;
+    case 'is': return isLabel[token.value] ?? token.value;
     default: return token.value;
   }
 }
 
+/** `is:` values past favourite: `model-invoked` is a skill some client's model may invoke on its own (its description loads in
+ * every new session), `user-only` one only you can invoke. */
+const isLabel: Record<string, string> = { duplicate: 'a duplicate', 'model-invoked': 'invoked by the model', 'user-only': 'you only' };
+export const isHint: Record<string, string> = { 'model-invoked': 'Skills a model may invoke on its own: their descriptions load in every new session.', 'user-only': 'Skills only you can invoke, by name.' };
+/** Whether a skill matches `is:model-invoked` (any client's model may invoke it) or `is:user-only` (none may). */
+const invokedBy = (value: string, item: Item, invocation?: Record<string, SkillInvocation>) => {
+  const state = item.kind === 'skill' ? invocation?.[item.id] : undefined; if (!state) return false;
+  return value === 'model-invoked' ? state.claude || state.codex : !state.claude && !state.codex;
+};
 /** Groups the tokens by facet: one set of accepted values per facet in use. */
 const byFacet = (tokens: QueryToken[]) => { const map = new Map<Facet, string[]>(); for (const t of tokens) map.set(t.facet, [...(map.get(t.facet) ?? []), t.value]); return map; };
 
 const none: ReadonlySet<string> = new Set();
 /**
  * Whether an item passes every token. `copies` are all installations on this machine; only the item's own are looked at.
- * `duplicates` holds the ids of items in a duplicate group (`is:duplicate`).
+ * `duplicates` holds the ids of items in a duplicate group (`is:duplicate`); `invocation` the snapshot's model-invocation switches.
  */
-export function matchesQuery(item: Item, copies: Installation[], tokens: QueryToken[], duplicates = none): boolean {
+export function matchesQuery(item: Item, copies: Installation[], tokens: QueryToken[], duplicates = none, invocation?: Record<string, SkillInvocation>): boolean {
   if (!tokens.length) return true;
   const groups = byFacet(tokens), any = (facet: Facet, test: (value: string) => boolean) => { const values = groups.get(facet); return !values || values.some(test); };
-  if (!any('kind', v => item.kind === v) || !any('status', v => item.status === v) || !any('is', v => v === 'favourite' ? item.favourite : v === 'duplicate' && duplicates.has(item.id))) return false;
+  if (!any('kind', v => item.kind === v) || !any('status', v => item.status === v) || !any('is', v => v === 'favourite' ? item.favourite : v === 'duplicate' ? duplicates.has(item.id) : invokedBy(v, item, invocation))) return false;
   if (!any('tag', v => item.tags.includes(v)) || !any('from', v => item.origin?.itemId === v) || !any('collection', v => isWithin(item.collection, v))) return false;
   const where = groups.get('in'), scope = groups.get('scope'), provider = groups.get('provider'), state = groups.get('state');
   if (!where && !scope && !provider && !state) return true;
@@ -76,7 +85,7 @@ export function matchesQuery(item: Item, copies: Installation[], tokens: QueryTo
 }
 
 /** Every token worth offering for these items, most useful facets first. Values that no item has are left out. */
-export function candidateTokens(items: Item[], copies: Installation[], sources: Item[], duplicates = none): QueryToken[] {
+export function candidateTokens(items: Item[], copies: Installation[], sources: Item[], duplicates = none, invocation?: Record<string, SkillInvocation>): QueryToken[] {
   const out: QueryToken[] = [];
   const push = (facet: Facet, values: Iterable<string>) => { for (const value of values) out.push({ facet, value }); };
   const kinds = new Set(items.map(i => i.kind)), statuses = new Set(items.map(i => i.status));
@@ -85,7 +94,7 @@ export function candidateTokens(items: Item[], copies: Installation[], sources: 
   if (items.some(installable)) push('state', Object.keys(stateLabel));
   const ids = new Set(items.map(i => i.id)), own = copies.filter(c => ids.has(c.itemId));
   push('in', (Object.keys(locationLabel) as SkillLocation[]).filter(l => own.some(c => c.location === l)));
-  push('is', [...(items.some(i => i.favourite) ? ['favourite'] : []), ...(items.some(i => duplicates.has(i.id)) ? ['duplicate'] : [])]);
+  push('is', [...(items.some(i => i.favourite) ? ['favourite'] : []), ...(items.some(i => duplicates.has(i.id)) ? ['duplicate'] : []), ...['model-invoked', 'user-only'].filter(v => items.some(i => invokedBy(v, i, invocation)))]);
   push('tag', [...new Set(items.flatMap(i => i.tags))].sort((a, b) => a.localeCompare(b)));
   const made = new Set(items.map(i => i.origin?.itemId).filter(Boolean));
   push('from', sources.filter(s => made.has(s.id)).map(s => s.id));

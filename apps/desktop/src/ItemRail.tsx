@@ -14,6 +14,7 @@ import { outdatedCopies } from './item-page';
 import { clientSpecific, SkillToggles, toggleTargets } from './Skills';
 import './installs.css';
 import { canKeep, keepExplanation } from './KeepChanges';
+import { InvocationToggle } from './Invocation';
 
 const closedKey = 'kiln-rail-closed';
 const closedSections = (): string[] => { try { const value = JSON.parse(localStorage.getItem(closedKey) ?? '[]'); return Array.isArray(value) ? value : []; } catch { return []; } };
@@ -47,6 +48,7 @@ export type RailProps = {
   perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>;
   onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void;
   onSetup: () => void; onMachines?: () => void;
+  /** The model-invocation switch (Invocation.tsx); skills only. */ onInvocation?: (item: ItemDetail['item'], model: boolean) => void;
   onOpenTests: () => void; onOpenHistory: () => void;
   /** The header's primary button already approves this revision. */ approveInHeader?: boolean;
   /** The header's primary button already opens the source URL. */ sourceInHeader?: boolean;
@@ -56,7 +58,7 @@ export type RailProps = {
  * The item page's right rail: approval, installs, tests, history, provenance and organisation. Each fact appears once on
  * the page, so what the header shows (status badge, favourite star, collection, the source chip, Updated) isn't repeated here.
  */
-export function ItemRail({ detail, snapshot, providers, installations, events, sameTitle, editing, perform, refresh, onAction, onToggleInstall, onSetup, onMachines, onOpenTests, onOpenHistory, approveInHeader = false, sourceInHeader = false, places = new Map() }: RailProps) {
+export function ItemRail({ detail, snapshot, providers, installations, events, sameTitle, editing, perform, refresh, onAction, onToggleInstall, onSetup, onMachines, onInvocation, onOpenTests, onOpenHistory, approveInHeader = false, sourceInHeader = false, places = new Map() }: RailProps) {
   const { item, revision } = detail;
   const [tag, setTag] = useState('');
   const isSource = item.kind === 'source';
@@ -138,6 +140,8 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
     {installable && <Section id="installs" title="Installs" count={installsCount} tone={drifted ? 'bad' : outdated && item.kind !== 'instruction' ? 'accent' : undefined}
       more={rows.length > 3 ? <>{rows.slice(3).map((copy, n) => row(copy, n + 3))}</> : undefined} moreLabel={`See all ${rows.length} copies`}
       action={onMachines && multiMachine ? <button type="button" className="text-button" onClick={onMachines}><Server size={13} />Other machines…</button> : undefined}>
+      {item.kind === 'skill' && onInvocation && <Row label="Invoked by"><InvocationToggle item={item} listing={snapshot.invocation[item.id]} onToggle={onInvocation} disabled={editing}
+        note={editing ? 'Save or discard your edit first.' : !currentApproved && lastApproved ? 'This edits the draft; installed copies keep the approved revision until you approve it.' : ''} /></Row>}
       {['skill', 'agent'].includes(item.kind) && <SkillToggles item={item} providers={providers} snapshot={snapshot} installations={installations} onToggle={onToggleInstall} onSetup={onSetup} />}
       {rows.slice(0, 3).map(row)}
       {item.kind === 'instruction' && !receipts.length && <p className="rail-note">Not installed anywhere yet.</p>}
