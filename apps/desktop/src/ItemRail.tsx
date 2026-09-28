@@ -140,8 +140,8 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
     </Section>
 
     <Section id="organisation" title="Organisation">
-      <Row label="Collection"><select className="rail-select" aria-label="Collection" value={item.collection} disabled={Boolean(item.deletedAt)} onChange={e => move(e.target.value)}><option value="">Unfiled</option>{[...new Set([...snapshot.collections, ...(item.collection ? [item.collection] : [])])].map(name => <option key={name} value={name}>{name.replaceAll('/', ' / ')}</option>)}</select></Row>
-      <Row label="Tags" top><div className="rail-tags" title={tagsLocked ? 'Finish editing first' : 'Tags are part of the revision: changing them saves a new draft.'}>
+      <Row label="Collection"><select className="rail-select" aria-label="Collection" value={item.collection} disabled={Boolean(item.deletedAt) || editing} title={editing ? 'Change it in the editor; it is saved with your draft' : undefined} onChange={e => move(e.target.value)}><option value="">Unfiled</option>{[...new Set([...snapshot.collections, ...(item.collection ? [item.collection] : [])])].map(name => <option key={name} value={name}>{name.replaceAll('/', ' / ')}</option>)}</select></Row>
+      <Row label="Tags" top><div className="rail-tags" title={editing ? 'Change them in the editor; they are saved with your draft' : item.deletedAt ? 'Restore it first' : 'Tags are part of the revision: changing them saves a new draft.'}>
         {item.tags.map(t => <span className="rail-chip" key={t}>#{t}{!tagsLocked && <button aria-label={`Remove tag ${t}`} onClick={() => retag(item.tags.filter(x => x !== t), `Removed tag “${t}”`)}><X size={11} /></button>}</span>)}
         {!tagsLocked && <span className="rail-chip add"><Plus size={11} /><input aria-label="Add tag" value={tag} placeholder="tag" size={5} onChange={e => setTag(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } if (e.key === 'Escape') setTag(''); }} onBlur={() => { if (tag.trim()) addTag(); }} /></span>}
       </div></Row>

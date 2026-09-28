@@ -969,7 +969,7 @@ body:has(.toast-stack > .toast:nth-child(3)) .run-toast { bottom: 188px; }
 .run-toast .toast-action svg { color: inherit; }
 /* Stack above the undo and message toasts instead of covering them. */
 body:has(.app-shell > .toast) .run-toast { bottom: 80px; }
-/* Experimental: Code editor (codeEditor flag). Token colours reuse the item-kind palette so both themes stay consistent. */
+/* Code editor (CodeEditor.tsx). Token colours reuse the item-kind palette so both themes stay consistent. */
 :root { --code-keyword: #6d4fd1; --code-string: var(--ok); --code-number: #a4650a; --code-atom: var(--accent-text); --code-escape: var(--bad); --code-definition: var(--accent-text); --code-type: #0f7f87; --code-property: var(--accent-text); --code-comment: var(--muted); --code-heading: var(--text); }
 :root[data-theme=dark] { --code-keyword: #b7a3f5; --code-number: #f0b660; --code-type: #6fd0d6; }
 .code-editor { display: flex; flex-direction: column; min-width: 0; }
@@ -977,27 +977,14 @@ body:has(.app-shell > .toast) .run-toast { bottom: 80px; }
 .code-editor-view .cm-editor { flex: 1; min-height: 0; }
 .code-editor-loading { margin: 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--subtle); color: var(--muted); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow: hidden; }
 .item-code .cm-editor, .item-code .code-editor-loading { min-height: 340px; max-height: 70vh; }
-.code-file-editor .cm-editor, .code-file-editor .code-editor-loading { min-height: 200px; max-height: 55vh; }
 .home-code { flex: 1; min-height: 320px; }
 .home-code .code-editor-view, .home-code .code-editor-loading { flex: 1; }
-.code-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.code-field-label { font-weight: 600; font-size: 12.5px; color: var(--text); }
-.code-field-label small { font-weight: 400; margin-left: 6px; }
 .code-diagnostics { margin-top: 8px; padding: 9px 12px; border: 1px solid var(--warn-line); border-radius: var(--r-sm); background: var(--warn-bg); color: var(--text); font-size: 12.5px; }
 .code-diagnostics b { display: block; margin-bottom: 4px; color: var(--warn); }
 .code-diagnostics ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
 .code-diagnostics li { display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
 .code-diagnostics .text-button { flex: none; font-family: var(--mono); font-size: 11.5px; }
 .code-checks-ok { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 12px; color: var(--ok); }
-.code-files { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.code-file-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.code-file { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text-2); font-size: 12px; font-family: var(--mono); }
-.code-file:hover:not(:disabled) { border-color: var(--line-strong); background: var(--subtle); }
-.code-file.active { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
-.code-file:disabled { opacity: .6; cursor: default; }
-.code-file:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.code-file-editor .section-heading { margin: 4px 0 6px; }
-.code-file-editor h4 { margin: 0; font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
 .lib-draft { flex-shrink: 0; font-size: 10.5px; padding: 0 6px; }
 /* Experimental: Install into project folders (projectInstalls) */
 .project-install-heading { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }

@@ -4,8 +4,8 @@ import { Markdown } from './Markdown';
 import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
-import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, Hash, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, ZoomIn } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { ArrowLeft, ArrowRight, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, Hash, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, X, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
 import { api, date, variablesIn } from './api';
@@ -20,7 +20,9 @@ import { DeployDialog } from './dialogs';
 import { buildHistory } from './history-model';
 import { changedCopiesLabel, primaryAction, splitFrontMatter, type PrimaryAction } from './item-page';
 import { CodeEditor } from './CodeEditor';
-import { itemLanguage } from './code-language';
+import { languageFor } from './code-language';
+import { ItemEditor, useItemDraft, type ItemDraftState } from './item-editing';
+import { EDITABLE_TEXT_LIMIT } from './bundled-text';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
 import './item.css';
 
@@ -31,9 +33,6 @@ type Props = {
   /** Set when something outside the page (the list's Test, quick search) asks for this item's tests. */ showTests?: { id: string; at: number };
 };
 type View = 'content' | 'tests' | 'history';
-function savedDraft(id: string): { content: string; base: string } | null {
-  try { const value = JSON.parse(localStorage.getItem(`kiln-draft:${id}`) ?? 'null'); return value && typeof value.content === 'string' && typeof value.base === 'string' ? value : null; } catch { return null; }
-}
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
 const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'source' ? 'Original material' : 'Content';
 
@@ -60,20 +59,14 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
   const [more, setMore] = useState<{ x: number; y: number } | null>(null);
-  const [editing, setEditing] = useState(Boolean(savedDraft(item.id)));
-  const [draft, setDraft] = useState(savedDraft(item.id)?.content ?? revision.content);
-  const [base, setBase] = useState(savedDraft(item.id)?.base ?? revision.hash);
-  const [fieldsChanged, setFieldsChanged] = useState(false);
+  const draft = useItemDraft(detail, perform, refresh), editing = draft.editing;
   const [filePreview, setFilePreview] = useState<{ name: string; text: string } | null>(null);
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
   const [deployRevision, setDeployRevision] = useState<string | null>(null);
   const [addingFile, setAddingFile] = useState(false);
-  const editor = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { const saved = savedDraft(item.id); setEditing(Boolean(saved)); setDraft(saved?.content ?? revision.content); setBase(saved?.base ?? revision.hash); setFieldsChanged(false); setFilePreview(null); setAddingFile(false); setView('content'); }, [item.id]);
+  useEffect(() => { setFilePreview(null); setAddingFile(false); setView('content'); }, [item.id]);
   // After the reset above, which runs when the page mounts; each request opens the tests once, not again when the item is reopened later.
   useEffect(() => { if (showTests?.id === item.id && showTests.at !== shownTests) { shownTests = showTests.at; setView('tests'); } }, [showTests, item.id]);
-  useEffect(() => { if (editing) localStorage.setItem(`kiln-draft:${item.id}`, JSON.stringify({ content: draft, base })); }, [draft, base, editing, item.id]);
-  useEffect(() => { if (!editing) { setDraft(revision.content); setBase(revision.hash); } }, [revision.hash, editing]);
   const isSource = item.kind === 'source';
   // Legacy video captures from before sources existed are links tagged youtube; they get the source page too.
   const sourcePage = isSource || (item.kind === 'link' && item.tags.includes('youtube'));
@@ -101,20 +94,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const setMeta = (change: Record<string, unknown>, message?: string) => void perform(async () => { await api('items.meta', { id: item.id, expect: item.revision, ...change }); await refresh(); }, message);
   // CodeMirror loads on first use, so focus it once it is on screen (tried for about a second).
   const focusEditor = (tries = 20) => { const content = document.querySelector<HTMLElement>('.item-code .cm-content'); if (content) content.focus(); else if (tries > 0) setTimeout(() => focusEditor(tries - 1), 50); };
-  const startEdit = () => { setView('content'); if (!editing) { setDraft(revision.content); setBase(revision.hash); setFieldsChanged(false); setEditing(true); } requestAnimationFrame(() => focusEditor()); };
-  const discard = () => { localStorage.removeItem(`kiln-draft:${item.id}`); setEditing(false); setFieldsChanged(false); setDraft(revision.content); setBase(revision.hash); };
+  const startEdit = () => { setView('content'); draft.start(); requestAnimationFrame(() => focusEditor()); };
   // The grid has its own run bar (and Run options… for the full dialog), so Test only opens it.
   const test = () => setView('tests');
   const toggleRaw = (value: boolean) => { setRaw(value); localStorage.setItem('kiln-detail-raw', value ? '1' : '0'); };
-  const save = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const fields = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>;
-    void perform(async () => {
-      // Collection and tags are organised in the rail: the collection may have moved without a new revision, so it comes from the item.
-      await api('items.update', { id: item.id, expect: base, summary: fields.summary, value: { ...revision, title: fields.title, source: fields.source, licence: fields.licence, collection: item.collection, tags: item.tags, content: draft, ...(item.kind === 'agent' ? { agent: { provider: item.agent?.provider, filename: fields.agentFilename } } : {}) } });
-      localStorage.removeItem('kiln-draft:' + item.id); setEditing(false); setFieldsChanged(false); await refresh();
-    }, 'New draft revision saved');
-  };
 
   const run: Record<PrimaryAction, { label: string; icon: ReactNode; onClick: () => void; title?: string }> = {
     restore: { label: 'Restore', icon: <RotateCcw size={15} />, onClick: () => setMeta({ deleted: false }, 'Item restored') },
@@ -191,32 +174,18 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
             <SourcePage detail={detail} snapshot={snapshot} providers={providers} jobs={jobs} perform={perform} refresh={refresh} onSelect={onSelect} onMadeFrom={onMadeFrom} onCollection={onCollection} onAction={sourceAction} />
             {/* The transcript has its own toggle at the top, so its file is listed without a second preview. */}
-            <BundledFiles detail={detail} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} noPreview={['transcript.md', 'session.jsonl']} />
+            <BundledFiles detail={detail} draft={draft} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} noPreview={['transcript.md', 'session.jsonl']} />
           </div>
           : <div className="item-content">
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
             <AgentPanel itemId={item.id} jobs={jobs} kinds={['capture', 'derive', 'distill']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} />
             {recorded.map(a => <AnalysisRecord key={a.id} analysis={a} />)}
-            {!isSource && detail.validation.length > 0 && <div className="notice warning"><b>Needs attention before approval</b>{detail.validation.map(v => <p key={v}>{v}</p>)}</div>}
+            {/* While editing, the editor lists the draft's own problems live instead. */}
+            {!isSource && !editing && detail.validation.length > 0 && <div className="notice warning"><b>Needs attention before approval</b>{detail.validation.map(v => <p key={v}>{v}</p>)}</div>}
             {detail.duplicates.length > 0 && <div className="notice warning"><b>Similar content already in your library</b>{detail.duplicates.map(d => <button key={d.id} className="text-button" onClick={() => onSelect(d.id)}>{d.title} <ArrowRight size={12} /></button>)}</div>}
-            {editing ? <form className="item-editor" aria-label={`Edit ${mainFile(detail)}`} onSubmit={save} onChange={event => { const field = event.target as EventTarget as HTMLInputElement | HTMLTextAreaElement; if (field.tagName !== 'TEXTAREA' && field.name !== 'summary') setFieldsChanged(true); }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.currentTarget.requestSubmit(); } }}>
-              <div className={`item-savebar ${draft !== revision.content || fieldsChanged || base !== item.revision ? 'dirty' : ''}`}>
-                <span className="item-savebar-state">{draft !== revision.content || fieldsChanged || base !== item.revision ? <><span className="item-dot" />Unsaved changes</> : <><Pencil size={13} />Editing</>}</span>
-                <input name="summary" aria-label="What changed? (optional)" placeholder="What changed? (optional)" title="Leave it empty to use a plain revision note." />
-                <button className="button primary" type="submit" title="Creates an unapproved revision. Ctrl+S">Save revision</button>
-                <button className="button" type="button" title="Throw away the text autosaved on this machine" onClick={discard}>{draft !== revision.content || fieldsChanged ? 'Discard' : 'Done'}</button>
-              </div>
-              {base !== item.revision && <div className="notice warning">This item changed elsewhere. Your unsaved text is preserved. Copy it before discarding, then compare in History.</div>}
-              <div className="item-editor-fields">
-                <Field label="Title"><input name="title" defaultValue={item.title} required /></Field>
-                {item.kind === 'agent' && <Field label="Agent filename"><input name="agentFilename" defaultValue={item.agent?.filename} required /></Field>}
-                <Field label="Source"><input name="source" defaultValue={item.source} /></Field>
-                <Field label="Licence"><input name="licence" defaultValue={item.licence} /></Field>
-              </div>
-              <div className="item-doc editing"><div className="item-doc-bar"><span className="item-doc-name">{mainFile(detail)}</span><span className="muted small">Text autosaves privately on this machine.</span></div><CodeEditor className="item-code" value={draft} onChange={setDraft} language={itemLanguage(item)} ariaLabel="Content" /></div>
-            </form>
+            {editing ? <ItemEditor detail={detail} draft={draft} collections={snapshot.collections} name={mainFile(detail)} />
             : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom} />}
-            <BundledFiles detail={detail} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
+            <BundledFiles detail={detail} draft={draft} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
           </div>}
         </div>
         <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onMachines={onMachines} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} approveInHeader={showPrimary && primary === 'approve'} sourceInHeader={['open-original', 'open-link'].includes(primary)} />
@@ -257,22 +226,58 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
 }
 
 /**
- * Bundled files and attachments, listed once: preview, open, remove, and add or replace one (each change is a new draft).
- * Images are enlarged from the gallery above, so they aren't repeated here. Hidden when there are none until the ⋯ menu's
- * "Add a file…" asks for the form.
+ * Bundled files and attachments, listed once: preview, open, remove, and add one. Text files are edited here into the
+ * item's draft, and new text files added by relative path, all saved with the draft's next revision; binary files, and
+ * text over 512 KB or not UTF-8, are kept exactly as they are. Removing a file or choosing one from disk saves a new
+ * revision at once, so it waits until the draft is saved or discarded. Images are enlarged from the gallery above, so
+ * they aren't repeated here. Hidden when there are none, until "Add a file…" asks for the form or a skill is edited.
  */
-function BundledFiles({ detail, perform, refresh, preview, onPreview, adding, onAdding, noPreview = [] }: { detail: ItemDetail; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>; preview: { name: string; text: string } | null; onPreview: (file: { name: string; text: string } | null) => void; adding: boolean; onAdding: (adding: boolean) => void; /** Files shown elsewhere (a transcript) or not worth reading here. */ noPreview?: string[] }) {
+function BundledFiles({ detail, draft, perform, refresh, preview, onPreview, adding, onAdding, noPreview = [] }: { detail: ItemDetail; draft: ItemDraftState; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>; preview: { name: string; text: string } | null; onPreview: (file: { name: string; text: string } | null) => void; adding: boolean; onAdding: (adding: boolean) => void; /** Files shown elsewhere (a transcript) or not worth reading here. */ noPreview?: string[] }) {
   const { item, revision } = detail;
-  const open = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
-  const entries = Object.entries(revision.files);
+  const [path, setPath] = useState(''), [problem, setProblem] = useState<string | null>(null);
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => { if (adding) form.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [adding]);
-  if (!entries.length && !adding) return null;
-  return <section className="content-section item-files" aria-label="Files"><div className="section-heading"><h3>Files <small className="muted">{entries.length || ''}</small></h3>{!item.deletedAt && !adding && <button type="button" className="text-button" onClick={() => onAdding(true)}><Plus size={13} />Add or replace a file</button>}</div>
-    {entries.length > 0 && <div className="file-preview-list">{entries.map(([name, content]) => <div key={name} className="bundled-file">
-      <span className="bundled-name">{name}<small>{Math.round(content.length * .75).toLocaleString()} bytes</small></span>
-      <span className="wrap-actions">{isTextFile(name) && !noPreview.includes(name) && <button className="text-button" aria-expanded={preview?.name === name} onClick={() => onPreview(preview?.name === name ? null : { name, text: decode(content) })}>{preview?.name === name ? 'Hide preview' : 'Preview'}</button>}<button className="text-button" onClick={() => open(name)}><ExternalLink size={13} />Open</button>{!item.deletedAt && <button className="text-button danger-text" onClick={() => void perform(async () => { await api('desktop.removeAttachment', { id: item.id, expect: item.revision, relative: name }); await refresh(); }, 'Attachment removed in a new draft revision')}>Remove</button>}</span></div>)}</div>}
-    {preview && <pre className="prompt-preview" aria-label={`Preview of ${preview.name}`}>{preview.text}</pre>}
-    {!item.deletedAt && adding && <form ref={form} onSubmit={event => { event.preventDefault(); const v = new FormData(event.currentTarget); void perform(async () => { await api('desktop.addAttachment', { id: item.id, expect: item.revision, relative: v.get('relative') }); await refresh(); onAdding(false); }); }}><Field label="Add or replace a file" hint="Its relative path, then pick the file. Scripts stay inert until separately reviewed and run."><div className="input-button"><input name="relative" required autoFocus placeholder="scripts/check.py or references/guide.md" /><button className="button" type="submit">Choose file</button><button className="button" type="button" onClick={() => onAdding(false)}>Cancel</button></div></Field></form>}
+  const { editing, names } = draft, live = !item.deletedAt, textFiles = live && item.kind !== 'agent';
+  if (!names.length && !adding && !(editing && item.kind === 'skill')) return null;
+  const wait = 'Save or discard your draft first: this saves a new revision right away.';
+  const open = (name: string) => void perform(() => api('desktop.openAttachment', { id: item.id, relative: name }));
+  const remove = (name: string) => void perform(async () => { await api('desktop.removeAttachment', { id: item.id, expect: item.revision, relative: name }); await refresh(); }, 'Attachment removed in a new draft revision');
+  const close = () => { onAdding(false); setPath(''); setProblem(null); };
+  const addText = () => { const why = draft.addFile(path.trim()); setProblem(why); if (!why) { close(); onPreview(null); } };
+  const choose = () => { const relative = path.trim(); if (!relative) { setProblem('Enter a relative path, for example references/notes.md.'); return; } void perform(async () => { await api('desktop.addAttachment', { id: item.id, expect: item.revision, relative }); await refresh(); close(); }); };
+  const row = (name: string) => {
+    const added = !Object.hasOwn(revision.files, name), edited = !added && Object.hasOwn(draft.files, name);
+    const editable = textFiles && (added || draft.texts[name] !== null), opened = editing && draft.open === name;
+    const previewing = !editing && preview?.name === name;
+    const size = Object.hasOwn(draft.files, name) ? new TextEncoder().encode(draft.files[name]).length : Math.round(revision.files[name].length * .75);
+    return <div key={name} className={`bundled-entry ${opened ? 'open' : ''}`}>
+      <div className="bundled-file">
+        <span className="bundled-name"><span>{name}{added ? <small className="draft-mark">new</small> : edited ? <small className="draft-mark">edited</small> : null}</span><small>{size.toLocaleString()} bytes{!added && textFiles && draft.texts[name] === null ? <span title={`Binary, not UTF-8 text, or larger than ${EDITABLE_TEXT_LIMIT / 1024} KB`}> · kept as it is</span> : null}</small></span>
+        <span className="wrap-actions">
+          {editable && <button className="text-button" aria-pressed={opened} aria-label={`${opened ? 'Close' : 'Edit'} ${name}`} onClick={() => opened ? draft.setOpen(null) : draft.start(name)}>{opened ? <X size={13} /> : <Pencil size={13} />}{opened ? 'Close' : 'Edit'}</button>}
+          {!editing && isTextFile(name) && !noPreview.includes(name) && <button className="text-button" aria-expanded={previewing} onClick={() => onPreview(previewing ? null : { name, text: decode(revision.files[name]) })}>{previewing ? 'Hide preview' : 'Preview'}</button>}
+          {!added && <button className="text-button" onClick={() => open(name)}><ExternalLink size={13} />Open</button>}
+          {added ? <button className="text-button danger-text" title="Only in your draft; nothing was saved yet" onClick={() => draft.dropFile(name)}>Remove</button>
+            : live && <button className="text-button danger-text" disabled={editing} title={editing ? wait : undefined} onClick={() => remove(name)}>Remove</button>}
+        </span>
+      </div>
+      {previewing && <pre className="prompt-preview" aria-label={`Preview of ${name}`}>{preview.text}</pre>}
+      {opened && <div className="code-file-editor">
+        {edited && <div className="code-file-head"><span className="muted small">Edited in your draft</span><button type="button" className="text-button" onClick={() => draft.dropFile(name)}><RotateCcw size={12} />Undo changes to this file</button></div>}
+        <CodeEditor key={name} value={draft.files[name] ?? draft.texts[name] ?? ''} onChange={text => draft.editFile(name, text)} language={languageFor(name)} ariaLabel={`${name} content`} onSave={draft.save} autoFocus={added} />
+      </div>}
+    </div>;
+  };
+  return <section className="content-section item-files" aria-label="Files"><div className="section-heading"><h3>Files <small className="muted">{names.length || ''}</small></h3>{live && !adding && <button type="button" className="text-button" onClick={() => onAdding(true)}><Plus size={13} />Add a file</button>}</div>
+    {names.length > 0 ? <div className="file-preview-list">{names.map(row)}</div> : <p className="muted small">No bundled files. Add references, scripts or templates the skill points to.</p>}
+    {live && adding && <form ref={form} onSubmit={event => { event.preventDefault(); if (textFiles) addText(); else choose(); }}>
+      <Field label="Add a file" hint={textFiles ? 'Its relative path. A new text file starts empty and is saved with your draft; Choose file… bundles one from disk in a new revision. Scripts stay inert until separately reviewed and run.' : 'Its relative path, then pick the file. It is saved in a new draft revision.'}>
+        <div className="input-button"><input aria-label="Relative path" value={path} required autoFocus placeholder="references/notes.md or scripts/check.py" onChange={event => { setPath(event.target.value); setProblem(null); }} />
+          {textFiles && <button className="button" type="submit">New text file</button>}
+          <button className="button" type={textFiles ? 'button' : 'submit'} disabled={editing} title={editing ? wait : 'Pick a file on this computer'} onClick={textFiles ? choose : undefined}>Choose file…</button>
+          <button className="button" type="button" onClick={close}>Cancel</button></div>
+      </Field>
+      {problem && <p className="error-box" role="alert">{problem}</p>}
+    </form>}
   </section>;
 }
