@@ -224,3 +224,22 @@ test('items duplicates lists copies and items consolidate merges them through --
   const stale = run(['items', 'consolidate', '--input', request]);
   assert.notEqual(stale.status, 0, 'the copy is in the trash now');
 });
+
+test('skills invocation turns model invocation off in the skill file; context start estimates what loads at session start', () => {
+  assert.throws(() => parseArguments(['skills', 'invocation', 'id']), /--model on/);
+  assert.throws(() => parseArguments(['skills', 'invocation', 'id', '--model', 'maybe']), /--model on/);
+  assert.throws(() => parseArguments(['skills', 'invocation', '--model', 'off']), /one ID/);
+  const content = '---\nname: triage\ndescription: Triage incoming bug reports.\n---\n\nSort by severity.\n';
+  const wb = new Workbench(library, local);
+  let item: { id: string; revision: string };
+  try { item = wb.create({ title: 'triage', kind: 'skill', content }); wb.approve({ id: item.id, revision: item.revision, reviewer: 'tester', scope: 'test', note: 'ok', waivedChecks: 'test' }); } finally { wb.close(); }
+  const result = data(['skills', 'invocation', item.id, '--model', 'off', '--expect', item.revision]);
+  assert.equal(result.changed, true); assert.equal(result.approval, 'carried'); assert.deepEqual(result.invocation, { claude: false, codex: false });
+  assert.match(data(['items', 'read', item.id, '--full']).content, /disable-model-invocation: true/);
+  const home = path.join(root, 'cli-home'); fs.mkdirSync(path.join(home, '.claude', 'skills', 'triage'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'skills', 'triage', 'SKILL.md'), content);
+  const started = spawnSync(process.execPath, [cli, '--library', library, '--local', local, 'context', 'start'], { encoding: 'utf8', windowsHide: true, timeout: 30_000, env: { ...process.env, KILN_HOME: home } });
+  assert.equal(started.status, 0, started.stderr);
+  const claude = JSON.parse(started.stdout).data.harnesses.find((h: { id: string }) => h.id === 'claude');
+  assert.deepEqual(claude.skills.rows.map((r: { name: string; listed: boolean }) => [r.name, r.listed]), [['triage', true]]);
+});

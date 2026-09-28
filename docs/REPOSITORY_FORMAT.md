@@ -44,6 +44,8 @@ Migration enumerates tracked `SKILL.md` files, preserving each source path as pr
 
 The default machine-private root is `~/.kiln`. `library.json` selects the active repository; a path-derived subdirectory stores target enrollments, receipts, journals, private trials, reference mappings, observations, and the rebuildable SQLite index. These files are not transportable approval or ownership evidence. Re-enroll destinations on each machine.
 
+An approval with `reviewer: "Kiln"` and `carriedFrom: <hash>` was recorded by Kiln for a revision that differs from the approved `carriedFrom` revision only in its model-invocation flags (`disable-model-invocation` in SKILL.md, `policy.allow_implicit_invocation` in `agents/openai.yaml`; see [Skill invocation](SKILL_INVOCATION.md)). It copies that approval's scope, evidence and waived checks. Older Kiln versions ignore the extra field.
+
 Imported export approvals remain historical evidence with `trust: imported`; they cannot authorize installation automatically. Git repositories are user-selected trusted authoring stores, not a cryptographically signed approval system. Review incoming changes before deployment. A GitHub clone does not install anything.
 
 Approval publishing materializes the exact reviewed revision through a private Git index, with its approval and redacted evidence. It never stages the item's working directory or its unapproved history. Later local edits remain untouched. Imported absolute source paths become portable `local-import:<name>` labels; the original provenance is retained privately. Explicit CLI checkpoints remain an operation that commits all managed working files.

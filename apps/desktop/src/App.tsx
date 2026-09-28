@@ -50,6 +50,9 @@ import { HomeFilesView } from './HomeFiles';
 import { UpdatesPanel } from './Updates';
 import { ASK_AGENT_EVENT, reviewOf, type AskAgentDetail } from './TrialLoop';
 import { ExperimentsPage } from './ExperimentsPage';
+import { invocationMessage } from './Invocation';
+import { SessionStartStatus } from './SessionStart';
+import type { InvocationResult } from '../../../packages/domain/router';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 
@@ -240,6 +243,11 @@ export default function App() {
     'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
     'check-updates': () => { navigate('settings'); void perform(() => checkUpdate(true), 'Checked for updates'); },
   });
+  /**
+   * The model-invocation switch (library, Machines, the item page, the session-start meter): edits the skill, keeps an approval
+   * when only the flag changed and updates Kiln's installed copies; the toast says what happened to each.
+   */
+  const setInvocation = (item: Item, model: boolean) => { if (busy) return; void perform(async () => { const result = await api<InvocationResult>('skills.invocation', { itemId: item.id, model, expect: item.revision }); await refresh(); setMessage(invocationMessage(result, snapshot?.approvals.some(a => a.itemId === item.id && a.trust === 'local') ?? false)); }); };
   const completed = async (id?: string) => { setDialog(null); await refresh(); if (id) revealItem(id); setMessage('Saved'); };
   const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows in the status bar.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
   const copyItem = async (item: Item) => {
@@ -334,12 +342,12 @@ export default function App() {
   const byStage = (i: Item) => section !== 'library' || inStage(i, stage, installations);
   /** The view before search and tokens: its section, collection or stage. Suggestions count from here. */
   const base = snapshot.items.filter(i => inSection(i) && inCollection(i, collection) && byStage(i));
-  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens, duplicateSet)).length;
+  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens, duplicateSet, snapshot.invocation)).length;
   // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
   // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
   const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
   const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
-  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet));
+  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet, snapshot.invocation));
   const matching = relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, snapshot.usage, pinSources);
   const groups = groupItems(matching, group);
   /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
@@ -485,14 +493,14 @@ export default function App() {
   });
   const libraryPage = <section className="library-page">
     <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
-    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} duplicates={duplicateSet} saved={savedViews}
+    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} duplicates={duplicateSet} invocation={snapshot.invocation} saved={savedViews}
       sort={order} onSort={searchText ? setSearchSort : setSort} relevance={searchText ? { active: relevance, onPick: () => setSearchSort('relevance') } : undefined} searching={searching} close={Boolean(searchText) && closeMatches}
       group={group} onGroup={setGroup} canReorder={!relevance && bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
     <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
-      locations={configured} installations={installations} approvals={snapshot.approvals} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
+      locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
       scroll={listScroll} empty={emptyState}
@@ -500,7 +508,7 @@ export default function App() {
   </section>;
   const itemPage = itemView && <div className="item-view">
     <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
@@ -519,7 +527,7 @@ export default function App() {
         {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
         <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
         {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
-        {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
+        {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />}
         {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => openTrialItem(a.itemId!)}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
         {section === 'settings' && <div className="settings-grid"><RepositoryPanel root={snapshot.root} perform={perform} refresh={refresh} onSetup={() => setSetupOpen(true)} onMessage={setMessage} />
           <section className="settings-card"><div className="section-heading"><h3><Download size={18} />Skill &amp; agent locations</h3><Badge status={configured.length ? 'ready' : 'not set up'} /></div><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={setLocation} onScan={(provider, target) => setDialog({ name: 'scan', provider, targetId: target.id })} />
@@ -550,7 +558,8 @@ export default function App() {
         </div>
       </main>
     </div>
-    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection} />
+    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection}
+      context={<SessionStartStatus snapshot={snapshot} installations={installations} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />} />
     <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />
     {undoStack.toasts(message)}
     {sheet && <ShortcutSheet quickSearch={snapshot.settings.shortcut} onClose={() => setSheet(false)} />}

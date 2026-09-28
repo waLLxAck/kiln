@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type Snapshot, type Usage } from '../protocol/schema';
+import { analysisSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
@@ -15,6 +15,7 @@ import { resolveVariables, revisionHash, skillName, validateContent } from './co
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
 import { defaultTags, distinctKeys, duplicateGroups, signature, type Signature } from './duplicates';
+import { flagOnlyChange, listingChars, readInvocation } from './invocation';
 
 /** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
 function workingFingerprint(dir: string, revision: string) {
@@ -55,6 +56,8 @@ export class Workbench {
   private changedItems: Set<string> | null = null;
   /** Duplicate-detection summary per revision hash; revisions never change, so each is read for this once. */
   private signatures = new Map<string, Signature>();
+  /** Model-invocation switches per skill revision hash (invocation.ts), read once per revision like the signatures. */
+  private invocations = new Map<string, SkillListing>();
   /** Usage counts from the observations folder; dropped when an observation is written and on a full refresh, which also picks up other processes' writes. */
   private usageCache?: Usage;
   warnings: string[] = [];
@@ -364,6 +367,7 @@ export class Workbench {
       let summary = this.signatures.get(item.revision);
       if (!summary) { try { summary = signature(load()); this.signatures.set(item.revision, summary); } catch { /* Reported by the library warnings. */ } }
       if (summary) this.indexedSignatures.set(item.id, summary);
+      if (item.kind === 'skill' && !this.invocations.has(item.revision)) { try { const revision = load(); this.invocations.set(item.revision, { ...readInvocation(revision), chars: listingChars(revision.content) }); } catch { /* Reported by the library warnings. */ } }
       return { item, load };
     }));
     this.generation++;
@@ -606,6 +610,27 @@ export class Workbench {
       writeJson(path.join(this.canonical, 'approvals', `${approval.id}.json`), approval);
       writeJson(this.itemFile(item.id), { ...item, status: 'approved', updatedAt: now() });
       this.record('approved', `Approved by ${data.reviewer}: ${data.scope}`, item.id, item.revision); return approval;
+    });
+  }
+  /**
+   * Carries an approval over a change that only turned model invocation on or off (invocation.ts): the new revision is approved
+   * as `Kiln`, with the earlier approval's scope, evidence and waived checks, and `carriedFrom` naming the revision it came from.
+   * Refused unless `from` is approved here and the two revisions are identical once the flag lines are taken out of both.
+   */
+  approveFlagChange(input: unknown) {
+    const data = z.object({ id: idSchema, revision: hashSchema, from: hashSchema }).parse(input);
+    return this.mutate(() => {
+      const item = this.reconcileItem(data.id); invariant(!item.deletedAt && item.revision === data.revision, 'REVISION_CONFLICT', 'Only the current, non-deleted revision can be approved.');
+      const previous = this.approvals().filter(a => a.itemId === item.id && a.revision === data.from && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      invariant(previous, 'APPROVAL_REQUIRED', 'The earlier revision is not approved on this machine.');
+      const revision = this.getRevision(item.id, data.revision);
+      invariant(flagOnlyChange(this.getRevision(item.id, data.from), revision), 'NOT_FLAG_ONLY', 'More than the model-invocation flag changed. Review and approve this revision yourself.');
+      const errors = validateContent(revision); invariant(errors.length === 0, 'VALIDATION_FAILED', errors.join('\n'));
+      const approval = approvalSchema.parse({ schemaVersion: 1, id: randomUUID(), itemId: item.id, revision: data.revision, reviewer: 'Kiln', scope: previous.scope,
+        note: `Only the model-invocation flag changed from approved ${data.from.slice(0, 12)}; content otherwise identical.`, evidence: previous.evidence, waivedChecks: previous.waivedChecks, createdAt: now(), trust: 'local', carriedFrom: data.from });
+      writeJson(path.join(this.canonical, 'approvals', `${approval.id}.json`), approval);
+      writeJson(this.itemFile(item.id), { ...item, status: 'approved', updatedAt: now() });
+      this.record('approved', 'Approval carried over: only the model-invocation flag changed', item.id, item.revision); return approval;
     });
   }
   unapprove(input: unknown) {
@@ -932,7 +957,14 @@ export class Workbench {
   snapshot(): Snapshot {
     if (this.dirty) this.refresh(false);
     const git = this.cachedGitStatus();
-    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups() };
+    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups(), invocation: this.invocation() };
+  }
+  /** What each live skill's current revision says about model invocation, from the per-revision cache (no file is read here). */
+  invocation(): Record<string, SkillListing> {
+    if (this.dirty) this.refresh(false);
+    const result: Record<string, SkillListing> = {};
+    for (const item of this.indexedItems) { const value = item.kind === 'skill' ? this.invocations.get(item.revision) : undefined; if (value) result[item.id] = value; }
+    return result;
   }
   exportLibrary(destination: string) {
     invariant(path.isAbsolute(destination), 'INVALID_PATH', 'Export path must be absolute.'); noLinks(destination);

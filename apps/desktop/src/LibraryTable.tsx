@@ -1,6 +1,6 @@
 import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type UIEvent } from 'react';
 import { ChevronDown, ChevronRight, Copy, Download, Files, FlaskConical, Star, Tags, X } from 'lucide-react';
-import type { Approval, Installation, Item, Trial } from '../../../packages/protocol/schema';
+import type { Approval, Installation, Item, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { ContextMenu, KindIcon, type MenuEntry } from './components';
 import { date } from './api';
 import { InstalledCell, StatusCell, TestCell, type Location } from './Library';
@@ -10,6 +10,7 @@ import { installable } from './library-filters';
 import { site, type GroupKey, type Sort, type SortKey } from './library-sort';
 import { SwipeToArchive } from './Swipe';
 import { DraftMark } from './item-editing';
+import { InvocationToggle } from './Invocation';
 import { useListKeys } from './keyboard';
 import type { useItemDrag } from './ItemDrag';
 
@@ -17,6 +18,8 @@ type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ra
 type Props = {
   groups: { key: string; label: string; items: Item[] }[]; group: GroupKey; collectionShown: boolean;
   row: (item: Item) => Row; locations: Location[]; installations: Installation[]; approvals: Approval[];
+  /** Per skill: whether a model may invoke it (the Invoked by column), and its switch. */
+  invocation: Snapshot['invocation']; onInvocation: (item: Item, model: boolean) => void;
   /** The order shown; null while a search orders by relevance, so no column heading shows as sorted. */
   selected: string; picked: string[]; sort: Sort; onSort: (key: SortKey) => void;
   onClick: (event: MouseEvent, item: Item) => void; onMenu: (event: MouseEvent, item: Item) => void;
@@ -37,11 +40,13 @@ type Props = {
  * dragging it up or down (or by its icon) carries it to a collection in the sidebar. Columns can be dragged into another order and
  * resized from their edges (LibraryHead.tsx); the Title cell holds only the title, with the description as the row's tooltip.
  */
-export function LibraryTable({ groups, group, collectionShown, row, locations, installations, approvals, selected, picked, sort, onSort, onClick, onMenu, onFocusRow, onPick, onOpen, onSelectAll, shortcut, canSwipe, onArchive, drag, onCopy, onTest, installEntries, scroll, empty, hint }: Props) {
+export function LibraryTable({ groups, group, collectionShown, row, locations, installations, approvals, invocation, onInvocation, selected, picked, sort, onSort, onClick, onMenu, onFocusRow, onPick, onOpen, onSelectAll, shortcut, canSwipe, onArchive, drag, onCopy, onTest, installEntries, scroll, empty, hint }: Props) {
   const [folded, setFolded] = useState<string[]>([]);
   const [install, setInstall] = useState<{ x: number; y: number; item: Item } | null>(null);
   const [layout, setLayout] = useColumnLayout();
-  const shown = visibleColumns(layout.order, collectionShown), tracks = gridTracks(shown, layout.widths);
+  // Invoked by gives way while no skill is listed, as Collection does inside a collection: it would be dashes only.
+  const gone: ColumnKey[] = groups.some(g => g.items.some(i => i.kind === 'skill')) ? [] : ['model'];
+  const shown = visibleColumns(layout.order, collectionShown, [...(layout.hidden ?? []), ...gone]), tracks = gridTracks(shown, layout.widths);
   const many = picked.length > 1;
   // Rows in the order shown, skipping folded groups: what the arrows walk through.
   const visible = groups.flatMap(g => group !== 'none' && folded.includes(g.key) ? [] : g.items);
@@ -63,7 +68,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
     {installable(item) && !item.deletedAt && <button type="button" className="row-action" aria-haspopup="menu" title="Install into a skill folder" onClick={event => { const box = event.currentTarget.getBoundingClientRect(); setInstall({ x: box.right - 240, y: box.bottom + 4, item }); }}><Download size={13} />Install<ChevronDown size={11} /></button>}
   </span>;
   return <div className="lib-table" role="table" aria-label="Library items" aria-rowcount={visible.length} style={{ '--lib-cols': tracks.full, '--lib-cols-mid': tracks.mid, '--lib-cols-narrow': tracks.narrow } as CSSProperties}>
-    <LibraryHead layout={layout} shown={shown} collectionShown={collectionShown} sort={sort} onSort={onSort} onLayout={setLayout} />
+    <LibraryHead layout={layout} shown={shown} gone={gone} collectionShown={collectionShown} sort={sort} onSort={onSort} onLayout={setLayout} />
     <div className="item-list" ref={scroll.ref} onScroll={scroll.onScroll} onKeyDown={keyDown} onFocus={event => { const id = (event.target as HTMLElement).dataset.id; if (id) lastFocus.current = id; }}>
       {groups.map(g => { const shut = group !== 'none' && folded.includes(g.key); return <Fragment key={g.key || 'all'}>
         {group !== 'none' && <button type="button" className="lib-group" aria-expanded={!shut} onClick={() => setFolded(current => shut ? current.filter(k => k !== g.key) : [...current, g.key])}>
@@ -78,6 +83,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
             collection: <span className="muted" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>,
             status: <StatusCell item={item} approvals={approvals} published={published} made={made} />,
             installed: <InstalledCell item={item} locations={locations} installations={installations} />,
+            model: <InvocationToggle item={item} listing={invocation[item.id]} onToggle={onInvocation} />,
             test: <TestCell item={item} trial={trial} place={place} />,
             updatedAt: <span className="muted" title={`Updated ${date(item.updatedAt)} · added ${date(item.createdAt)}`}>{date(item.updatedAt)}</span>,
           };

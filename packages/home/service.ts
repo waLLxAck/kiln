@@ -39,8 +39,11 @@ export class HomeFiles {
   private readonly platform: NodeJS.Platform;
   private readonly probe: NonNullable<Options['probe']>;
   private profiles?: Promise<Profiles>;
+  /** Where client folders are looked up (CLAUDE_CONFIG_DIR, CODEX_HOME, COPILOT_HOME): not the real environment when a home folder is given. */
+  readonly env: NodeJS.ProcessEnv;
   constructor(private options: Options = {}) {
     this.home = options.home ?? process.env.KILN_HOME ?? os.homedir(); this.privateRoot = options.privateRoot ?? path.join(os.homedir(), '.kiln'); this.platform = options.platform ?? process.platform; this.probe = options.probe ?? probeShell;
+    this.env = options.env ?? (options.home || process.env.KILN_HOME ? {} : process.env);
   }
   private configFile() { return path.join(this.privateRoot, 'home-files.json'); }
   private projects(): string[] {
@@ -77,7 +80,7 @@ export class HomeFiles {
     return this.profiles;
   }
   private async entries(): Promise<Omit<HomeFile, 'exists' | 'size' | 'modifiedAt' | 'hash' | 'error'>[]> {
-    const fixed = configCatalog(this.home, this.projects(), this.options.env ?? (this.options.home || process.env.KILN_HOME ? {} : process.env), this.platform);
+    const fixed = configCatalog(this.home, this.projects(), this.env, this.platform);
     const profiles = await this.shellProfiles();
     const shells = (Object.entries(profiles) as [Shell, { host: string; all: string }][]).flatMap(([shell, paths]) => [
       { key: `${shell}-host`, kind: 'powershell' as const, label: `${shellLabel[shell]} profile`, description: `Runs every time ${shellLabel[shell]} starts in the console: aliases, functions, prompt and PATH changes.`, path: paths.host, removable: false },

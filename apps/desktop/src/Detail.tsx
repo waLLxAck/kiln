@@ -31,6 +31,7 @@ type Props = {
   jobs: AgentJob[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
   /** Opens the agent chat about this item. */ onAsk?: () => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
+  /** The model-invocation switch in the rail's Installs section (Invocation.tsx). */ onInvocation?: (item: Item, model: boolean) => void;
   /** Duplicates: opens the consolidate dialog for this item's group, marks it as not a duplicate of the others, and names a copy briefly. */
   onConsolidate?: () => void; onNotDuplicates?: () => void; where?: (item: Item) => string;
   /** Stars, moves to another status, trashes or restores the item as one action on the library's undo stack (Ctrl+Z). */ onMeta: (patch: { favourite: boolean } | { status: Item['status'] } | { deleted: boolean }) => void;
@@ -58,7 +59,7 @@ let shownTests = 0;
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
@@ -194,7 +195,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
             <BundledFiles detail={detail} draft={draft} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
           </div>}
         </div>
-        <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onMachines={onMachines} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} approveInHeader={showPrimary && primary === 'approve'} sourceInHeader={['open-original', 'open-link'].includes(primary)} />
+        <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onMachines={onMachines} onInvocation={onInvocation} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} approveInHeader={showPrimary && primary === 'approve'} sourceInHeader={['open-original', 'open-link'].includes(primary)} />
       </div>
     </div>
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
@@ -226,6 +227,13 @@ function MergedNote({ item, snapshot, onSelect }: { item: Item; snapshot: Snapsh
   </div>;
 }
 
+/** Who may invoke a skill, in words instead of the front-matter keys (read as Claude Code reads booleans: yes, on, 1 count). */
+function plainProperty(key: string, value: string): [string, string] | null {
+  const on = /^(true|yes|on|1)$/i.test(value.replace(/^(['"])(.*)\1$/, '$2').trim());
+  if (key === 'disable-model-invocation') return ['Model can invoke', on ? 'no (you only)' : 'yes'];
+  if (key === 'user-invocable') return ['You can invoke', on || !/^(false|no|off|0)$/i.test(value.replace(/^(['"])(.*)\1$/, '$2').trim()) ? 'yes' : 'no (model only)'];
+  return null;
+}
 /** The content as a document: front-matter as a property table, the body formatted (or raw), images inline. Clicking the text edits it. */
 function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; raw: boolean; onRaw: (raw: boolean) => void; onEdit?: () => void; onZoom: (image: { name: string; src: string }) => void }) {
   const { item, revision } = detail;
@@ -246,7 +254,7 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
       {onEdit && <button type="button" className="text-button" aria-label="Edit text" onClick={onEdit}><Pencil size={13} />Edit</button>}
     </div>
     {formatted && (properties.length > 0 || variables.length > 0) && <table className="item-props"><tbody>
-      {properties.map(([key, value]) => <tr key={key}><th>{key}</th><td>{key === 'allowed-tools' || key === 'tools' ? value.split(',').filter(Boolean).map(tool => <code key={tool}>{tool.trim()}</code>) : value}</td></tr>)}
+      {properties.map(([key, value]) => { const plain = plainProperty(key, value); return <tr key={key} title={plain ? `${key}: ${value}` : undefined}><th className={plain ? 'plain' : undefined}>{plain?.[0] ?? key}</th><td>{plain ? plain[1] : key === 'allowed-tools' || key === 'tools' ? value.split(',').filter(Boolean).map(tool => <code key={tool}>{tool.trim()}</code>) : value}</td></tr>; })}
       {variables.length > 0 && <tr><th>variables</th><td>{variables.map(v => <span key={v} className="variable-token" title="Filled in when you copy or test it">{v}</span>)}</td></tr>}
     </tbody></table>}
     {images.length > 0 && <div className="asset-gallery">{images.map(([name, content]) => <button key={name} type="button" className="asset-button" title={`Enlarge ${name}`} onClick={() => onZoom({ name, src: imageSource(name, content) })}><img className="asset-preview" alt={name} src={imageSource(name, content)} /><span><ZoomIn size={13} />{name}</span></button>)}</div>}
