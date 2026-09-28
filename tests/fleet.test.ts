@@ -24,6 +24,9 @@ function fleet(fetchEveryMs = 0) {
   const origin = path.join(root, 'origin.git'); execFileSync('git', ['init', '--bare', '--initial-branch=main', origin], { windowsHide: true });
   const created = initialiseRepository({ parent: path.join(root, 'a'), name: 'library' }); assert.ok(created.committed, created.message);
   execFileSync('git', ['-C', created.root, 'remote', 'add', 'origin', origin], { windowsHide: true });
+  // Windows runners check files out with CRLF (core.autocrlf), which makes Kiln's infrastructure look edited and blocks publishing;
+  // both library copies must hold exactly what Kiln wrote or committed.
+  execFileSync('git', ['-C', created.root, 'config', 'core.autocrlf', 'false'], { windowsHide: true });
   execFileSync('git', ['-C', created.root, 'push', '-q', '-u', 'origin', 'HEAD'], { windowsHide: true, stdio: 'ignore' });
   const machine = (name: string, library: string) => {
     const home = path.join(root, name, 'home'); fs.mkdirSync(home, { recursive: true });
@@ -33,7 +36,7 @@ function fleet(fetchEveryMs = 0) {
     return { home, library, wb, router, git, view: (fetch = true) => router.call('fleet.view', { fetch }) as Promise<FleetView> };
   };
   const a = machine('a', created.root);
-  const clone = () => { const library = path.join(root, 'b', 'library'); execFileSync('git', ['clone', '-q', origin, library], { windowsHide: true }); return machine('b', library); };
+  const clone = () => { const library = path.join(root, 'b', 'library'); execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', origin, library], { windowsHide: true }); return machine('b', library); };
   const onGitHub = (id: string) => machineReportSchema.parse(JSON.parse(execFileSync('git', ['-C', origin, 'show', `main:workbench/machines/${id}.json`], { encoding: 'utf8' })));
   const clones: ReturnType<typeof machine>[] = [a];
   return { root, origin, a, clone: () => { const b = clone(); clones.push(b); return b; }, onGitHub, close() { for (const m of clones) { m.router.fleet.stop(); m.wb.close(); } fs.rmSync(root, { recursive: true, force: true }); } };
@@ -308,8 +311,8 @@ test('a machine report rides a recent background fetch, and fetches again when G
     await a.view();
     assert.equal(a.router.fetcher.status().checkedAt, checked, 'neither the report nor Machines fetched again');
 
-    // Timestamps are compared below; Windows clocks can give two fetches the same millisecond, so let one pass.
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // Timestamps are compared below; let the clock move so a fetch in the same millisecond can't hide.
+    await new Promise(resolve => setTimeout(resolve, 20));
     // Another machine approves something; A's fetch no longer has it, so A's next push is rejected and rebuilt after a fetch.
     const b = f.clone();
     const theirs = b.wb.create({ title: 'From the laptop', kind: 'skill', content: skill('from-the-laptop') });
