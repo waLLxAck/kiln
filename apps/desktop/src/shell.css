@@ -24,7 +24,6 @@
 .rail-gap { height: 10px; }
 .rail-tools { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
 .rail-gap + .nav-item { margin-top: 0; }
-.nav-soon { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: var(--subtle-2); color: var(--muted); }
 
 /* Top bar: breadcrumb, the palette field in the middle, Capture and Ask the agent */
 .topbar { gap: 16px; }

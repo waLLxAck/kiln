@@ -164,6 +164,8 @@ export class Router {
       case 'skills.cleanEntry': return this.deployments.cleanScanEntry(args);
       case 'skills.import': return this.deployments.importExternal(args);
       case 'skills.sync': return this.fleet.sync();
+      // This machine's id and name only: no Git, nothing published (Machines while it manages this machine alone).
+      case 'fleet.identity': return this.fleet.identity();
       case 'fleet.view': return this.fleet.view(args);
       case 'fleet.live': return this.fleet.live();
       case 'fleet.report': return this.fleet.report();

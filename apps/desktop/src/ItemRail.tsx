@@ -4,7 +4,7 @@ import { ArrowUp, Check, ChevronDown, ChevronRight, Circle, CircleArrowUp, Exter
 import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge } from './components';
-import { machinesEnabled } from './features';
+import { multiMachine } from './features';
 import { EventGlyph, eventTitle, PublishState, trialVerdict } from './History';
 import type { HistoryEvent } from './history-model';
 import { dayLabel } from './history-model';
@@ -130,7 +130,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
 
     {installable && <Section id="installs" title="Installs" count={installsCount} tone={drifted ? 'bad' : outdated && item.kind !== 'instruction' ? 'accent' : undefined}
       more={rows.length > 3 ? <>{rows.slice(3).map((copy, n) => row(copy, n + 3))}</> : undefined} moreLabel={`See all ${rows.length} copies`}
-      action={onMachines && machinesEnabled ? <button type="button" className="text-button" onClick={onMachines}><Server size={13} />Other machines…</button> : undefined}>
+      action={onMachines && multiMachine ? <button type="button" className="text-button" onClick={onMachines}><Server size={13} />Other machines…</button> : undefined}>
       {['skill', 'agent'].includes(item.kind) && <SkillToggles item={item} providers={providers} snapshot={snapshot} installations={installations} onToggle={onToggleInstall} onSetup={onSetup} />}
       {rows.slice(0, 3).map(row)}
       {item.kind === 'instruction' && !receipts.length && <p className="rail-note">Not installed anywhere yet.</p>}

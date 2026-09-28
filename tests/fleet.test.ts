@@ -323,3 +323,29 @@ test('a machine report rides a recent background fetch, and fetches again when G
     assert.ok(execFileSync('git', ['-C', f.origin, 'show', `main:workbench/items/${theirs.id}/item.json`], { encoding: 'utf8' }), 'the laptop’s approval is still on GitHub');
   } finally { f.close(); }
 });
+test('until reporting is started, nothing publishes a machine report: installs, identity, sync and pulls commit no machines file', async () => {
+  // The desktop app never calls fleet.start while multi-machine is off (apps/desktop/src/features.ts).
+  const f = fleet();
+  try {
+    const { a } = f;
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    const agents = a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    a.router.call('skills.install', { itemId: item.id, targetId: agents.id, confirm: true });
+    assert.ok(a.router.flushOrganisation(), 'installs.json goes to GitHub'); await a.router.publisher.idle();
+    const self = a.router.call('fleet.identity') as { id: string; name: string };
+    assert.ok(self.id && self.name);
+
+    // Another machine clones and syncs: installs.json still installs there.
+    const b = f.clone();
+    b.wb.enroll({ name: 'Agents', root: b.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    const synced = await b.router.call('skills.sync') as { itemId: string; result: string }[];
+    assert.deepEqual(synced.map(r => [r.itemId, r.result]), [[item.id, 'installed approved revision']]);
+    await b.router.call('git.sync', { action: 'fetch' });
+    await a.router.fleet.idle(); await b.router.fleet.idle(); await a.router.gitQueue.idle(); await b.router.gitQueue.idle();
+
+    assert.equal(execFileSync('git', ['-C', f.origin, 'ls-tree', '--name-only', 'main', 'workbench/machines/'], { encoding: 'utf8' }).trim(), '', 'no report on GitHub');
+    for (const m of [a, b]) assert.equal(m.git('log', '--oneline', '--', 'workbench/machines'), '', 'no report committed');
+    assert.equal(a.router.fleet.publishState().state, 'idle');
+  } finally { f.close(); }
+});

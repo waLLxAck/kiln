@@ -13,8 +13,7 @@ import { CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog
 import { isWithin, relocate, untitledName } from '../../../packages/domain/collections';
 import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
 import { sharedTitleIds, titleCollisions } from './item-source';
-import { machinesEnabled } from './features';
-import { MachinesSoon } from './MachinesSoon';
+import { multiMachine } from './features';
 import { MachinesView } from './Machines';
 import { arrangeItems, defaultSort, groupItems, ItemBar, locationName, locationsFor, moveInOrder, nextSort, type Location } from './Library';
 import { BulkBar, LibraryTable } from './LibraryTable';
@@ -179,9 +178,10 @@ export default function App() {
   const [origins, setOrigins] = useState<Record<string, string>>({});
   const sharedTitles = snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '';
   useEffect(() => { if (!sharedTitles) { setOrigins({}); return; } let active = true; void api<Record<string, string>>('items.origins', { ids: sharedTitles.split(',') }).then(result => { if (active) setOrigins(result); }).catch(() => {}); return () => { active = false; }; }, [sharedTitles]);
-  // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
   // Machines: share this machine's installs with the rest of the fleet, now and after each change (see packages/fleet).
-  useEffect(() => { if (machinesEnabled) void api('fleet.start').catch(() => {}); }, []);
+  // Never started while Machines manages this machine only, so no machine report is committed.
+  useEffect(() => { if (multiMachine) void api('fleet.start').catch(() => {}); }, []);
+  // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
   useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
   useEffect(() => {
     const chosenTheme = theme ?? snapshot?.settings.theme;
@@ -491,14 +491,13 @@ export default function App() {
         {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
         <div className="workspace-row"><div className="workspace-content">
         {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
-        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && machinesEnabled && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
+        <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
         {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
-        {section === 'machines' && !machinesEnabled && <MachinesSoon onSettings={() => navigate('settings')} />}
-        {section === 'machines' && machinesEnabled && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
+        {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} />}
         {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => openTrialItem(a.itemId!)}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
         {section === 'settings' && <div className="settings-grid"><RepositoryPanel root={snapshot.root} perform={perform} refresh={refresh} onSetup={() => setSetupOpen(true)} onMessage={setMessage} />
           <section className="settings-card"><div className="section-heading"><h3><Download size={18} />Skill &amp; agent locations</h3><Badge status={configured.length ? 'ready' : 'not set up'} /></div><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={setLocation} onScan={(provider, target) => setDialog({ name: 'scan', provider, targetId: target.id })} />
-            <div className="wrap-actions"><button className="button" disabled={!configured.length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library, plus anything marked for this machine in Machines</span></div>
+            <div className="wrap-actions"><button className="button" disabled={!configured.length} onClick={() => void perform(async () => { setSyncReport(await api('skills.sync')); await refresh(); })}><RefreshCw size={15} />Install everything marked for this machine</button><span className="muted small">{Object.keys(snapshot.installs).length} skill{Object.keys(snapshot.installs).length === 1 ? '' : 's'} marked as installed in the library{multiMachine ? ', plus anything marked for this machine in Machines' : ''}</span></div>
             <p className="muted small">The library records which skills you installed (workbench/installs.json). After cloning it on another machine, turn on the locations above and press the button, or run <code>workbench skills sync</code>.</p>
             {syncReport && <details open><summary>Sync result</summary><div className="file-preview-list">{syncReport.map((r, i) => <div key={i}><span>{snapshot.items.find(it => it.id === r.itemId)?.title ?? r.itemId} · {r.provider === 'codex-native' ? 'Codex-specific' : primarySkillLabel(r.provider)}</span><span className="muted">{r.result}</span></div>)}{!syncReport.length && <div><span className="muted">Nothing marked for install.</span></div>}</div></details>}
           </section>

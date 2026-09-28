@@ -6,7 +6,6 @@ import { resolveVariables } from '../../../packages/domain/text';
 import { api, variablesIn } from './api';
 import { Badge, KindIcon } from './components';
 import type { KilnCommand } from './command-names';
-import { machinesEnabled } from './features';
 import type { SearchResults } from './library-search';
 import { actionScore, matchRanges, mostUsed, parsePaletteQuery, preferredRow } from './palette-match';
 import './palette.css';
@@ -22,7 +21,7 @@ const LIMIT = 30;
 type How = 'default' | 'kiln' | 'test';
 const sections = [
   { id: 'library', label: 'Library', icon: <Layers3 size={15} />, detail: 'Every item, with search, filters and collections.' },
-  ...(machinesEnabled ? [{ id: 'machines', label: 'Machines', icon: <Monitor size={15} />, detail: 'Skill locations and project folders on each machine, and what is installed where.', keywords: 'installs locations' }] : []),
+  { id: 'machines', label: 'Machines', icon: <Monitor size={15} />, detail: 'Skill locations and project folders on this machine, and what is installed where.', keywords: 'installs locations' },
   { id: 'home', label: 'Config files', icon: <FileCog size={15} />, detail: 'CLAUDE.md, AGENTS.md, agent settings and hooks, backed up before each save.', keywords: 'claude.md agents.md settings hooks home' },
   { id: 'activity', label: 'Activity', icon: <Activity size={15} />, detail: 'What Kiln and your agents did, newest first.', keywords: 'history log' },
   { id: 'experiments', label: 'Experiments', icon: <FlaskConical size={15} />, detail: 'Every trial and its result.', keywords: 'tests trials' },

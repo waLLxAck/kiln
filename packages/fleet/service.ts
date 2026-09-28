@@ -162,7 +162,7 @@ export class FleetService {
     this.changed();
     return entries;
   }
-  /** Turns on reporting after changes and publishes once; the desktop app calls it at start when Machines is enabled. */
+  /** Turns on reporting after changes and publishes once. The desktop app calls it at start only while multi-machine is on (apps/desktop/src/features.ts). */
   start() { this.auto = true; this.schedule(0); return this.publishState(); }
   stop() { this.auto = false; clearTimeout(this.timer); this.timer = undefined; }
   /** Something that shows in this machine's report changed. */

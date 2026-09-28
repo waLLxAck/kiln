@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUp, Check, Download, FileDiff, FolderOpen, Laptop, Layers3, Monitor, Pencil, RefreshCw, Save, Settings, Share2, Trash2, X } from 'lucide-react';
-import type { FleetView, Installation, Item, MachineReport, Provider, ProviderId, Receipt, Snapshot } from '../../../packages/protocol/schema';
+import { AlertTriangle, ArrowUp, Check, Download, FileDiff, FolderOpen, Laptop, Layers3, Monitor, Pencil, Plus, RefreshCw, Save, Settings, Share2, Trash2, X } from 'lucide-react';
+import type { FleetView, Installation, Item, MachineIdentity, MachineReport, Provider, ProviderId, Receipt, Snapshot } from '../../../packages/protocol/schema';
 import { agentFolder } from '../../../packages/domain/agent-format';
 import { targetSkillsFolder } from '../../../packages/providers/skill-locations';
 import { applyWanted, buildReport, cellFor, installable, isProject, latestApproval, localCopies, locationClient, summarise, type Cell, type CellState, type FleetLocation, type LocalLocation } from '../../../packages/fleet/model';
 import { api, date, shortHash } from './api';
 import { Badge, Empty, KindIcon, providerName } from './components';
+import { multiMachine } from './features';
 import { canKeep, keepExplanation } from './KeepChanges';
 import { updateMessage } from './InstallUpdates';
 import type { UpdateResult } from '../../../packages/deployment/service';
@@ -59,18 +60,22 @@ export function updatedMessage(results: UpdateResult[]) {
  * Machines: every machine that shares this library, as an items × locations matrix per machine and an items × machines
  * overview. This machine is computed live from the snapshot; other machines are their last report on GitHub. Nothing here
  * reaches another machine directly: marks for another machine are committed to its report and take effect when it next syncs.
+ * While `multiMachine` is off it is this machine's matrix alone: no reports are read or shared, and adding a machine is coming soon.
  */
 export function MachinesView({ snapshot, installations, providers, perform, refresh, onMessage, onSettings, onAddProject, onCompare, onUninstall, onInstall, onOpenItem, onKeep }: Props) {
   const [view, setView] = useState<FleetView | null>(null);
+  // Only the name while multi-machine is off: fleet.view reads other machines' reports and may publish this one.
+  const [identity, setIdentity] = useState<MachineIdentity | null>(null);
   const [selected, setSelected] = useState<Selection>('self');
   const [open, setOpen] = useState<{ itemId: string; key: string } | null>(null);
   const [filter, setFilter] = useState<'all' | 'attention'>('all');
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drift, setDrift] = useState<(Receipt & { drifted: boolean; checkedAt: string; error?: string })[]>([]);
   const fetched = useRef(false);
-  const load = useCallback(async (fetch = false) => { try { setView(await api<FleetView>('fleet.view', { fetch })); } catch (error) { onMessage(error instanceof Error ? error.message : String(error)); } }, [onMessage]);
+  const load = useCallback(async (fetch = false) => { if (!multiMachine) return; try { setView(await api<FleetView>('fleet.view', { fetch })); } catch (error) { onMessage(error instanceof Error ? error.message : String(error)); } }, [onMessage]);
   // Fetch from GitHub when the view opens (the backend throttles it); re-read locally whenever the snapshot changes.
   useEffect(() => { void load(!fetched.current); fetched.current = true; }, [snapshot, load]);
+  useEffect(() => { if (!multiMachine) void api<MachineIdentity>('fleet.identity').then(setIdentity).catch(() => {}); }, []);
   // While this machine's report is on its way, check again shortly.
   useEffect(() => { if (view?.publish.state !== 'queued') return; const timer = setTimeout(() => void load(), 1500); return () => clearTimeout(timer); }, [view, load]);
   useEffect(() => {
@@ -84,7 +89,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   const rows = useMemo(() => snapshot.items.filter(installable).sort((a, b) => a.title.localeCompare(b.title)), [snapshot.items]);
   const approved = useMemo(() => new Map(rows.map(item => [item.id, latestApproval(snapshot.approvals, item.id)?.revision])), [rows, snapshot.approvals]);
   const machines = useMemo<Machine[]>(() => {
-    const identity = view?.self ?? { id: '', name: 'This machine', platform: window.kiln?.platform ?? '' };
+    const who = view?.self ?? identity ?? { id: '', name: 'This machine', platform: window.kiln?.platform ?? '' };
     const inputs = { items: snapshot.items, approvals: snapshot.approvals, targets: snapshot.targets, receipts: snapshot.receipts, installations, home };
     const withLibrary = (report: MachineReport): MachineReport => {
       // Personal installs recorded in installs.json count as marked on every machine that has that location.
@@ -92,16 +97,16 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
       for (const [itemId, tokens] of Object.entries(snapshot.installs)) for (const token of tokens) if (report.locations.some(l => l.key === tokenKey[token])) wanted = applyWanted(wanted, itemId, tokenKey[token], true);
       return { ...report, wanted };
     };
-    const own = buildReport(identity, view?.appVersion ?? '', inputs, view?.wanted ?? {}, new Date().toISOString());
+    const own = buildReport(who, view?.appVersion ?? '', inputs, view?.wanted ?? {}, new Date().toISOString());
     const local = localCopies(inputs).locations;
-    const self: Machine = { id: identity.id, name: identity.name, platform: identity.platform, self: true, reportedAt: null, report: withLibrary(own), locations: own.locations.map(l => ({ ...l, ...local.find(x => x.key === l.key) })), pending: new Set() };
+    const here: Machine = { id: who.id, name: who.name, platform: who.platform, self: true, reportedAt: null, report: withLibrary(own), locations: own.locations.map(l => ({ ...l, ...local.find(x => x.key === l.key) })), pending: new Set() };
     const others = (view?.machines ?? []).map(report => {
       const edits = view!.pending.filter(e => e.machineId === report.id);
       const wanted = edits.reduce((acc, e) => applyWanted(acc, e.itemId, e.location, e.wanted), report.wanted);
       return { id: report.id, name: report.name, platform: report.platform, self: false, reportedAt: report.reportedAt, report: withLibrary({ ...report, wanted }), locations: report.locations, pending: new Set(edits.map(e => `${e.itemId} ${e.location}`)) };
     });
-    return [self, ...others];
-  }, [view, snapshot, installations, home]);
+    return [here, ...others];
+  }, [view, identity, snapshot, installations, home]);
   const machine = selected === 'all' ? null : machines.find(m => (selected === 'self' ? m.self : m.id === selected)) ?? machines[0];
   const explicit = (m: Machine, itemId: string, key: string) => Boolean((m.self ? view?.wanted : view?.machines.find(x => x.id === m.id)?.wanted)?.[itemId]?.includes(key)) || view?.pending.some(e => e.machineId === m.id && e.itemId === itemId && e.location === key && e.wanted);
   const cells = (m: Machine, item: Item) => m.locations.map(location => ({ location, cell: cellFor(item, approved.get(item.id), m.report, location) }));
@@ -131,7 +136,11 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
     : publish?.sharedAt ? `Shared ${ago(publish.sharedAt)}` : 'Not shared yet';
 
   return <div className="fleet">
-    <div className="fleet-switcher" role="tablist" aria-label="Machines">
+    {!multiMachine ? <div className="fleet-switcher">
+      <div className="fleet-machine fleet-here"><span className="fleet-machine-icon"><Monitor size={16} /></span><span className="fleet-machine-text"><b>This machine <span className="fleet-here-meta">· {self.name} · {platformName(self.platform)}</span></b></span></div>
+      <div className="fleet-machine fleet-soon" role="note" aria-label="Add a machine: coming soon"><span className="fleet-machine-icon"><Plus size={16} /></span><span className="fleet-machine-text"><b>Add a machine <span className="fleet-soon-tag">Coming soon</span></b><small>Soon: see and install to your other computers from here.</small></span></div>
+    </div>
+    : <div className="fleet-switcher" role="tablist" aria-label="Machines">
       {machines.map(m => {
         const active = machine?.id === m.id && machine.self === m.self;
         return <div key={m.self ? 'self' : m.id} className={`fleet-machine ${active ? 'active' : ''}`}>
@@ -150,7 +159,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
         {(publish?.state === 'behind' || (view && !view.ready)) && <button className="text-button" onClick={onSettings}>Open Settings</button>}
         <button className="button" disabled={!view?.ready || publish?.state === 'queued'} title="Share this machine’s installs with your other machines now" onClick={() => void perform(async () => { await api('fleet.report'); await load(); })}><RefreshCw size={14} />Report now</button>
       </div>
-    </div>
+    </div>}
     {view?.fetchError && <p className="fleet-note warn">Couldn’t reach GitHub ({view.fetchError}). Other machines are shown as last fetched.</p>}
 
     <div className="fleet-strip">

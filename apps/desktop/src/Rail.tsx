@@ -6,7 +6,6 @@ import { CollectionNameInput, type useCollectionDrag } from './Collections';
 import type { useItemDrag } from './ItemDrag';
 import { KilnMark } from './components';
 import { stages, type Stage } from './library-filters';
-import { machinesEnabled } from './features';
 import './shell.css';
 
 /** Collection filter for items outside every collection. Not a valid collection name, so it cannot clash with one. */
@@ -54,7 +53,7 @@ export function Rail({ style, theme, onTheme, section, collection, stage, collec
       <button className={`nav-item ${section === 'archive' ? 'active' : ''}`} onClick={() => onNavigate('archive')}><Archive size={16} /><span>Archive</span><small aria-hidden="true">{live.filter(hidden).length || ''}</small></button>
       <button className={`nav-item ${section === 'trash' ? 'active' : ''}`} onClick={() => onNavigate('trash')}><Trash2 size={16} /><span>Trash</span><small aria-hidden="true">{trashed || ''}</small></button>
       <div className="rail-tools">
-        {tools.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => onNavigate(id)} className={`nav-item ${section === id ? 'active' : ''}`}><Icon size={17} /><span>{label}</span>{id === 'machines' && !machinesEnabled && <small className="nav-soon">Soon</small>}</button>)}
+        {tools.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => onNavigate(id)} className={`nav-item ${section === id ? 'active' : ''}`}><Icon size={17} /><span>{label}</span></button>)}
         <button className={`nav-item ${section === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('settings')}><Settings size={17} /><span>Settings & repository</span></button>
       </div>
     </nav>
