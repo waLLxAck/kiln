@@ -2,10 +2,11 @@ import { scanAgents, importAgents } from './agents-import';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { idSchema, hashSchema } from '../protocol/schema';
+import { idSchema, hashSchema, type SkillInvocation } from '../protocol/schema';
 import { invariant } from './errors';
 import { Workbench } from './workbench';
-import { DeploymentService } from '../deployment/service';
+import { DeploymentService, type UpdateResult } from '../deployment/service';
+import { readInvocation, setModelInvocation } from './invocation';
 import { checkpoint, gitDiff, inventory, sync } from '../git/service';
 import { Publisher, type Composer } from '../git/publish';
 import { codexDescriber, type Describer } from '../agent/summarise';
@@ -17,6 +18,7 @@ import { applyInfrastructure, defaultParent, infrastructurePlan, initialiseRepos
 import { importLocalSkills, scanLocalSkills } from './skills-import';
 import { applyMigration, migrationPlan } from '../git/migration';
 import { HomeFiles } from '../home/service';
+import { SessionStartMeter } from '../home/session-start';
 import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
 
@@ -28,7 +30,13 @@ const sourceSchema = z.object({ source: z.string().min(1).optional() });
 const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'items.consolidate', 'items.unconsolidate', 'items.distinct', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles; /** Machine reports: app version, publish timing. Reporting after changes starts only with `fleet.start`. */ fleet?: Omit<FleetOptions, 'log'> };
 /** Calls that change what this machine's report says; each schedules a publish once reporting has started. */
-const reportTriggers = new Set(['skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore', 'items.consolidate', 'items.unconsolidate']);
+const reportTriggers = new Set(['skills.invocation', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore', 'items.consolidate', 'items.unconsolidate']);
+/**
+ * What `skills.invocation` did: `changed` is false when the skill already said so. `approval`: `carried` when the new revision is
+ * approved (the approval carried over from a flag-only change), `draft` when it waits for the user. `update` is what happened to
+ * installed copies, null for a draft.
+ */
+export type InvocationResult = { itemId: string; title: string; revision: string; changed: boolean; approval: 'carried' | 'draft'; invocation: SkillInvocation; update: UpdateResult | null };
 export class Router {
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
@@ -43,6 +51,8 @@ export class Router {
   /** Items whose desired installs changed since the last organisation job was queued. */
   private installsChanged = new Set<string>();
   readonly home: HomeFiles;
+  /** What each harness loads when a session starts on this machine (home/session-start.ts); caches file reads between calls. */
+  readonly sessionStart: SessionStartMeter;
   readonly fleet: FleetService;
   /** Install into any project folder, enrolling it on first use. */
   readonly projects: ProjectInstalls;
@@ -57,6 +67,7 @@ export class Router {
     this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
     this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
+    this.sessionStart = new SessionStartMeter({ home: this.home.home, env: this.home.env, projects: () => [...wb.targets().filter(t => t.scope === 'project').map(t => t.root), ...this.home.savedProjects()] });
   }
   /** Saves the revision at once, then fills in a generated note in the background when the user left "What changed?" empty. */
   private updateItem(args: unknown) {
@@ -177,6 +188,8 @@ export class Router {
       case 'fleet.rename': return this.fleet.rename(args);
       case 'fleet.mark': return this.fleet.mark(args);
       case 'skills.update': return this.published(this.deployments.updateInstalls(args));
+      case 'skills.invocation': return this.setInvocation(args);
+      case 'context.sessionStart': return this.sessionStart.measure(args);
       case 'skills.updateOutdated': return this.deployments.updateOutdated(args);
       case 'deploy.keepCopy': return this.deployments.keepCopy(args);
       case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
@@ -256,6 +269,27 @@ export class Router {
   private published<T extends { itemId: string; approved: boolean; revision: string }>(result: T) {
     if (result.approved && this.wb.repositoryState().ready) this.publisher.enqueue('approve', result.itemId, result.revision);
     return result;
+  }
+  /**
+   * Model invocation on or off (invocation.ts). The switch lives in the skill's own files, so this saves a revision. When the
+   * current revision is approved here, the change is flag-only by construction: the approval is carried over (and pushed like any
+   * approval), then Kiln's unchanged copies are brought up to it through the one update path, which skips and names edited,
+   * unmanaged and linked copies. A draft is only edited; approving it stays with the user.
+   */
+  setInvocation(args: unknown): InvocationResult {
+    const data = z.object({ itemId: idSchema, model: z.boolean(), expect: hashSchema.optional() }).parse(args);
+    const item = this.wb.getItem(data.itemId);
+    invariant(item.kind === 'skill', 'NOT_A_SKILL', 'Only skills have a model-invocation switch.');
+    invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this skill first.');
+    invariant(!data.expect || data.expect === item.revision, 'REVISION_CONFLICT', 'This skill changed since you opened it. Reload it and try again.');
+    const before = this.wb.authoring(item.id), next = setModelInvocation(before, data.model);
+    const approved = this.wb.approvals().some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local');
+    if (next.content === before.content && JSON.stringify(next.files) === JSON.stringify(before.files)) return { itemId: item.id, title: item.title, revision: item.revision, changed: false, approval: approved ? 'carried' : 'draft', invocation: readInvocation(next), update: null };
+    const updated = this.updateItem({ id: item.id, expect: item.revision, summary: data.model ? 'Model invocation turned on' : 'Model invocation turned off', value: next });
+    if (!approved) return { itemId: item.id, title: item.title, revision: updated.revision, changed: true, approval: 'draft', invocation: readInvocation(next), update: null };
+    this.wb.approveFlagChange({ id: item.id, revision: updated.revision, from: item.revision });
+    if (this.wb.repositoryState().ready) this.publisher.enqueue('approve', item.id, updated.revision);
+    return { itemId: item.id, title: item.title, revision: updated.revision, changed: true, approval: 'carried', invocation: readInvocation(next), update: this.deployments.updateInstalls({ itemId: item.id }) };
   }
   /** Installing an unapproved revision approves it first, so the same push to GitHub happens as with an explicit Approve. */
   installSkill(args: unknown) {

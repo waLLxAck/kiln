@@ -54,6 +54,12 @@ deploy drift | recover
 skills install --input request.json
 skills remove --input request.json
 skills sync                 # install every skill listed in workbench/installs.json, and everything marked for this machine, into its skill locations
+skills invocation <id> --model on|off [--expect <hash>]
+                            # whether the model may invoke the skill on its own: edits SKILL.md (disable-model-invocation) and agents/openai.yaml
+                            # (Codex). An approved skill keeps its approval (only the flag changed) and Kiln's installed copies are updated
+context start [--project <folder>]
+                            # estimate what Claude Code, Codex and Copilot CLI load at session start on this machine: skill descriptions,
+                            # instruction files, SessionStart hooks (listed, never run) and MCP servers
 skills scan --input request.json
 targets remove --input request.json
 items purge --input request.json
@@ -144,6 +150,12 @@ try {
     // Wait for the commit and push so the process exits with the report on GitHub (or a reason it isn't).
     await router.fleet.idle(); result = router.fleet.publishState();
   }
+  else if (resource === 'skills' && action === 'invocation') {
+    result = router.call('skills.invocation', { itemId: id, model: option('model') === 'on', ...(option('expect') ? { expect: option('expect') } : {}) });
+    // A carried approval is committed and pushed like any approval; wait so the process exits with it done.
+    await router.publisher.idle();
+  }
+  else if (resource === 'context' && action === 'start') result = router.call('context.sessionStart', option('project') ? { project: path.resolve(option('project')) } : {});
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));
   else if (resource === 'home' && ['read', 'backups'].includes(action)) result = await router.call(`home.${action}`, { key: id });
