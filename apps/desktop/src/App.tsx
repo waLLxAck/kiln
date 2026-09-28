@@ -27,7 +27,7 @@ import { repoName, StatusBar } from './StatusBar';
 import { OPEN_RESULT_TAB_EVENT, resultTarget, type RunRef } from './Runs';
 import { requestSync, SyncSummary } from './Sync';
 import { activeRun } from '../../../packages/agent/run-notice';
-import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
+import type { DuplicateGroup, Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
 import { api, date, platform, shortHash, variablesIn } from './api';
 import { Badge, ContextMenu, Empty, Field, KilnMark, menuPoint, Modal, shortcutEntry, statusHelp, type MenuEntry } from './components';
 import { useGlobalKeys } from './keyboard';
@@ -42,6 +42,8 @@ import { ResizeHandle, usePanelWidth } from './ResizeHandle';
 import { AgentTrialDialog, CreateSkillDialog } from './AgentPanel';
 import { personalTarget, ScanDialog, SkillInstallDialog, skillState } from './Skills';
 import { CompareDialog } from './Compare';
+import { ConsolidateDialog } from './Consolidate';
+import { duplicateIds, groupOf } from './consolidate-model';
 import { updateInstalls } from './InstallUpdates';
 import { canKeep, useKeepChanges } from './KeepChanges';
 import { HomeFilesView } from './HomeFiles';
@@ -100,6 +102,9 @@ export default function App() {
   useEffect(() => { if (!chatOpen) setChatSeed(null); }, [chatOpen]);
   /** The item whose experiments grid was asked for from outside its page (the list's Test, quick search). */
   const [testRequest, setTestRequest] = useState<{ id: string; at: number }>();
+  // Duplicates: the group being consolidated (held here, since consolidating removes it from the snapshot), and every id in a group.
+  const [consolidating, setConsolidating] = useState<DuplicateGroup | null>(null);
+  const duplicateSet = useMemo(() => duplicateIds(snapshot?.duplicates ?? []), [snapshot?.duplicates]);
   // Right-click menu on a collection in the sidebar.
   const [collectionMenu, setCollectionMenu] = useState<{ x: number; y: number; name: string } | null>(null);
   // Collapsed sidebar folders, remembered across restarts.
@@ -326,12 +331,12 @@ export default function App() {
   const byStage = (i: Item) => section !== 'library' || inStage(i, stage, installations);
   /** The view before search and tokens: its section, collection or stage. Suggestions count from here. */
   const base = snapshot.items.filter(i => inSection(i) && inCollection(i, collection) && byStage(i));
-  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens)).length;
+  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens, duplicateSet)).length;
   // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
   // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
   const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
   const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
-  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens));
+  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet));
   const matching = relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, snapshot.usage, pinSources);
   const groups = groupItems(matching, group);
   /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
@@ -457,15 +462,32 @@ export default function App() {
   const rowShortcut = (event: globalThis.KeyboardEvent, id: string) => { const target = bulkItems.length > 1 ? bulkItems : shown.filter(i => i.id === id); const hit = target.length > 0 && !menu ? shortcutEntry(menuEntries(target), event) : null; return hit ? () => { if (id !== selected && bulkItems.length < 2) select(id); hit.onSelect?.(); } : null; };
   /** Shift with the list keys: `ids` picked, `anchor` the open row they extend from. */
   const pickRange = (ids: string[], anchor: string) => { setSelected(anchor); setBulkIds(ids); };
+  // Duplicates (Consolidate.tsx): how many other copies a row has, a short name for a copy, and the two actions' undo.
+  const copiesOf = (item: Item) => item.deletedAt ? undefined : (groupOf(snapshot.duplicates, item.id)?.ids.length ?? 1) - 1 || undefined;
+  const copyName = (item: Item) => sameTitle.get(item.id)?.label ?? (item.collection ? item.collection.replaceAll('/', ' / ') : 'Unfiled');
+  const consolidated = (result: { kept: Item; merged: string[]; undo: Record<string, unknown> }) => {
+    const count = result.merged.length + 1;
+    undoStack.recordRun(`Consolidated ${count} copies of “${result.kept.title}”`, async () => {
+      const undone = await api<{ restored: string[]; skipped: string[] }>('items.unconsolidate', result.undo);
+      return undone.skipped.length ? `Undone, except ${undone.skipped.length} ${undone.skipped.length === 1 ? 'copy that was' : 'copies that were'} changed since` : `Undone: the ${count} copies are separate again`;
+    });
+    // The page follows the kept item when it was opened on a copy that was merged.
+    if (selected !== result.kept.id) setSelected(result.kept.id);
+  };
+  const notDuplicates = (item: Item, others: Item[]) => void perform(async () => {
+    for (const other of others) await api('items.distinct', { ids: [item.id, other.id] });
+    await refresh();
+    undoStack.recordRun(`“${item.title}” is no longer flagged as a duplicate`, async () => { for (const other of others) await api('items.distinct', { ids: [item.id, other.id], distinct: false }); return 'Undone: flagged as a duplicate again'; });
+  });
   const libraryPage = <section className="library-page">
     <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
-    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} saved={savedViews}
+    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} duplicates={duplicateSet} saved={savedViews}
       sort={order} onSort={searchText ? setSearchSort : setSort} relevance={searchText ? { active: relevance, onPick: () => setSearchSort('relevance') } : undefined} searching={searching} close={Boolean(searchText) && closeMatches}
       group={group} onGroup={setGroup} canReorder={!relevance && bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
-    <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id) })}
+    <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
       locations={configured} installations={installations} approvals={snapshot.approvals} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
@@ -474,7 +496,7 @@ export default function App() {
   </section>;
   const itemPage = itemView && <div className="item-view">
     <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} showTests={testRequest} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} showTests={testRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
@@ -551,6 +573,7 @@ export default function App() {
     {dialog?.name.startsWith('rollback:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Reverse this install?" subtitle="Installed files will be checked again before rollback." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>{receipt.previousRevision ? `Restore approved revision ${shortHash(receipt.previousRevision)}.` : 'Remove the snapshot Kiln created. There was no previous file at this destination.'}</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.rollback', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Install reversed')}>Confirm rollback</button></div></Modal> : null; })()}
     {dialog?.name.startsWith('compare:') && (() => { const [, itemId, targetId] = dialog.name.split(':'); const item = snapshot.items.find(i => i.id === itemId), installation = installations.find(i => i.itemId === itemId && i.targetId === targetId); return item ? <CompareDialog itemId={itemId} targetId={targetId} title={item.title} destination={installation?.destination ?? snapshot.receipts.find(r => r.itemId === itemId && r.targetId === targetId)?.destination ?? ''} onClose={() => setDialog(null)} onKeep={canKeep(installation) ? () => { setDialog(null); keeper.keep(itemId, targetId); } : undefined} /> : null; })()}
     {keeper.dialog}
+    {consolidating && <ConsolidateDialog group={consolidating} snapshot={snapshot} installations={installations} where={copyName} perform={perform} refresh={refresh} onMessage={setMessage} onClose={() => setConsolidating(null)} onDone={consolidated} />}
     {dialog?.name.startsWith('uninstall:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Remove this skill?" subtitle="Only the matching Kiln-owned folder will be removed." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>The skill stays in your library, with its approvals and history. You can install it again later.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.uninstall', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Skill removed; library retained')}>Confirm removal</button></div></Modal> : null; })()}
     {inventory && <Modal title="Repository inventory" subtitle="Read-only inspection complete. No history or existing files changed." onClose={() => setInventory(null)} wide><code className="path-text">{inventory.root}</code><p>{inventory.totalFiles} tracked files · {inventory.resources.length} candidate resources · branch {inventory.branch}</p><div className="inventory-list">{inventory.resources.map(relative => <div key={relative}><code>{relative}</code><button className="text-button" onClick={() => void perform(async () => { const item = await api<Item>('desktop.importResource', { root: inventory.root, relative }); await refresh(); setSelected(item.id); }, 'Imported as an unapproved resource')}>Import copy</button></div>)}</div><p>Attaching creates a separate workbench folder. Existing dotfile installers and agent files keep their current ownership. Import selected resources deliberately.</p><div className="modal-actions"><button className="button" onClick={() => setInventory(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('desktop.attach', { root: inventory.root }); setInventory(null); setSelected(''); await refresh(); }, 'Repository attached')}>Attach this repository</button></div></Modal>}
     {dialog?.name === 'import-local' && <LocalSkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}

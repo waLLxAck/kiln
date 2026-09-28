@@ -45,6 +45,15 @@ test('suggestions only offer values that exist, and labels read plainly', () => 
   assert.equal(tokenLabel(t('in', 'agents')), 'Shared Agents');
   assert.equal(tokenLabel(t('from', 'x'), () => 'A video'), 'A video');
 });
+test('is:duplicate matches items in a duplicate group and is offered only when there are some', () => {
+  const duplicates = new Set([item.id]);
+  assert.equal(matchesQuery(item, [], [t('is', 'duplicate')], duplicates), true);
+  assert.equal(matchesQuery(item, [], [t('is', 'duplicate')]), false);
+  assert.equal(matchesQuery({ ...item, favourite: false } as Item, [], [t('is', 'duplicate'), t('is', 'favourite')], duplicates), true, 'two values of one facet match either');
+  assert.ok(candidateTokens([item], [], [], duplicates).some(o => o.facet === 'is' && o.value === 'duplicate'));
+  assert.ok(!candidateTokens([item], [], []).some(o => o.facet === 'is' && o.value === 'duplicate'));
+  assert.equal(tokenLabel(t('is', 'duplicate')), 'a duplicate');
+});
 test('the narrowest token is the one whose removal shows the most', () => {
   const counts: Record<string, number> = { 'kind:skill': 3, 'tag:git': 1 };
   const result = narrowest([t('tag', 'git'), t('kind', 'skill')], '', tokens => counts[tokens.map(x => `${x.facet}:${x.value}`).join()] ?? 0);

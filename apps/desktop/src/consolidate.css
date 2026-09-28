@@ -1,0 +1,61 @@
+/* Consolidate duplicates (Consolidate.tsx), the library's copies marker and the item page's duplicate and merged notices. */
+/* Wider for three or more copies, so each keeps a readable column. */
+.modal.wide:has(.cons.n3) { width: min(1000px, calc(100vw - 48px)); }
+.modal.wide:has(.cons.n4) { width: min(1240px, calc(100vw - 48px)); }
+.cons { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; }
+.cons-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); }
+.cons-table { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; min-width: calc(120px + var(--cons-cols) * 220px); }
+.cons-table th, .cons-table td { text-align: left; vertical-align: top; padding: 7px 12px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.cons-table tbody tr:last-child > * { border-bottom: 0; }
+.cons-table tbody th { width: 120px; font-weight: 500; color: var(--muted); font-size: 12px; }
+.cons-table thead th { padding: 0; font-weight: 400; border-left: 1px solid var(--line); }
+.cons-table tbody td { border-left: 1px solid var(--line); }
+.cons-table thead th:first-child { width: 120px; border-left: 0; }
+.cons-table thead th.kept { background: var(--accent-tint); box-shadow: inset 0 -2px 0 var(--accent); }
+.cons-keep { display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px; cursor: pointer; }
+.cons-keep input, .cons-use input { margin-top: 2px; accent-color: var(--accent); }
+.cons-keep > span { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.cons-keep b { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.cons-table thead th.kept .cons-keep b { color: var(--accent-text); }
+.cons-title { font-weight: 600; font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cons-keep small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cons-chip { display: inline-block; margin: 0 4px 3px 0; padding: 0 7px; border-radius: 999px; background: var(--subtle-2); color: var(--text-2); font-size: 11.5px; line-height: 19px; }
+.cons-inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cons-text-row td { background: var(--subtle); }
+.cons-use { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; font-weight: 500; }
+.cons-result { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+.cons-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.cons-field select { min-width: 200px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); border-radius: var(--r-sm); padding: 5px 8px; font-size: 13px; }
+:root[data-theme=dark] .cons-field select { background: var(--subtle); }
+.cons-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.cons-tag { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 12px; }
+.cons-tag:hover { color: var(--text); border-color: var(--muted); }
+.cons-tag.on { border-style: solid; border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
+.cons-diff-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); margin-bottom: 8px; }
+.cons-legend { margin-left: auto; display: inline-flex; gap: 10px; font-size: 11.5px; }
+.cons-legend span { padding: 0 6px; border-radius: 4px; }
+.cons-legend .removed { background: var(--bad-bg); color: var(--bad); }
+.cons-legend .added { background: var(--ok-bg); color: var(--ok); }
+.diff.cons-linediff { max-height: 320px; margin-bottom: 8px; }
+.diff.cons-linediff pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cons-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.cons-files li { display: flex; gap: 8px; align-items: center; }
+.cons-file { font-size: 11.5px; color: var(--muted); }
+.cons-file.only-other { color: var(--bad); }
+.cons-file.only-kept { color: var(--ok); }
+.cons-file.changed { color: var(--warn); }
+.cons-summary { margin: 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--subtle); color: var(--text-2); font-size: 12.5px; line-height: 1.55; }
+.cons .modal-actions { margin-top: 0; }
+
+/* Library: how many copies an item has, beside its title. */
+.lib-dup { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--warn); padding: 0 6px; border-radius: 999px; background: var(--warn-bg); line-height: 18px; }
+
+/* Item page: the copies notice with its actions, and the note on a merged copy in Trash. */
+.dup-notice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; margin-bottom: 16px; border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: var(--r-md); font-size: 13px; color: var(--text); }
+.dup-notice > svg { color: var(--warn); flex-shrink: 0; }
+.dup-notice .dup-copies { display: inline-flex; gap: 4px 10px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.dup-notice .dup-copies .text-button { font-size: 12.5px; }
+.dup-notice .dup-actions { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.dup-notice .button { height: 28px; }
+.merged-notice { border-color: var(--line); background: var(--subtle); }
+.merged-notice > svg { color: var(--muted); }

@@ -5,7 +5,7 @@ import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, FlaskConical, Folder, Hash, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, X, ZoomIn } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, Files, FlaskConical, Folder, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, X, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
 import { api, date, variablesIn } from './api';
@@ -25,11 +25,14 @@ import { ItemEditor, useItemDraft, type ItemDraftState } from './item-editing';
 import { EDITABLE_TEXT_LIMIT } from './bundled-text';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
 import './item.css';
+import './consolidate.css';
 
 type Props = {
   jobs: AgentJob[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
   /** Opens the agent chat about this item. */ onAsk?: () => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
+  /** Duplicates: opens the consolidate dialog for this item's group, marks it as not a duplicate of the others, and names a copy briefly. */
+  onConsolidate?: () => void; onNotDuplicates?: () => void; where?: (item: Item) => string;
   /** Set when something outside the page (the list's Test, quick search) asks for this item's tests. */ showTests?: { id: string; at: number };
 };
 type View = 'content' | 'tests' | 'history';
@@ -54,7 +57,7 @@ let shownTests = 0;
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, showTests }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onConsolidate, onNotDuplicates, where = i => i.title, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
@@ -184,7 +187,8 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
             {recorded.map(a => <AnalysisRecord key={a.id} analysis={a} />)}
             {/* While editing, the editor lists the draft's own problems live instead. */}
             {!isSource && !editing && detail.validation.length > 0 && <div className="notice warning"><b>Needs attention before approval</b>{detail.validation.map(v => <p key={v}>{v}</p>)}</div>}
-            {detail.duplicates.length > 0 && <div className="notice warning"><b>Similar content already in your library</b>{detail.duplicates.map(d => <button key={d.id} className="text-button" onClick={() => onSelect(d.id)}>{d.title} <ArrowRight size={12} /></button>)}</div>}
+            {!item.deletedAt && <Duplicates detail={detail} snapshot={snapshot} where={where} onSelect={onSelect} onConsolidate={onConsolidate} onNotDuplicates={onNotDuplicates} />}
+            {item.deletedAt && item.mergedInto && <MergedNote item={item} snapshot={snapshot} onSelect={onSelect} />}
             {editing ? <ItemEditor detail={detail} draft={draft} collections={snapshot.collections} name={mainFile(detail)} />
             : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom} />}
             <BundledFiles detail={detail} draft={draft} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
@@ -196,6 +200,30 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
     {deployRevision && <DeployDialog detail={detail} snapshot={snapshot} revision={deployRevision} onClose={() => setDeployRevision(null)} onDone={() => { setDeployRevision(null); void perform(refresh, 'Installed. Start a new agent session to use it.'); }} />}
   </article>;
+}
+
+const matchWords = { identical: 'same text and files', 'same-text': 'same text, other files', similar: 'similar text' } as const;
+/** Other copies of this item in the library, each a link, with Consolidate… (the dialog) and Not duplicates (stop flagging them). */
+function Duplicates({ detail, snapshot, where, onSelect, onConsolidate, onNotDuplicates }: { detail: ItemDetail; snapshot: Snapshot; where: (item: Item) => string; onSelect: (id: string) => void; onConsolidate?: () => void; onNotDuplicates?: () => void }) {
+  const { item, duplicates } = detail;
+  if (!duplicates.length) return null;
+  const group = snapshot.duplicates.find(g => g.ids.includes(item.id)), n = duplicates.length;
+  return <div className="dup-notice" role="note" aria-label="Duplicates">
+    <Files size={16} aria-hidden="true" />
+    <span><b>{n} other {n === 1 ? 'copy' : 'copies'} of this {item.kind}</b>{group && <span className="muted"> · {matchWords[group.match]}</span>}</span>
+    <span className="dup-copies">{duplicates.map(d => <button key={d.id} type="button" className="text-button" title={`Open “${d.title}”`} onClick={() => onSelect(d.id)}>{where(d)} <ArrowRight size={12} /></button>)}</span>
+    <span className="dup-actions">
+      {onNotDuplicates && <button type="button" className="text-button" title="They are different items. Stop flagging them, on every machine." onClick={onNotDuplicates}>Not duplicates</button>}
+      {onConsolidate && <button type="button" className="button" title="Compare the copies, keep one and move the others to Trash" onClick={onConsolidate}><Merge size={14} />Consolidate…</button>}
+    </span>
+  </div>;
+}
+/** On a copy in Trash that was consolidated: where it went. Restore (the header's action) brings it back as its own item. */
+function MergedNote({ item, snapshot, onSelect }: { item: Item; snapshot: Snapshot; onSelect: (id: string) => void }) {
+  const target = snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt);
+  return <div className="dup-notice merged-notice" role="note"><Merge size={16} aria-hidden="true" />
+    <span>Merged into {target ? <button type="button" className="text-button" onClick={() => onSelect(target.id)}>“{target.title}” <ArrowRight size={12} /></button> : 'an item that is no longer in the library'}{item.deletedAt ? ` on ${date(item.deletedAt)}` : ''}. Restore it to have it back as its own item.</span>
+  </div>;
 }
 
 /** The content as a document: front-matter as a property table, the body formatted (or raw), images inline. Clicking the text edits it. */

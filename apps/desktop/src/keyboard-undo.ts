@@ -50,7 +50,8 @@ export const typeAheadKey = (key: string) => key.length === 1 && /[\p{L}\p{N} ]/
 export type UndoField = 'deleted' | 'status' | 'favourite' | 'collection';
 export type UndoValue = boolean | string;
 export type UndoChange = { id: string; field: UndoField; before: UndoValue; after: UndoValue };
-export type UndoEntry = { id: number; label: string; changes: UndoChange[] };
+/** `run`, when set, undoes an action that is more than field changes (a consolidation) and says what it did. */
+export type UndoEntry = { id: number; label: string; changes: UndoChange[]; run?: () => Promise<string> };
 export const UNDO_LIMIT = 20;
 /** The field's current value on an item. */
 export const fieldOf = (item: Item, field: UndoField): UndoValue => field === 'deleted' ? Boolean(item.deletedAt) : field === 'status' ? item.status : field === 'favourite' ? item.favourite : item.collection;
