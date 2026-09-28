@@ -33,9 +33,9 @@ const stateBadge: Record<ProjectPreview['state'], string> = { absent: 'create', 
  * check the preview, install. Without one (Machines → Add project…) it adds the folder as a project for a location, so its
  * column appears in the matrix, without writing anything into it. Either way a project with no Kiln copies can be forgotten.
  */
-export function ProjectInstallDialog({ item, onClose, onDone }: { item?: Item; onClose: () => void; onDone: (message: string) => void }) {
+export function ProjectInstallDialog({ item, initial, onClose, onDone }: { item?: Item; /** Opens on this project and location, as for a copy found in a folder Kiln doesn't manage. */ initial?: { root: string; location?: ProjectLocation }; onClose: () => void; onDone: (message: string) => void }) {
   const { projects, error: listError, reload } = useKnownProjects();
-  const [chosen, setChosen] = useState<string[]>([]), [root, setRoot] = useState(''), [location, setLocation] = useState<ProjectLocation>('agents');
+  const [chosen, setChosen] = useState<string[]>(initial ? [initial.root] : []), [root, setRoot] = useState(initial?.root ?? ''), [location, setLocation] = useState<ProjectLocation>(initial?.location ?? 'agents');
   const [preview, setPreview] = useState<ProjectPreview | null>(null), [replace, setReplace] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const skill = !item || item.kind === 'skill';
   // A folder picked with Choose folder… is listed until the install makes it a known project.

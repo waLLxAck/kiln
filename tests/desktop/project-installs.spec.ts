@@ -56,6 +56,21 @@ test('install into a chosen project from the rail, see it under Projects and as 
     await expect(installs.getByRole('heading', { name: 'Projects' })).toBeVisible();
     await expect(row).toContainText('installed by Kiln');
     await expect(row.getByRole('button', { name: 'Remove' })).toBeVisible();
+    // A copy in the project's Agents folder, which Kiln doesn't manage: Manage… opens the dialog on that folder and location.
+    const agentsCopy = path.join(project, '.agents', 'skills', 'careful-review');
+    fs.cpSync(path.dirname(copy), agentsCopy, { recursive: true });
+    await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
+    const unmanaged = installs.locator('.rail-item').filter({ hasText: 'Web app · Agents' });
+    await expect(unmanaged).toContainText('identical copy, not managed');
+    await unmanaged.getByRole('button', { name: 'Manage…' }).click();
+    dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('radiogroup', { name: 'Project' }).getByRole('radio', { name: /Web app/ })).toBeChecked();
+    await expect(dialog.getByRole('radiogroup', { name: 'Location' }).getByRole('radio', { name: /^Agents/ })).toBeChecked();
+    await expect(dialog.getByLabel('Preview', { exact: true })).toContainText('An identical copy is already there');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    fs.rmSync(path.join(project, '.agents'), { recursive: true, force: true });
+    await page.getByRole('button', { name: 'Refresh library', exact: true }).click();
+    await expect(unmanaged).toHaveCount(0);
     await page.screenshot({ path: 'test-results/project-installs-rail.png' });
 
     // In Machines the project is this machine's column (location key project:Web app:claude).

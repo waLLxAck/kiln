@@ -35,6 +35,7 @@ import { useItemDrag } from './ItemDrag';
 import { ShortcutSheet } from './ShortcutSheet';
 import { DeployDialog, ResultDialog, TrialDialog, VariablesDialog } from './dialogs';
 import { ProjectInstallDialog } from './ProjectInstalls';
+import type { ProjectLocation } from '../../../packages/deployment/projects';
 import { Detail } from './Detail';
 import { RepositoryPanel } from './RepositoryPanel';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
@@ -50,7 +51,7 @@ import { ExperimentsPage } from './ExperimentsPage';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 
-type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string } | null;
+type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation } | null;
 const hidden = ['archived', 'rejected'];
 /** Whether an item shows under a collection filter: everything for none, the collection with its subfolders, or only unfiled items. */
 const inCollection = (item: Item, collection: string) => !collection || (collection === UNFILED ? !item.collection : isWithin(item.collection, collection));
@@ -294,6 +295,8 @@ export default function App() {
     if (name === 'copy' && detail && variablesIn(detail.revision.content).length === 0) { void perform(async () => { await api('desktop.copy', { id: detail.item.id, revision: detail.item.revision }); await refresh(); }, 'Copied to clipboard'); return; }
     if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }
     if (name.startsWith('keep:')) { const [, itemId, targetId] = name.split(':'); keeper.keep(itemId, targetId); return; }
+    // The rail's Manage… on a copy in a project folder Kiln doesn't manage: the project dialog on that folder (the root may hold colons).
+    if (name.startsWith('install-project:')) { const [, location, ...root] = name.split(':'); setDialog({ name: 'install-project', workspace: root.join(':'), location: (location || undefined) as ProjectLocation | undefined }); return; }
     setDialog({ name: name === 'copy' ? 'variables' : name, trial });
   };
   const updateAction = (restart: boolean) => void perform(async () => {
@@ -539,7 +542,7 @@ export default function App() {
     {dialog?.name === 'result' && dialog.trial && <ResultDialog trial={dialog.trial} onClose={() => setDialog(null)} onDone={() => void completed()} />}
     {detail && dialog?.name === 'derive' && <CreateSkillDialog itemId={detail.item.id} title={detail.item.title} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} />}
     {detail && dialog?.name === 'deploy' && <DeployDialog detail={detail} snapshot={snapshot} onClose={() => setDialog(null)} onDone={() => void completed()} />}
-    {detail && dialog?.name === 'install-project' && <ProjectInstallDialog item={detail.item} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
+    {detail && dialog?.name === 'install-project' && <ProjectInstallDialog item={detail.item} initial={dialog.workspace ? { root: dialog.workspace, location: dialog.location } : undefined} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'add-project' && <ProjectInstallDialog onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {installTarget?.item && installTarget.provider && installTarget.target && <SkillInstallDialog item={installTarget.item} provider={installTarget.provider} target={installTarget.target} installations={installations} approved={snapshot.approvals.some(a => a.itemId === installTarget.item!.id && a.revision === installTarget.item!.revision && a.trust === 'local')} settings={snapshot.settings} onClose={() => setDialog(null)} onDone={note => { setDialog(null); setMessage(note); void refresh(); }} />}
     {dialog?.name === 'scan' && dialog.provider && (() => { const provider = providers.find(p => p.id === dialog.provider), target = snapshot.targets.find(t => t.id === dialog.targetId); return provider && target ? <ScanDialog provider={provider} target={target} onClose={() => setDialog(null)} onImported={refresh} /> : null; })()}

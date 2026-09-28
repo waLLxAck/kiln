@@ -1,6 +1,6 @@
 import { experimentsOf, reviews, verdictOf } from './trial-verdicts';
 import { Fragment, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, ChevronDown, ChevronRight, Circle, CircleArrowUp, ExternalLink, FileDiff, FlaskConical, FolderPlus, History as HistoryIcon, Plus, Rocket, Save, Server, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, ChevronRight, Circle, CircleArrowUp, ExternalLink, FileDiff, FlaskConical, FolderCog, FolderPlus, History as HistoryIcon, Plus, Rocket, Save, Server, ShieldCheck, ShieldOff, Trash2, X } from 'lucide-react';
 import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge } from './components';
@@ -9,7 +9,7 @@ import { EventGlyph, eventTitle, PublishState, trialVerdict } from './History';
 import type { HistoryEvent } from './history-model';
 import { dayLabel } from './history-model';
 import { trialPlace } from './trial-place';
-import { copyName, installationLabel } from './Installations';
+import { copyName, installationLabel, projectOf } from './Installations';
 import { outdatedCopies } from './item-page';
 import { clientSpecific, SkillToggles, toggleTargets } from './Skills';
 import './installs.css';
@@ -81,12 +81,19 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const addTag = () => { const value = tag.trim().replace(/^#/, ''); if (!value || item.tags.includes(value)) { setTag(''); return; } setTag(''); retag([...item.tags, value], `Added tag “${value}”`); };
   const tagsLocked = editing || Boolean(item.deletedAt);
 
-  // One action per copy: Update when it is behind (the dialog also offers Remove), Remove, Compare for a different copy, or
-  // Install to let Kiln manage an identical one. A copy in a folder Kiln doesn't manage has no action here.
+  // A copy in a folder Kiln doesn't manage (no target): in a project, the project dialog on that folder, where it can be
+  // reviewed and managed; a personal folder is turned on in Settings, which records it and changes nothing.
+  const manage = (copy: Installation) => {
+    const project = projectOf(copy, snapshot);
+    if (!project) { onSetup(); return; }
+    onAction(`install-project:${copy.location && copy.location !== 'codex' ? copy.location : ''}:${project.root}`);
+  };
+  // One action per copy: Update when it is behind (the dialog also offers Remove), Remove, Compare for a different copy,
+  // Install to let Kiln manage an identical one, or Manage… when Kiln doesn't manage its folder.
   const copyRow = (copy: Installation) => <div className="rail-item" key={`${copy.targetId}-${copy.destination}`}>
     <CopyGlyph copy={copy} />
     <div className="rail-text"><span className="rail-name">{copyName(copy, snapshot, item.kind)}</span><span className={`rail-sub ${copy.state === 'drifted' ? 'bad' : copy.outdated ? 'accent' : ''}`} title={copy.destination}>{installationLabel(copy)}</span></div>
-    {!copy.targetId ? null
+    {!copy.targetId ? (!item.deletedAt && <button className="rail-mini" title={copy.scope === 'project' ? 'Kiln doesn’t manage this folder in the project yet. Review the copy and let Kiln manage it.' : 'Kiln doesn’t manage this folder yet. Turn it on in Settings; nothing is installed or changed.'} onClick={() => manage(copy)}><FolderCog size={12} />Manage…</button>)
       : copy.state === 'installed' && copy.outdated ? <button className="rail-mini accent" title="Install the approved revision over this copy, or remove it" onClick={() => onToggleInstall(copy.provider, copy.targetId)}><CircleArrowUp size={12} />Update</button>
       : copy.receiptId && copy.state === 'installed' ? <button className="rail-mini" onClick={() => onToggleInstall(copy.provider, copy.targetId)}><Trash2 size={12} />Remove</button>
       : copy.state === 'drifted' || !copy.matches ? <><button className="rail-mini bad" title="See which files differ and how" onClick={() => onAction(`compare:${copy.itemId}:${copy.targetId}`)}><FileDiff size={12} />Compare</button>{canKeep(copy) && !item.deletedAt && <button className="rail-mini" aria-label="Keep these changes" title={keepExplanation} onClick={() => onAction(`keep:${copy.itemId}:${copy.targetId}`)}><Save size={12} />Keep</button>}</>
