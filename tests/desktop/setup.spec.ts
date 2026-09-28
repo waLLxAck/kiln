@@ -42,7 +42,8 @@ test('a library without a GitHub repository lands on setup; connecting a Kiln re
     // The fixture's initial commit was never pushed; the card says so and Push now sends it.
     await expect(page.getByText('1 commit not on GitHub yet')).toBeVisible();
     await page.getByRole('button', { name: 'Push now' }).click();
-    await expect(page.getByText('up to date with GitHub')).toBeVisible();
+    await expect(page.locator('.connected-repo')).not.toContainText('not on GitHub yet');
+    await expect(page.getByRole('button', { name: 'Push now' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Connect a different repository…' })).toBeVisible();
     await page.getByRole('button', { name: 'Connect a different repository…' }).click();
     await expect(page.getByRole('heading', { name: 'Your Kiln repository is ready' })).toBeVisible();
