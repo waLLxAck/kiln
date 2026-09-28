@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUp, Check, Download, FileDiff, FolderOpen, Laptop, Layers3, Monitor, Pencil, Plus, RefreshCw, Save, Settings, Share2, Trash2, X } from 'lucide-react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowUp, Check, Download, FileDiff, FolderOpen, Laptop, Layers3, Monitor, Pencil, Plus, RefreshCw, Save, Search, Settings, Share2, Trash2, X } from 'lucide-react';
 import type { FleetView, Installation, Item, MachineIdentity, MachineReport, Provider, ProviderId, Receipt, Snapshot } from '../../../packages/protocol/schema';
 import { agentFolder } from '../../../packages/domain/agent-format';
 import { targetSkillsFolder } from '../../../packages/providers/skill-locations';
@@ -10,6 +10,8 @@ import { multiMachine } from './features';
 import { canKeep, keepExplanation } from './KeepChanges';
 import { updateMessage } from './InstallUpdates';
 import type { UpdateResult } from '../../../packages/deployment/service';
+import { applicable, attention, cellStates, counts, isFiltered, noFilter, preset, rowMatches, showsColumn, toggleState } from './machines-filter';
+import { useMachinesFilter } from './view-memory';
 import './machines.css';
 
 type Props = {
@@ -39,6 +41,13 @@ export function ago(value: string | null) {
 // installs.json lists personal installs for every machine; its tokens map onto personal location keys.
 const tokenKey: Record<string, string> = { codex: 'agents', claude: 'claude', copilot: 'copilot', 'codex-native': 'codex' };
 const glyphLabel: Record<CellState, string> = { installed: 'Installed', changed: 'Changed outside Kiln', outdated: 'Outdated', external: 'Found, not managed by Kiln', marked: 'Marked, not installed yet', off: 'Not installed', unavailable: 'Can’t be installed' };
+// The state chips double as the legend: the glyph, a short name, and what clicking shows in the tooltip.
+const chipLabel: Record<CellState, string> = { installed: 'Installed', changed: 'Changed outside Kiln', outdated: 'Outdated', external: 'Not managed', marked: 'Marked', off: 'Not installed', unavailable: 'Can’t install' };
+const chipHint: Record<CellState, string> = {
+  installed: 'Items with a copy that matches Kiln', changed: 'Items with a copy edited outside Kiln', outdated: 'Items with a copy of an older approved revision',
+  external: 'Items with a copy Kiln found but doesn’t manage', marked: 'Items in the library’s personal installs, not installed here yet',
+  off: 'Items not installed in a location', unavailable: 'Items that can’t go in a location: not approved, or not read by the agent’s client',
+};
 
 function Glyph({ state }: { state: CellState }) {
   return <span className={`fleet-glyph ${state}`} aria-hidden="true">{state === 'installed' ? <Check size={13} strokeWidth={3} /> : state === 'changed' ? <AlertTriangle size={12} strokeWidth={2.4} /> : state === 'outdated' ? <ArrowUp size={13} strokeWidth={2.8} /> : state === 'marked' ? <Download size={11} strokeWidth={2.6} /> : null}</span>;
@@ -68,7 +77,8 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   const [identity, setIdentity] = useState<MachineIdentity | null>(null);
   const [selected, setSelected] = useState<Selection>('self');
   const [open, setOpen] = useState<{ itemId: string; key: string } | null>(null);
-  const [filter, setFilter] = useState<'all' | 'attention'>('all');
+  const [stored, setFilter] = useMachinesFilter();
+  const typed = useDeferredValue(stored.text);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drift, setDrift] = useState<(Receipt & { drifted: boolean; checkedAt: string; error?: string })[]>([]);
   const fetched = useRef(false);
@@ -109,11 +119,18 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   }, [view, identity, snapshot, installations, home]);
   const machine = selected === 'all' ? null : machines.find(m => (selected === 'self' ? m.self : m.id === selected)) ?? machines[0];
   const explicit = (m: Machine, itemId: string, key: string) => Boolean((m.self ? view?.wanted : view?.machines.find(x => x.id === m.id)?.wanted)?.[itemId]?.includes(key)) || view?.pending.some(e => e.machineId === m.id && e.itemId === itemId && e.location === key && e.wanted);
-  const cells = (m: Machine, item: Item) => m.locations.map(location => ({ location, cell: cellFor(item, approved.get(item.id), m.report, location) }));
-  const needsAttention = (item: Item) => (Boolean(approved.get(item.id)) && approved.get(item.id) !== item.revision) || machines.some(m => cells(m, item).some(({ cell }) => ['changed', 'outdated', 'marked'].includes(cell.state)));
-  const visible = filter === 'all' ? rows : rows.filter(needsAttention);
+  // Kind and column choices only when there is something to choose between; a stored choice that no longer applies is ignored.
+  const shownMachines = machine ? [machine] : machines;
+  const choices = { kinds: new Set(rows.map(item => item.kind)).size > 1, columns: shownMachines.some(m => m.locations.some(l => isProject(l.key))) && shownMachines.some(m => m.locations.some(l => !isProject(l.key))) };
+  const active = applicable(stored, choices), filter = { ...active, text: typed };
+  const columnsOf = (m: Machine) => m.locations.filter(l => showsColumn(filter.columns, isProject(l.key)));
+  const cells = (m: Machine, item: Item) => columnsOf(m).map(location => ({ location, cell: cellFor(item, approved.get(item.id), m.report, location) }));
+  const filterRows = rows.map(item => ({ item, row: { title: item.title, kind: item.kind, states: shownMachines.flatMap(m => cells(m, item).map(({ cell }) => cell.state)) } }));
+  const tally = counts(filterRows.map(r => r.row), filter), shownPreset = preset(active);
+  const visible = filterRows.filter(r => rowMatches(r.row, filter)).map(r => r.item);
+  // Within the rows kept by state chips, cells in other states fade so the matching ones stand out.
+  const faded = (state: CellState) => filter.states.length > 0 && !filter.states.includes(state);
   const self = machines[0];
-  const totals = machine ? summarise(snapshot.items, snapshot.approvals, machine.report) : machines.map(m => summarise(snapshot.items, snapshot.approvals, m.report)).reduce((a, b) => Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v + b[k as keyof typeof b]])) as typeof a);
   const selfTotals = summarise(snapshot.items, snapshot.approvals, self.report);
 
   const mark = (m: Machine, itemId: string, key: string, wanted: boolean) => void perform(async () => { await api('fleet.mark', { machineId: m.id, itemId, location: key, wanted }); setOpen(null); await load(); }, wanted ? `Marked for ${m.self ? 'this machine' : m.name}${m.self ? '' : `; it installs when ${m.name} next syncs`}` : `Unmarked for ${m.self ? 'this machine' : m.name}`);
@@ -162,28 +179,29 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
     </div>}
     {view?.fetchError && <p className="fleet-note warn">Couldn’t reach GitHub ({view.fetchError}). Other machines are shown as last fetched.</p>}
 
-    <div className="fleet-strip">
-      <div className="fleet-stats">
-        {!machine && <><span><b>{machines.length}</b> machine{machines.length === 1 ? '' : 's'}</span><span className="fleet-sep" /></>}
-        <span><b>{totals.copies}</b> {totals.copies === 1 ? 'copy' : 'copies'}</span><span className="fleet-sep" />
-        <span className={totals.changed ? 'warn' : 'quiet'}><AlertTriangle size={13} /><b>{totals.changed}</b> changed outside Kiln</span><span className="fleet-sep" />
-        <span className={totals.outdated ? 'accent' : 'quiet'}><ArrowUp size={13} /><b>{totals.outdated}</b> outdated</span><span className="fleet-sep" />
-        <span className={totals.marked ? 'accent' : 'quiet'}><Download size={13} /><b>{totals.marked}</b> marked, not installed yet</span>
+    <div className="fleet-filters">
+      <div className="fleet-seg" role="group" aria-label="Show">
+        <button aria-pressed={shownPreset === 'all'} className={shownPreset === 'all' ? 'on' : ''} onClick={() => setFilter({ ...stored, states: [] })}>All <span>{tally.all}</span></button>
+        <button aria-pressed={shownPreset === 'attention'} className={shownPreset === 'attention' ? 'on' : ''} title="Changed outside Kiln, outdated or not managed" onClick={() => setFilter({ ...stored, states: attention })}>Needs attention <span>{tally.attention}</span></button>
       </div>
+      <div className="fleet-states" role="group" aria-label="Filter by state">{cellStates.map(state => {
+        const on = filter.states.includes(state), n = tally.states[state];
+        // Marks only exist when the library lists a personal install this machine doesn't have yet.
+        if (state === 'marked' && !n && !on) return null;
+        return <button key={state} type="button" className={`chip fleet-state ${on ? 'active' : ''}`} aria-pressed={on} disabled={!n && !on} title={chipHint[state]} onClick={() => setFilter(toggleState(stored, state))}><Glyph state={state} />{chipLabel[state]}<span>{n}</span></button>;
+      })}</div>
+    </div>
+
+    <div className="fleet-toolbar">
+      <label className="fleet-search"><Search size={14} aria-hidden="true" /><input aria-label="Filter by name" placeholder="Filter by name" value={stored.text} maxLength={200} onChange={event => setFilter({ ...stored, text: event.target.value })} onKeyDown={event => { if (event.key === 'Escape' && stored.text) { event.stopPropagation(); setFilter({ ...stored, text: '' }); } }} />{stored.text && <button className="icon-button" aria-label="Clear name filter" onClick={() => setFilter({ ...stored, text: '' })}><X size={13} /></button>}</label>
+      {choices.columns && <div className="fleet-seg" role="group" aria-label="Columns">{(['all', 'personal', 'projects'] as const).map(c => <button key={c} aria-pressed={active.columns === c} className={active.columns === c ? 'on' : ''} onClick={() => setFilter({ ...stored, columns: c })}>{c === 'all' ? 'All locations' : c === 'personal' ? 'Personal' : 'Projects'}</button>)}</div>}
+      {choices.kinds && <div className="fleet-seg" role="group" aria-label="Kind">{(['all', 'skill', 'agent'] as const).map(k => <button key={k} aria-pressed={active.kind === k} className={active.kind === k ? 'on' : ''} onClick={() => setFilter({ ...stored, kind: k })}>{k === 'all' ? 'All kinds' : k === 'skill' ? 'Skills' : 'Agents'}</button>)}</div>}
+      {isFiltered(active) && <span className="fleet-filtered" role="status"><b>{visible.length}</b> of {rows.length} shown<button className="text-button" onClick={() => setFilter(noFilter)}><X size={13} />Clear filters</button></span>}
       <span className="fleet-grow" />
       {machine?.self ? <>
         <button className="button" disabled={!selfTotals.outdated} onClick={updateAll}><ArrowUp size={15} />Update all outdated</button>
         <button className="button primary" disabled={!selfTotals.marked} onClick={syncMarked}><Download size={15} />Install everything marked for this machine{selfTotals.marked > 0 && <span className="fleet-count">{selfTotals.marked}</span>}</button>
-      </> : machine ? <span className="fleet-strip-note">Marks take effect when {machine.name} next opens Kiln and syncs.</span> : <span className="fleet-strip-note">Click a cell to see that machine.</span>}
-    </div>
-
-    <div className="fleet-toolbar">
-      <div className="fleet-seg" role="group" aria-label="Show">
-        <button aria-pressed={filter === 'all'} className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All <span>{rows.length}</span></button>
-        <button aria-pressed={filter === 'attention'} className={filter === 'attention' ? 'on' : ''} onClick={() => setFilter('attention')}>Needs attention <span>{rows.filter(needsAttention).length}</span></button>
-      </div>
-      <span className="fleet-grow" />
-      <div className="fleet-legend" aria-label="Legend">{(['installed', 'changed', 'outdated', 'external', 'marked', 'off', 'unavailable'] as CellState[]).map(state => <span key={state}><Glyph state={state} />{state === 'off' ? 'Off' : state === 'unavailable' ? 'Can’t install' : state === 'external' ? 'Not managed' : state === 'marked' ? 'Marked' : glyphLabel[state]}</span>)}</div>
+      </> : machine ? <span className="fleet-note-inline">Marks take effect when {machine.name} next opens Kiln and syncs.</span> : <span className="fleet-note-inline">Click a cell to see that machine.</span>}
     </div>
 
     {!rows.length ? <Empty icon={<Monitor size={28} />} title="Nothing to install yet.">Approved skills and agents appear here with every place they’re installed.</Empty>
@@ -195,7 +213,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   </div>;
 
   function Matrix() {
-    const m = machine!, personal = m.locations.filter(l => !isProject(l.key)), projects = m.locations.filter(l => isProject(l.key)), columns = [...personal, ...projects];
+    const m = machine!, personal = columnsOf(m).filter(l => !isProject(l.key)), projects = columnsOf(m).filter(l => isProject(l.key)), columns = [...personal, ...projects];
     return <div className="fleet-card"><table className="fleet-grid" aria-label={`Installs on ${m.self ? 'this machine' : m.name}`}>
       <colgroup><col className="fleet-col-item" />{columns.map(c => <col key={c.key} />)}<col className="fleet-col-end" /></colgroup>
       <thead>
@@ -214,7 +232,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
           </span></th>
           {row.map(({ location, cell }, n) => {
             const isOpen = open?.itemId === item.id && open.key === location.key;
-            return <td key={location.key} className={n === personal.length && n ? 'fleet-first-project' : ''}>
+            return <td key={location.key} className={`${n === personal.length && n ? 'fleet-first-project' : ''} ${faded(cell.state) ? 'fleet-faded' : ''}`}>
               {cell.state === 'unavailable' ? <span className="fleet-cell disabled" title={cell.reason} aria-label={`${item.title} in ${location.label}: ${cell.reason}`}><Glyph state="unavailable" /></span>
                 : <button className={`fleet-cell ${cell.state} ${isOpen ? 'open' : ''} ${m.pending.has(`${item.id} ${location.key}`) ? 'pending' : ''}`} aria-label={`${item.title} in ${location.label}: ${glyphLabel[cell.state]}`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : { itemId: item.id, key: location.key })}><Glyph state={cell.state} /></button>}
               {isOpen && Popover({ item, location, cell, flip: n >= columns.length - 2 && columns.length > 2 })}
@@ -223,7 +241,12 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
           <td className="fleet-end"><span className={count ? '' : 'muted'}>{count ? `${count} of ${columns.length}` : 'Nowhere'}</span></td>
         </tr>;
       })}</tbody>
-    </table>{!visible.length && <p className="fleet-empty-row">Nothing needs attention.</p>}</div>;
+    </table>{!visible.length && Nothing()}</div>;
+  }
+
+  // Clear filters is beside the filters above; no second one here.
+  function Nothing() {
+    return <p className="fleet-empty-row">{shownPreset === 'attention' && !isFiltered({ ...active, states: [] }) ? 'Nothing needs attention.' : 'Nothing matches these filters.'}</p>;
   }
 
   function Popover({ item, location, cell, flip }: { item: Item; location: Machine['locations'][number]; cell: Cell; flip: boolean }) {
@@ -284,7 +307,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
           return <td key={m.self ? 'self' : m.id}><button className="fleet-summary" aria-label={`${item.title} on ${m.self ? 'this machine' : m.name}: ${parts.map(p => p[0]).join(', ') || 'nowhere'}`} onClick={() => setSelected(m.self ? 'self' : m.id)}>{parts.length ? parts.slice(0, 3).map(([text, tone]) => <span key={text} className={`fleet-chip ${tone}`}>{text}</span>) : <span className="fleet-none">—</span>}</button></td>;
         })}
       </tr>; })}</tbody>
-    </table>{!visible.length && <p className="fleet-empty-row">Nothing needs attention.</p>}</div>;
+    </table>{!visible.length && Nothing()}</div>;
   }
 
   function ThisMachine() {
