@@ -1,6 +1,6 @@
 import { Markdown } from './Markdown';
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Activity, Archive, ArrowLeft, Check, ChevronRight, Copy, CornerDownLeft, Download, ExternalLink, FileCog, FlaskConical, FolderPlus, Layers3, MessageSquare, Monitor, Moon, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, BarChart3, Check, ChevronRight, Copy, CornerDownLeft, Download, ExternalLink, FileCog, FlaskConical, FolderPlus, Layers3, MessageSquare, Monitor, Moon, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
 import type { Item, ItemDetail, Snapshot } from '../../../packages/protocol/schema';
 import { resolveVariables } from '../../../packages/domain/text';
 import { api, variablesIn } from './api';
@@ -28,6 +28,7 @@ const sections = [
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, detail: 'Repository, skill locations, agent, theme, shortcut and updates.', keywords: 'preferences shortcut updates' },
   { id: 'archive', label: 'Archive', icon: <Archive size={15} />, detail: 'Archived and rejected items.' },
   { id: 'trash', label: 'Trash', icon: <Trash2 size={15} />, detail: 'Deleted items, until you empty the trash.', keywords: 'deleted' },
+  { id: 'usage', label: 'Usage', icon: <BarChart3 size={15} />, detail: 'Which skills your agents used, and estimated token spend, from this machine\'s session logs.', keywords: 'analytics spend cost tokens adoption' },
 ] as const;
 /** What Enter does: sources are read in Kiln, links open in the browser, everything else is pasted. */
 const defaultAction = (item: Item) => item.kind === 'source' ? 'kiln' : item.kind === 'link' ? 'link' : 'copy';

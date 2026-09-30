@@ -15,6 +15,7 @@ Electron owns native windows, the tray, shortcuts, clipboard, file pickers, and 
 | `packages/deployment/` | Approved snapshots, target ownership, plans, receipts, rollback, uninstall, recovery |
 | `packages/git/` | Checkpoints, synchronization, conflicts, GitHub, standard infrastructure and legacy migration |
 | `packages/providers/` | Official-client detection and explicit manual handoff support |
+| `packages/usage/` | Usage view: incremental, capped reads of Claude Code and Codex session logs into a machine-private cache (skill uses, tokens per model and day), mapping to library items, and the estimate price table |
 | `packages/home/` | Home-folder instruction files (`~/.claude/CLAUDE.md`, `~/AGENTS.md`, `~/.codex/AGENTS.md`) and PowerShell profiles: list, edit in place with a stale-hash guard, kept versions, user-added files |
 
 Electron was chosen to keep desktop and CLI invariants in one TypeScript implementation and make real Windows UI tests repeatable. The two foundation prototypes proposed by Gate A were not completed. No code was copied from Skills Manager or T3 Code; their pinned inspection references are recorded in the implementation report.

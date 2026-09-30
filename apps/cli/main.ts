@@ -60,6 +60,13 @@ skills invocation <id> --model on|off [--expect <hash>]
 context start [--project <folder>]
                             # estimate what Claude Code, Codex and Copilot CLI load at session start on this machine: skill descriptions,
                             # instruction files, SessionStart hooks (listed, never run) and MCP servers
+usage scan                  # read this machine's Claude Code and Codex session logs into the usage cache (incremental; first run reads everything)
+usage report [--days 30]    # scan, then skills (uses, last used, active days, projects, trend, attributed tokens), unused installs and spend
+usage skills [--days 30]    # scan, then only the skill rows and installed skills unused in the window (--days 0: all time)
+usage spend [--days 30]     # scan, then tokens and estimated $ by model, project, harness, month, and Kiln's own runs by kind and item
+usage item <id> [--days 30] # one library skill's uses from the cache (no scan)
+usage prices [--input prices.json]   # the estimate price table; { "set": { "<model>": { input, cached, cacheWrite, cacheWrite1h, output } } } saves overrides ($/M tokens)
+                            # usage data stays machine-private; dollar figures are estimates from list prices (subscriptions pay a flat fee)
 skills scan --input request.json
 targets remove --input request.json
 items purge --input request.json
@@ -156,6 +163,14 @@ try {
     await router.publisher.idle();
   }
   else if (resource === 'context' && action === 'start') result = router.call('context.sessionStart', option('project') ? { project: path.resolve(option('project')) } : {});
+  else if (resource === 'usage' && ['scan', 'report', 'skills', 'spend'].includes(action)) {
+    // The CLI reads every log before answering; the desktop scans in capped passes instead.
+    const scan = await router.usage.scanAll();
+    const days = Number(option('days', '30'));
+    const report = action === 'scan' ? null : await router.usageReport({ days, scan: false });
+    result = !report ? scan : action === 'skills' ? { days: report.days, since: report.since, skills: report.skills, unused: report.unused } : action === 'spend' ? { days: report.days, since: report.since, spend: report.spend, prices: report.prices } : report;
+  }
+  else if (resource === 'usage' && action === 'item') result = router.call('usage.item', { itemId: id, days: Number(option('days', '30')) || 30 });
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));
   else if (resource === 'home' && ['read', 'backups'].includes(action)) result = await router.call(`home.${action}`, { key: id });

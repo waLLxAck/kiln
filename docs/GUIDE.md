@@ -15,6 +15,7 @@ This guide covers everything the [README](../README.md) summarises. Together the
 - [Asking the agent](#asking-the-agent)
 - [Library, query bar and collections](#library-query-bar-and-collections)
 - [Model invocation and session start](#model-invocation-and-session-start)
+- [Usage](#usage)
 - [Bulk Library management](#bulk-library-management)
 - [Custom agents](#custom-agents)
 - [Config files](#config-files)
@@ -50,6 +51,7 @@ What ships today:
 | Git and GitHub | Create or open a Kiln repository, inspect changes, checkpoint, synchronize and resolve conflicts. GitHub access uses the official `gh` CLI. |
 | CLI | Script collections, items, experiments, approvals, installation and library operations through structured JSON results and the same domain code as the desktop. |
 | Desktop preferences | Choose theme and agent defaults, resize panels, configure quick search and startup behavior, inspect local performance logs, and, on Windows, prepare/restart into a newer installer. |
+| Usage | See which skills your agents used on this machine (uses, trend, last use, projects), installed skills nobody uses, used skills that aren't in the library or approved (import them in one click), and tokens with an estimated cost by model, project, month and Kiln run, all read locally from Claude Code's and Codex's session logs. |
 | Features added in 0.22.0 | Keeping outside edits, a code editor, background GitHub sync, run notifications and a run queue, and keyboard navigation and undo. Always on. |
 
 ## Installing
@@ -342,6 +344,29 @@ Nothing else in the files changes: key order, comments, quoting and line endings
 
 Numbers are estimates: characters divided by 3.5 for Claude Code and by 4 for Codex and Copilot CLI. Each agent also caps the list (Claude Code at 1% of the context window, Codex at 2%); the breakdown says how. The sources for all of this are in [SKILL_INVOCATION.md](SKILL_INVOCATION.md). The estimate is read again when the library or its installs change; only files that changed are re-read.
 
+## Usage
+
+**Usage** in the rail shows which skills your agents actually used on this machine and roughly what the sessions cost, read from Claude Code's and Codex's own session logs. Nothing calls an API and nothing is uploaded. Pick **7 days**, **30 days**, **90 days** or **All time**; every number on the page is for that period.
+
+The first visit reads every log, which can take a few seconds for gigabytes of logs; the page fills in as it goes (**Reading session logs… 40%**). After that Kiln reads only what was added, so opening Usage again takes a moment. The refresh button reads whatever the agents logged since.
+
+**Skills** has one row per skill: **Uses**, **Trend** against the period before, a bar per day for the last 30 days, **Last used**, **Days** with a use, **Projects** (the repository each session ran in; hover for the list), and **Attributed** tokens and estimated dollars. Click a column header to sort. A skill in your library opens with a click; one that isn't reads **not in library**, and when its folder is still there, **Import** brings it in as a draft through the usual import. The chips filter the rows: **Not in library**, **Not approved** (in your library, used, but not approved), and **Installed, unused**: library skills with a copy on this machine and no use in the period, oldest use first (a candidate to remove, or to turn model invocation off; see [Model invocation and session start](#model-invocation-and-session-start)).
+
+A skill's page says **Used 12× in 30 days** under its title (or when it was last used); hover it for active days and projects, click it for Usage. It shows once Usage has read the logs.
+
+How uses are found:
+
+- **Claude Code** (`~/.claude/projects/`, or under `CLAUDE_CONFIG_DIR`; subagents' logs count toward their session): each time the model loads a skill with its Skill tool, and each time you type `/name` for a skill. Both are logged, with the skill's folder.
+- **Codex** (`~/.codex/sessions/`, or under `CODEX_HOME`): a skill you name with `$name` is logged with its path. A skill the agent picks itself isn't logged as such, so Kiln counts the agent reading a `…/skills/<name>/SKILL.md` and marks those uses **inferred** (hover the count). A read in the same turn as a `$name` use counts once.
+
+A use maps to a library item by the folder Kiln installed it to, then by the skill's name (its folder name, SKILL.md `name` or title). A use copied into a forked Codex session counts once.
+
+**Spend** shows tokens and an estimated dollar figure, grouped by **Model**, **Project**, **Harness** or **Month** (months are always all time), and Kiln's own agent runs (tests, captures, distillations, chats) by kind or by item. Columns are **Input** (not from a cache), **Cache read**, **Cache write**, **Output** (reasoning included; hover for how much), **Est. $** and a bar for each row's share. **Attributed** on Skills splits each session's tokens evenly among the skills used in it, so it is an attribution, not a measurement.
+
+Dollar figures are **estimates** at API list prices, from a small table in `packages/usage/prices.ts` (**Price table** under Spend shows it, with the date it was checked). With a subscription (Claude Pro or Max, ChatGPT Plus or Pro) you pay a flat fee, so the figure is what the same tokens would cost on the API, not money spent. Models without a price (Codex's models, for now) show tokens only, marked **+** in totals that leave them out. Edit a row, or add one for a model the logs show, and **Save prices**: overrides are kept on this machine; **Restore defaults** drops them. Kiln's own runs also appear in the session logs when the CLI saved a session.
+
+**Privacy.** Usage data stays on this machine. Kiln keeps only counts, skill names and folders, project folders, models and days in `usage/` inside the library's machine-private folder; message text is never copied, and nothing is written to your Kiln repository or published.
+
 ## Bulk Library management
 
 Pick several rows the way a file manager does: **Ctrl-click** toggles a row, **Shift-click** extends from the highlighted row, and **Ctrl+A** (or **Select all**) picks every row the query shows, including rows below the scroll. **Shift** with the arrows, Home, End or the Page keys picks from the keyboard. With two or more picked, a bar above the table shows how many and of which kinds, with **Move to collection…**, **Status ▾**, favourites, **Remove local copies…** and **Move to trash** (in Trash: **Restore from trash** and **Delete permanently…**). Changes to many items show their progress ("Moving 120 of 300 to Trash…", "Deleting 12 of 40…"), and one **Ctrl+Z** undoes the whole change. Esc or its × clears the selection; so does changing the query, stage, collection or section.
@@ -398,6 +423,7 @@ npm run cli -- --library "C:\path\to\library" deploy installations
 npm run cli -- --library "C:\path\to\library" skills sync
 npm run cli -- --library "C:\path\to\library" skills invocation <id> --model off
 npm run cli -- --library "C:\path\to\library" context start --project "C:\code\my-game"
+npm run cli -- --library "C:\path\to\library" usage skills --days 30
 npm run cli -- --library "C:\path\to\library" library export --file "C:\backups\kiln.json"
 ```
 
@@ -410,6 +436,8 @@ Agents organise the library with the same commands as the desktop: `collections 
 `items duplicates` lists the groups of likely copies, each with its match and the copies' IDs, titles, collections, statuses and revisions. `items consolidate --input request.json` consolidates one group: `{ "keep": id, "expect": revision, "merge": [{ "id", "expect" }], "content": id?, "tags": [...]?, "collection": "..."? }`, where `content` names the copy whose text and files are kept (the kept one by default) and every `expect` must still be that item's current revision. It returns an `undo` object for `items unconsolidate --input`. `items distinct --input '{ "ids": [id, id] }'` marks items as not duplicates (`"distinct": false` takes it back).
 
 `skills invocation <id> --model on|off [--expect <revision>]` flips the model-invocation switch as the desktop does (see [Model invocation and session start](#model-invocation-and-session-start)): it returns whether anything changed, `approval` (`carried` or `draft`) and what happened to installed copies, and waits for the approval to reach GitHub. `context start [--project <folder>]` returns the session-start estimate for each agent, with every skill, file, hook and MCP server it counted.
+
+`usage scan` reads new session-log entries into the usage cache; `usage report [--days 30]`, `usage skills` and `usage spend` scan first, then return the [Usage](#usage) page's data (`--days 0` for all time): skill rows with `uses`, `previous`, `lastUsed`, `activeDays`, `projects`, `signals` (`tool`, `slash`, `explicit`, `inferred`), `attributed` tokens and `importable`, the `unused` installed skills, and `spend` by model, project, harness, month and Kiln run, with `cost` as an estimate. `usage item <id>` returns one skill's counts from the cache. `usage prices` returns the price table; `--input` with `{ "set": { "<model>": { "input", "cached", "cacheWrite", "cacheWrite1h", "output" } } }` (dollars per million tokens) saves this machine's overrides.
 
 `items list --kind <kind>` narrows a list to one kind, and `--from <id>` to the items made from one item, wherever they are filed. Reading a source returns `madeFrom`, the items made from it.
 
@@ -490,6 +518,7 @@ Nothing about this machine is shared: Kiln doesn't write machine reports to your
 - Automated capture and experiments request read-only access. Item chat has broader file and command access. Agent interactions use the official clients and show a consent notice; normal editing, approval and installation do not invoke a model.
 - Local run folders hold private inputs and transcripts. Normal export/publishing excludes reserved session data and machine-specific paths; authored text and arbitrary attachments are not automatically secret-redacted.
 - External client hooks can be edited in Config files; Kiln does not execute them itself.
+- Usage reads Claude Code's and Codex's session logs on this machine only; Copilot's aren't read, other machines' use isn't combined, and a Codex skill the agent chose itself is inferred from a SKILL.md read. Dollar figures are estimates from list prices, not billing.
 - SSH execution and remote deployment are not implemented, and Machines manages this machine only; each computer installs from its own clone of the library. Windows installers are unsigned and the full Windows release matrix is not certified. macOS builds are ad-hoc signed and not notarized; the macOS and Linux builds are new in 0.18.1; the macOS builds have not been tested on a real Mac, and the Linux build has been tried on one Arch Linux desktop.
 
 This is the local workflow release, with GitHub onboarding and standardized migration. See [implementation and verification](IMPLEMENTATION.md) for what has been checked and what remains.
