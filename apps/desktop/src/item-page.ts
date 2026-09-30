@@ -39,6 +39,8 @@ export function primaryAction({ detail, installations, locations }: { detail: It
   if (item.kind === 'source') return firstLineIsUrl(revision.content) ? 'open-original' : 'analyze';
   if (item.kind === 'link' || (['tool', 'resource'].includes(item.kind) && firstLineIsUrl(revision.content))) return 'open-link';
   if (['file', 'image', 'reference'].includes(item.kind)) return 'open-file';
+  // An MCP server's installs are its own matrix in the rail (Mcp.tsx); the header approves it, then copies its definition.
+  if (item.kind === 'mcp') return detail.approvals.some(a => a.revision === item.revision && a.trust === 'local') || ['archived', 'rejected'].includes(item.status) ? 'copy' : 'approve';
   const copies = installations.filter(copy => copy.itemId === item.id);
   const installable = ['skill', 'agent'].includes(item.kind);
   if (installable && copies.some(copy => copy.state === 'drifted')) return 'resolve';

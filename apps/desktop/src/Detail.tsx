@@ -26,6 +26,7 @@ import { EDITABLE_TEXT_LIMIT } from './bundled-text';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
 import { AddToInstructions, addToLabel, type InstructionAppend } from './AddToInstructions';
 import { entryTypeList, selectedEntryTypes } from '../../../packages/agent/distill';
+import { McpDefinition } from './Mcp';
 import './item.css';
 import './consolidate.css';
 
@@ -42,7 +43,7 @@ type Props = {
 };
 type View = 'content' | 'tests' | 'history';
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
-const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'source' ? 'Original material' : 'Content';
+const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'mcp' ? 'Server definition' : detail.item.kind === 'source' ? 'Original material' : 'Content';
 
 /** Copies plain text during a click. The window denies the async clipboard permission, so this uses a selected textarea. */
 function copyText(text: string) {
@@ -142,7 +143,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   ] : [
     ...(primary !== 'copy' ? [{ label: 'Copy', icon: <Copy />, onSelect: () => onAction('copy') }] : []),
     ...(['skill', 'agent'].includes(item.kind) && locations.length > 0 && !['approve-install', 'install'].includes(primary) ? [{ label: currentApproved ? 'Install in every location' : 'Approve & install', icon: <Download />, hint: 'Install the approved revision in every configured location.', onSelect: () => onAction('approve-install') }] : []),
-    ...(installable ? [] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
+    ...(installable || item.kind === 'mcp' ? [] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
     ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: `Ask your agent to distill it into ${produces} (Settings → Distillation). It becomes a source that links to them.`, onSelect: analyse }] : []),
     ...(onAsk ? [{ label: 'Ask the agent about it', icon: <MessageSquare />, onSelect: onAsk }] : []),
     ...openStored, addFile, copyId, 'separator',
@@ -266,7 +267,7 @@ function Document({ detail, raw, onRaw, onEdit, onZoom, extra }: { detail: ItemD
       {variables.length > 0 && <tr><th>variables</th><td>{variables.map(v => <span key={v} className="variable-token" title="Filled in when you copy or test it">{v}</span>)}</td></tr>}
     </tbody></table>}
     {images.length > 0 && <div className="asset-gallery">{images.map(([name, content]) => <button key={name} type="button" className="asset-button" title={`Enlarge ${name}`} onClick={() => onZoom({ name, src: imageSource(name, content) })}><img className="asset-preview" alt={name} src={imageSource(name, content)} /><span><ZoomIn size={13} />{name}</span></button>)}</div>}
-    {formatted ? <div className="item-doc-body"><Markdown variables>{body}</Markdown></div> : <pre className="item-raw">{revision.content}</pre>}
+    {formatted ? item.kind === 'mcp' ? <McpDefinition content={revision.content} title={item.title} description={item.description} /> : <div className="item-doc-body"><Markdown variables>{body}</Markdown></div> : <pre className="item-raw">{revision.content}</pre>}
     {onEdit && <span className="item-edit-hint" aria-hidden="true"><Pencil size={12} />Click to edit</span>}
   </section>;
 }

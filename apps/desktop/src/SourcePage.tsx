@@ -26,7 +26,7 @@ export type SourcePageProps = {
 };
 
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
-const kindPlural: Record<string, string> = { prompt: 'Prompts', skill: 'Skills', agent: 'Agents', instruction: 'Instructions', link: 'Links', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', image: 'Images', file: 'Files', reference: 'References', source: 'Sources' };
+const kindPlural: Record<string, string> = { prompt: 'Prompts', skill: 'Skills', agent: 'Agents', instruction: 'Instructions', link: 'Links', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', image: 'Images', file: 'Files', reference: 'References', source: 'Sources', mcp: 'MCP servers' };
 const kindName: Record<string, string> = { instruction: 'Instruction', prompt: 'Prompt', insight: 'Insight', technique: 'Technique', tool: 'Tool', resource: 'Resource', skill: 'Skill', link: 'Link' };
 const kindOrder = ['prompt', 'instruction', 'technique', 'insight', 'tool', 'resource', 'skill', 'link'];
 const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();

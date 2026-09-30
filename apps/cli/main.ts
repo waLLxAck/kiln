@@ -60,6 +60,15 @@ skills invocation <id> --model on|off [--expect <hash>]
 context start [--project <folder>]
                             # estimate what Claude Code, Codex and Copilot CLI load at session start on this machine: skill descriptions,
                             # instruction files, SessionStart hooks (listed, never run) and MCP servers
+mcp scan                    # MCP servers in Claude Code, Codex, Copilot CLI, VS Code and Cursor configs (personal and project) that the library
+                            # lacks: each distinct definition once, with every place it was found; literal secrets become \${NAME} references
+mcp import --all | <key> [key...] [--collection "MCP servers"]   # import scanned servers as draft mcp items; configs are untouched
+mcp status <id>             # each client location: absent, installed (by Kiln), drifted (edited since), external (not Kiln's), outdated
+mcp install <id> --client claude|codex|copilot|vscode|cursor [--project <folder>] [--replace]
+                            # writes only this server's entry into that client's config (approving the revision first if needed);
+                            # --replace writes over a different entry of the same name (kept in the receipt and in Config files versions)
+mcp remove <id> --client <client> [--project <folder>] [--name <old name>] [--force]   # removes only that entry
+mcp rollback --receipt <id> # puts back what the latest install replaced, if the entry is unchanged since
 skills scan --input request.json
 targets remove --input request.json
 items purge --input request.json
@@ -155,6 +164,14 @@ try {
     // A carried approval is committed and pushed like any approval; wait so the process exits with it done.
     await router.publisher.idle();
   }
+  else if (resource === 'mcp' && action === 'import') result = router.call('mcp.import', { keys: ids, all: Boolean(option('all')), ...(option('collection') ? { collection: option('collection') } : {}) });
+  else if (resource === 'mcp' && action === 'status') result = router.call('mcp.status', { itemId: id });
+  else if (resource === 'mcp' && ['install', 'remove'].includes(action)) {
+    result = router.call(`mcp.${action}`, { itemId: id, client: option('client'), ...(option('project') ? { project: path.resolve(option('project')) } : {}), ...(option('name') ? { name: option('name') } : {}), ...(action === 'install' ? { replace: Boolean(option('replace')) } : { force: Boolean(option('force')) }), confirm: true });
+    // Installing a draft approves it; wait so the process exits with that approval pushed.
+    await router.publisher.idle();
+  }
+  else if (resource === 'mcp' && action === 'rollback') result = router.call('mcp.rollback', { receiptId: option('receipt'), confirm: true });
   else if (resource === 'context' && action === 'start') result = router.call('context.sessionStart', option('project') ? { project: path.resolve(option('project')) } : {});
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));
