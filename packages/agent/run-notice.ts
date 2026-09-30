@@ -7,9 +7,9 @@ import type { AgentJob, AgentKind } from './service';
 
 /** A run that has not ended: running now, or waiting for a free slot. Only one may be active per item and kind. */
 export const activeRun = (job: Pick<AgentJob, 'status'>) => job.status === 'running' || job.status === 'queued';
-export type RunFinished = { id: string; itemId: string; kind: AgentKind; status: AgentJob['status']; itemTitle: string; error?: string; judgement?: 'pass' | 'fail' | 'uncertain'; entries?: number; collection?: string; createdItemId?: string; createdTitle?: string };
+export type RunFinished = { id: string; itemId: string; kind: AgentKind; status: AgentJob['status']; itemTitle: string; error?: string; judgement?: 'pass' | 'fail' | 'uncertain'; entries?: number; collection?: string; createdItemId?: string; createdTitle?: string; /** Score runs: the score out of 100. */ score?: number; /** Tune runs: how many files the proposal changes. */ changes?: number };
 /** What each kind of run is called in a sentence of its own. */
-export const runKindLabel: Record<AgentKind, string> = { capture: 'Capture', trial: 'Experiment', derive: 'Skill draft', distill: 'Distillation', chat: 'Chat reply' };
+export const runKindLabel: Record<AgentKind, string> = { capture: 'Capture', trial: 'Experiment', derive: 'Skill draft', distill: 'Distillation', chat: 'Chat reply', score: 'Score', tune: 'Tune' };
 const firstLine = (text: string, max = 120) => { const line = text.trim().split('\n')[0].trim(); return line.length > max ? line.slice(0, max - 1) + '…' : line; };
 
 /** The event for a finished job. `title` looks up an item's current title; a trashed or missing item falls back to the kind. */
@@ -20,6 +20,8 @@ export function runFinished(job: AgentJob, title: (id: string) => string | undef
     ...(job.error ? { error: job.error } : {}),
     ...(result && typeof result.judgement === 'string' ? { judgement: result.judgement as RunFinished['judgement'] } : {}),
     ...(job.kind === 'distill' && job.status === 'completed' ? { entries: job.createdItemIds?.length ?? 0, ...(job.collection ? { collection: job.collection } : {}) } : {}),
+    ...(job.kind === 'score' && job.status === 'completed' && typeof result?.score === 'number' ? { score: result.score } : {}),
+    ...(job.kind === 'tune' && job.status === 'completed' && job.tune ? { changes: job.tune.changes.length } : {}),
     ...(job.createdItemId ? { createdItemId: job.createdItemId, createdTitle: title(job.createdItemId) ?? (typeof result?.name === 'string' ? result.name : undefined) } : {}),
   };
 }
@@ -34,6 +36,8 @@ export function runNotice(event: RunFinished): { title: string; body: string } |
   if (event.kind === 'trial') return { title: `${event.judgement === 'pass' ? 'Experiment passed' : event.judgement === 'fail' ? 'Experiment failed' : 'Experiment finished'} · ${firstLine(event.itemTitle, 80)}`, body: event.judgement === 'uncertain' ? 'The agent was not sure. Open Trials to read why.' : 'Open Trials to read the output and assessment.' };
   if (event.kind === 'distill') return { title: `Distillation finished · ${event.entries ?? 0} ${event.entries === 1 ? 'entry' : 'entries'} from ${firstLine(event.itemTitle, 70)}`, body: event.collection ? `Filed under “${event.collection}”.` : 'Open the source to see what was made from it.' };
   if (event.kind === 'derive') return { title: `Skill draft ready${event.createdTitle ? ` · ${firstLine(event.createdTitle, 80)}` : ''}`, body: `Drafted from “${event.itemTitle}”. Review it before approving.` };
+  if (event.kind === 'score') return { title: `Scored ${event.score ?? '?'}/100 · ${firstLine(event.itemTitle, 80)}`, body: 'Open it to see what would raise the score.' };
+  if (event.kind === 'tune') return { title: `Tune finished · ${firstLine(event.itemTitle, 80)}`, body: event.changes ? `${event.changes} file${event.changes === 1 ? '' : 's'} changed. Review the diff before it becomes a draft.` : 'The run changed nothing. Open it to read the report.' };
   if (event.kind === 'chat') return { title: `Chat reply · ${firstLine(event.itemTitle, 80)}`, body: 'Open Kiln to read the reply.' };
   return { title: `${runKindLabel[event.kind]} finished · ${firstLine(event.itemTitle, 80)}`, body: 'Open Kiln to see the result.' };
 }

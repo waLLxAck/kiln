@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, Brain, Clock, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Brain, Clock, FileDiff, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
 import type { AgentJob, AgentKind, AgentStep } from '../../../packages/agent/service';
 import { activeRun } from '../../../packages/agent/run-notice';
 import type { Analysis, ItemDetail, Provider, RunProviderId } from '../../../packages/protocol/schema';
-import { api, date } from './api';
+import { api, date, shortHash } from './api';
 import { ExperimentProject } from './ExperimentProject';
 import { RevisionSelect } from './TrialLoop';
 import { Field, Modal, providerName } from './components';
@@ -11,7 +11,7 @@ import { Markdown } from './Markdown';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
 export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomEvent('kiln:agent-started', { detail: { kind } })); }
-const heading: Record<AgentKind, string> = { capture: 'notes', trial: 'experiment', derive: 'skill draft', distill: 'source analysis', chat: 'reply' };
+const heading: Record<AgentKind, string> = { capture: 'notes', trial: 'experiment', derive: 'skill draft', distill: 'source analysis', chat: 'reply', score: 'score', tune: 'Tune' };
 const entryLabel: Record<string, string> = { prompt: 'prompts', tool: 'tools', technique: 'techniques', resource: 'resources', insight: 'insights' };
 const stepIcon: Record<AgentStep['kind'], typeof Terminal> = { status: Loader2, message: MessageSquare, reasoning: Brain, command: Terminal, search: Search, file: FileText, tool: Wrench, todo: ListChecks, error: AlertTriangle };
 export const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
@@ -126,9 +126,21 @@ export function AnalysisRecord({ analysis }: { analysis: Analysis }) {
     <p className="muted small">The run’s steps and session stay on the machine that ran it; this summary travels with the library.</p>
   </section>;
 }
-export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, collections }: { itemId: string; jobs: AgentJob[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; /** Current collections: a run's collection may have been renamed or deleted since. */ collections?: string[] }) {
+/** A Tune run's card body: what it proposes and whether the user took it. */
+function TuneOutcome({ job, onReview }: { job: AgentJob; onReview?: (jobId: string) => void }) {
+  const tune = job.tune, result = job.result && 'report' in job.result ? job.result : null;
+  if (!tune || !result) return null;
+  const n = tune.changes.length;
+  return <>
+    <p>{result.summary}</p>
+    <p className="muted small">{tune.state === 'ready' ? `${n} file${n === 1 ? '' : 's'} changed · waiting for your review` : tune.state === 'accepted' ? `Accepted as draft revision ${shortHash(tune.revision ?? '')}` : tune.state === 'discarded' ? 'Discarded' : 'No changes'}</p>
+    {onReview && <button className={`button ${tune.state === 'ready' ? 'primary' : ''}`} onClick={() => onReview(job.id)}><FileDiff size={14} />{tune.state === 'ready' ? 'Review changes' : 'Open report'}</button>}
+  </>;
+}
+export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, collections, onReviewTune }: { itemId: string; jobs: AgentJob[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; /** Current collections: a run's collection may have been renamed or deleted since. */ collections?: string[]; /** Opens a Tune run's diff (Score.tsx's TuneReview). */ onReviewTune?: (jobId: string) => void }) {
   const [error,setError] = useState('');
-  const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)));
+  // A finished score lives on in the score panel; its card would say the same thing twice.
+  const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)) && !(job.kind === 'score' && job.status === 'completed'));
   const retry = (job: AgentJob) => { void retryJob(job).catch(e => setError(String(e))); };
   return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
     <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' ? <Loader2 size={14} className="spin"/> : job.status === 'queued' && <Clock size={14} />}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
@@ -136,7 +148,9 @@ export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, coll
     {activeRun(job) && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
     <Steps job={job} />
     {job.error && <p className="error-box">{job.error}</p>}
-    {job.result && ('entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>
+    {job.result && ('report' in job.result ? <TuneOutcome job={job} onReview={onReviewTune} />
+      : 'improvements' in job.result ? <p>Scored {job.result.score}/100</p>
+      : 'entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>
       : 'summary' in job.result ? <><p>{job.result.summary}</p>{job.result.extractedText && <details><summary>Extracted text</summary><pre className="prompt-preview">{job.result.extractedText}</pre></details>}<p><b>Next test:</b> {job.result.nextTest}</p>{job.result.limitations && <p className="muted">{job.result.limitations}</p>}</>
       : 'judgement' in job.result ? <><p><b>{job.result.judgement}</b> · Agent assessment</p><p>{job.result.note}</p><pre className="prompt-preview">{job.result.output}</pre></>
       : 'reply' in job.result ? <pre className="chat-text">{job.result.reply}</pre>

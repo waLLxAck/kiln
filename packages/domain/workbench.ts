@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
+import { analysisSchema, scoreSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
@@ -68,7 +68,7 @@ export class Workbench {
     if (fs.existsSync(formatFile)) z.object({ format: z.literal('kiln-library'), schemaVersion: z.literal(1), library: z.literal('workbench') }).parse(readJson(formatFile));
     this.canonical = path.join(root, 'workbench');
     this.local = path.join(localRoot, digest(path.resolve(root)).slice(0, 24));
-    for (const dir of ['items', 'approvals', 'experiments', 'activity', 'analyses']) fs.mkdirSync(path.join(this.canonical, dir), { recursive: true });
+    for (const dir of ['items', 'approvals', 'experiments', 'activity', 'analyses', 'scores']) fs.mkdirSync(path.join(this.canonical, dir), { recursive: true });
     for (const dir of ['runs', 'plans', 'receipts', 'targets', 'observations', 'journals', 'keys']) fs.mkdirSync(path.join(this.local, dir), { recursive: true });
     const marker = path.join(this.canonical, 'workbench.json');
     if (!fs.existsSync(marker)) writeJson(marker, { schemaVersion: 1, application: 'Kiln', assetsLimitBytes: 10_485_760 });
@@ -190,6 +190,21 @@ export class Workbench {
     const file = path.join(this.canonical, 'analyses', `${analysis.id}.json`);
     if (!fs.existsSync(file)) writeJson(file, analysis);
     return analysis;
+  }
+  /** Recorded scores, newest first; one item's when `itemId` is given. */
+  scores(itemId?: string) { return readRecords(path.join(this.canonical, 'scores'), value => scoreSchema.parse(value), this.warnings).filter(s => !itemId || s.itemId === itemId).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)); }
+  /** Keeps one score of an exact revision beside the library. Written once per run; the record never changes afterwards. */
+  recordScore(input: Score) {
+    const score = scoreSchema.parse(input); this.getItem(score.itemId); this.getRevision(score.itemId, score.revision);
+    const file = path.join(this.canonical, 'scores', `${score.id}.json`);
+    if (!fs.existsSync(file)) writeJson(file, score);
+    return score;
+  }
+  /** The newest score of every live item, for the library's Score column and badges. */
+  latestScores(): Record<string, ScoreSummary> {
+    const live = new Set(this.indexedItems.map(i => i.id)), result: Record<string, ScoreSummary> = {};
+    for (const s of this.scores()) if (live.has(s.itemId) && !result[s.itemId]) result[s.itemId] = { score: s.score, revision: s.revision, finishedAt: s.finishedAt };
+    return result;
   }
   /** Items made directly from this one: entries distilled from a source, skills shaped from a prompt, chat additions. Trash excluded. */
   madeFrom(id: string) { return this.listItems().filter(i => i.origin?.itemId === id); }
@@ -426,7 +441,7 @@ export class Workbench {
     const duplicates = (group?.ids ?? []).filter(other => other !== id).flatMap(other => byId.get(other) ?? []);
     // Copies merged into this item count toward its use, as they do in the snapshot's usage.
     const merged = new Set(this.indexedAllItems.filter(i => i.mergedInto && this.mergedTarget(i.id) === id).map(i => i.id));
-    return { analyses: this.analyses(id), item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id || (o.itemId !== null && merged.has(o.itemId))), validation: validateContent(revision), duplicates };
+    return { analyses: this.analyses(id), scores: this.scores(id), item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id || (o.itemId !== null && merged.has(o.itemId))), validation: validateContent(revision), duplicates };
   }
   /** Where a copy merged by consolidation went, following later merges; null for anything not in the trash as a merged copy. */
   mergedTarget(id: string): string | null {
@@ -579,6 +594,7 @@ export class Workbench {
       invariant(item.deletedAt, 'NOT_IN_TRASH', 'Move this item to the trash before deleting it permanently.');
       for (const approval of this.approvals(true).filter(a => a.itemId === item.id)) fs.rmSync(path.join(this.canonical, 'approvals', `${approval.id}.json`), { force: true });
       for (const analysis of this.analyses(item.id)) fs.rmSync(path.join(this.canonical, 'analyses', `${analysis.id}.json`), { force: true });
+      for (const score of this.scores(item.id)) fs.rmSync(path.join(this.canonical, 'scores', `${score.id}.json`), { force: true });
       for (const trial of this.trials(true).filter(t => t.itemId === item.id)) { fs.rmSync(path.join(this.canonical, 'experiments', `${trial.id}.json`), { force: true }); fs.rmSync(path.join(this.local, 'runs', trial.id), { recursive: true, force: true }); }
       const installs = this.installs(); if (installs[item.id]) { delete installs[item.id]; writeJson(this.installsFile(), installs); }
       fs.rmSync(this.itemDir(item.id), { recursive: true, force: true });
@@ -957,7 +973,7 @@ export class Workbench {
   snapshot(): Snapshot {
     if (this.dirty) this.refresh(false);
     const git = this.cachedGitStatus();
-    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups(), invocation: this.invocation() };
+    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups(), invocation: this.invocation(), scores: this.latestScores() };
   }
   /** What each live skill's current revision says about model invocation, from the per-revision cache (no file is read here). */
   invocation(): Record<string, SkillListing> {
@@ -998,14 +1014,15 @@ export class Workbench {
       const approvals = this.approvals(true).filter(a => mapped.get(`${a.itemId}:${a.revision}`) === a.revision);
       const trials = this.trials(true).map(t => ({ ...shareableTrial(t), revision: mapped.get(`${t.itemId}:${t.revision}`) ?? t.revision }));
       const analyses = this.analyses().map(a => ({ ...a, revision: mapped.get(`${a.itemId}:${a.revision}`) ?? a.revision }));
-      const exported = { schemaVersion: 1, exportedAt: now(), items, collections: this.collections(), approvals, trials, analyses, activity: this.activity().map(event => ({ ...event, message: event.kind.replaceAll('_', ' '), ...(event.revision && event.itemId ? { revision: mapped.get(`${event.itemId}:${event.revision}`) ?? event.revision } : {}) })), excluded: ['Machine paths and deployment ownership', 'Private inputs and session transcripts', 'Private activity details and observation logs', 'Approvals for privacy-transformed revisions'] };
+      const scores = this.scores().map(s => ({ ...s, revision: mapped.get(`${s.itemId}:${s.revision}`) ?? s.revision }));
+      const exported = { schemaVersion: 1, exportedAt: now(), items, collections: this.collections(), approvals, trials, analyses, scores, activity: this.activity().map(event => ({ ...event, message: event.kind.replaceAll('_', ' '), ...(event.revision && event.itemId ? { revision: mapped.get(`${event.itemId}:${event.revision}`) ?? event.revision } : {}) })), excluded: ['Machine paths and deployment ownership', 'Private inputs and session transcripts', 'Private activity details and observation logs', 'Approvals for privacy-transformed revisions'] };
       writeJson(destination, exported); return { destination, items: items.length, excluded: exported.excluded };
     });
   }
   importLibrary(file: string) {
     this.dirty = true;
     noLinks(file); invariant(fs.statSync(file).size < 150_000_000, 'IMPORT_TOO_LARGE', 'Export exceeds 150 MB.');
-    const data = z.object({ schemaVersion: z.literal(1), items: z.array(z.object({ item: itemSchema, revisions: z.array(revisionSchema) })), collections: z.array(z.string().min(1)).default([]), approvals: z.array(approvalSchema), trials: z.array(trialSchema), analyses: z.array(analysisSchema).default([]), activity: z.array(z.unknown()).default([]) }).parse(readJson(file));
+    const data = z.object({ schemaVersion: z.literal(1), items: z.array(z.object({ item: itemSchema, revisions: z.array(revisionSchema) })), collections: z.array(z.string().min(1)).default([]), approvals: z.array(approvalSchema), trials: z.array(trialSchema), analyses: z.array(analysisSchema).default([]), scores: z.array(scoreSchema).default([]), activity: z.array(z.unknown()).default([]) }).parse(readJson(file));
     for (const { item, revisions } of data.items) {
       invariant(revisions.some(r => r.hash === item.revision), 'INVALID_EXPORT', 'Current revision is missing.');
       for (const r of revisions) { validateContent(r); invariant(r.itemId === item.id && r.hash === revisionHash(r), 'BUNDLE_TAMPERED', 'Export contains a modified revision.'); }
@@ -1036,6 +1053,10 @@ export class Workbench {
       for (const analysis of data.analyses) {
         const file = path.join(this.canonical, 'analyses', `${analysis.id}.json`);
         if (!fs.existsSync(file) && fs.existsSync(this.itemFile(analysis.itemId))) writeJson(file, analysis);
+      }
+      for (const score of data.scores) {
+        const file = path.join(this.canonical, 'scores', `${score.id}.json`);
+        if (!fs.existsSync(file) && fs.existsSync(this.itemFile(score.itemId))) writeJson(file, score);
       }
       for (const value of data.activity) {
         const event = z.object({ id: idSchema, at: z.string(), itemId: idSchema.nullable(), kind: z.string().max(100), message: z.string().max(5000), revision: hashSchema.optional() }).parse(value);

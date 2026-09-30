@@ -1,8 +1,8 @@
 import { Markdown } from './Markdown';
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Activity, Archive, ArrowLeft, Check, ChevronRight, Copy, CornerDownLeft, Download, ExternalLink, FileCog, FlaskConical, FolderPlus, Layers3, MessageSquare, Monitor, Moon, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Check, ChevronRight, Copy, CornerDownLeft, Download, ExternalLink, FileCog, FlaskConical, FolderPlus, Gauge, Layers3, MessageSquare, Monitor, Moon, Plus, RefreshCw, Search, Settings, Trash2, WandSparkles, X } from 'lucide-react';
 import type { Item, ItemDetail, Snapshot } from '../../../packages/protocol/schema';
-import { resolveVariables } from '../../../packages/domain/text';
+import { resolveVariables, scoreable } from '../../../packages/domain/text';
 import { api, variablesIn } from './api';
 import { Badge, KindIcon } from './components';
 import type { KilnCommand } from './command-names';
@@ -154,6 +154,8 @@ export default function Palette() {
     { id: 'kiln', label: 'Open in Kiln', icon: <ChevronRight size={15} />, run: () => run(current, 'kiln') },
     ...(item.kind === 'source' ? [] : [{ id: 'test', label: 'Test…', icon: <FlaskConical size={15} />, run: () => run(current, 'test') }]),
     { id: 'ask', label: 'Ask the agent', icon: <MessageSquare size={15} />, run: () => command({ name: 'ask-item', id: item.id }) },
+    ...(scoreable(item.kind) ? [{ id: 'score', label: 'Score', icon: <Gauge size={15} />, run: () => command({ name: 'score-item', id: item.id }) }] : []),
+    ...(item.kind === 'skill' ? [{ id: 'tune', label: 'Tune…', icon: <WandSparkles size={15} />, run: () => command({ name: 'tune-item', id: item.id }) }] : []),
     { id: 'open', label: openLabel(item), icon: <ExternalLink size={15} />, run: () => openStored(item) },
   ] : [];
   const inActions = mode === 'actions' && item;

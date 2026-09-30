@@ -40,6 +40,9 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'agent.models') data = await agent.models();
       else if (request.method === 'rpc' && request.args[0] === 'agent.cancel') data = agent.cancel(request.args[1].id);
       else if (request.method === 'rpc' && request.args[0] === 'trials.delete') data = agent.deleteTrial(request.args[1]);
+      else if (request.method === 'rpc' && request.args[0] === 'agent.tuneProposal') data = agent.tuneProposal(request.args[1]);
+      else if (request.method === 'rpc' && request.args[0] === 'agent.tuneAccept') data = agent.tuneAccept(request.args[1]);
+      else if (request.method === 'rpc' && request.args[0] === 'agent.tuneDiscard') data = agent.tuneDiscard(request.args[1]);
       else if (request.method === 'rpc') data = await router.call(...request.args as [string, unknown]);
       else {
         const allowed = ['settings', 'saveSettings', 'snapshot', 'getRevision', 'observe', 'referencePath', 'importFile', 'importResource', 'addAttachment', 'removeAttachment', 'importLibrary', 'exportLibrary'];

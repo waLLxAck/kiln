@@ -115,7 +115,7 @@ export type ItemDraftState = ReturnType<typeof useItemDraft>;
  * The in-place editor: one save bar ("What changed?", Save revision, Discard), the fields, and the content in the code
  * editor with live checks. Bundled files are edited in the page's Files section, into the same draft.
  */
-export function ItemEditor({ detail, draft, collections, name }: { detail: ItemDetail; draft: ItemDraftState; collections: string[]; /** The main file's name, e.g. SKILL.md. */ name: string }) {
+export function ItemEditor({ detail, draft, collections, name, goto }: { detail: ItemDetail; draft: ItemDraftState; collections: string[]; /** The main file's name, e.g. SKILL.md. */ name: string; /** A line to put the cursor on (a score's line link). */ goto?: { line: number; at: number } }) {
   const { item } = detail;
   const [asking, setAsking] = useState(false);
   const form = useRef<HTMLFormElement>(null);
@@ -147,7 +147,7 @@ export function ItemEditor({ detail, draft, collections, name }: { detail: ItemD
       </div>
       <div className="item-doc editing">
         <div className="item-doc-bar"><span className="item-doc-name">{name}</span><span className="muted small">Autosaved privately on this machine</span></div>
-        <CodeEditor className="item-code" value={draft.content} onChange={draft.setContent} language={itemLanguage(item)} ariaLabel="Content" onSave={save} diagnostics={problems} diagnosticsTitle="Needs attention before approval" />
+        <CodeEditor className="item-code" value={draft.content} onChange={draft.setContent} language={itemLanguage(item)} ariaLabel="Content" onSave={save} diagnostics={problems} diagnosticsTitle="Needs attention before approval" goto={goto} />
         {item.kind === 'skill' && draft.checks?.length === 0 && <p className="code-checks-ok"><Check size={13} />SKILL.md checks pass: frontmatter, name, description and local links.</p>}
       </div>
     </form>

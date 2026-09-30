@@ -197,7 +197,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     case 'desktop.command': {
       // Quick search asks the main window to act (capture, open or test an item, go to a section…); the renderer handles it in useKilnCommands.
       const command = z.union([
-        z.object({ name: z.enum(['open-item', 'test-item', 'ask-item']), id: idSchema }),
+        z.object({ name: z.enum(['open-item', 'test-item', 'ask-item', 'score-item', 'tune-item']), id: idSchema }),
         z.object({ name: z.literal('navigate'), id: z.enum(commandSections) }),
         z.object({ name: z.enum(['capture', 'sync-installs', 'new-collection', 'toggle-theme', 'check-updates']) }),
       ]).parse(args);

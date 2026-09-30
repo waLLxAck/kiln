@@ -9,3 +9,5 @@ export const variablesIn = (content: string) => [...new Set([...content.matchAll
 export function resolveVariables(content: string, variables: Record<string, string>) {
   return content.replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (placeholder, key: string) => Object.hasOwn(variables, key) && variables[key].trim() ? variables[key] : placeholder);
 }
+/** Kinds Score applies to: documents an agent reads and follows. Tune applies to skills only. */
+export const scoreable = (kind: string) => ['prompt', 'skill', 'agent', 'instruction'].includes(kind);

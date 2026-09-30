@@ -2,6 +2,7 @@
 // Kiln launches it exactly as it launches Claude Code; it reads the prompt from stdin, streams the same event shapes and
 // ends with a `result` event carrying structured output. The replies are written for the fictional demo project.
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const pace = Number(process.env.KILN_STUB_PACE_MS ?? 4000);
@@ -81,6 +82,45 @@ if (input.includes('You are the assistant inside Kiln')) {
     };
     usage = { input_tokens: 24310, cache_read_input_tokens: 16900, output_tokens: 860 };
   }
+} else if (input.includes('Score how well the document')) {
+  steps = [
+    () => say('Reading the document against the guidance: its description, then each step and what ends it.'),
+    () => say('The steps say what to do but not when each is done, and the description lists one branch twice.'),
+  ];
+  output = {
+    score: 68,
+    summary: 'The procedure is clear and short, but two steps end without a criterion the agent can check, so runs will stop at different points. The description names one branch twice and misses the retry case.',
+    improvements: [
+      { title: 'End step 4 on a checkable condition', why: 'Completion criteria: “Stop at that first obstacle” gives no test for what counts as an obstacle, which invites premature completion.', severity: 'high', line: 14, suggestion: '4. Stop at the first screen where you cannot tell what to do next within two tries. Done when you can name the screen, the control you tried and what happened.' },
+      { title: 'Name the retry branch in the description', why: 'Context pointers: the description lists “test the app” and “try the app” (one branch written twice) and leaves out re-testing after a fix.', severity: 'medium', line: 3, suggestion: 'description: Explore an app as a young first-time player and report the first obstacle. Use for a first look, or to re-test after fixing one.' },
+      { title: 'Say what the smallest fix is measured against', why: 'Demand: “the smallest fix” has no bound, so some runs propose redesigns.', severity: 'medium', line: 15, suggestion: '5. Suggest the smallest fix: one line of copy, one label or one setting. Anything larger goes under Limitations.' },
+      { title: 'Drop the restated “make no changes”', why: 'No-ops and duplication: the Limitations section repeats the rule from the Inputs section.', severity: 'low', line: null, suggestion: 'Keep it once, under Limitations.' },
+    ],
+  };
+  usage = { input_tokens: 12900, cache_read_input_tokens: 8800, output_tokens: 820 };
+} else if (input.includes('by following the tune-skill skill')) {
+  const name = input.match(/Tune the skill `([^`]+)`/)?.[1] ?? 'skill';
+  const skill = path.join(cwd, '.claude', 'skills', name);
+  const rewrite = () => {
+    const main = path.join(skill, 'SKILL.md');
+    fs.writeFileSync(main, fs.readFileSync(main, 'utf8').replace(/5\. Suggest the smallest fix\./, '5. Suggest the smallest fix: one line of copy, one label or one setting.\n6. Run `python scripts/first_obstacle.py` and paste its summary line. Done when it prints `obstacle:`.'));
+    fs.mkdirSync(path.join(skill, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(skill, 'scripts', 'first_obstacle.py'), '#!/usr/bin/env python3\n"""Prints the first obstacle from the trial notes as key: value lines."""\nprint("obstacle: none recorded yet")\nprint("help[]: python scripts/first_obstacle.py <notes.md>")\n');
+    use('Write', { file_path: path.join(skill, 'scripts', 'first_obstacle.py') });
+  };
+  steps = [
+    () => use('Read', { file_path: path.join(cwd, 'kiln-tools', 'tune-skill', 'SKILL.md') }),
+    () => use('Bash', { command: `python kiln-tools/tune-skill/scripts/measure_run.py find ${name} --all` }),
+    () => say('Two past runs: 23 tool calls on average, 9 of them plumbing (re-typed URLs, hunting for the demo profile).'),
+    rewrite,
+    () => use('Agent', { description: 'Trial the tuned skill', prompt: 'You are trying the app as a seven-year-old using the skill.' }),
+    () => say('Trial done: 11 tool calls, 2 of them plumbing. Two friction entries fixed in the script.'),
+  ];
+  output = {
+    summary: 'Moved the obstacle summary into scripts/first_obstacle.py and bounded “smallest fix”: 23 calls to 11 in one trial.',
+    report: '## Results\n\n| metric | before (avg of 2) | after (1 trial) |\n|---|---|---|\n| tool calls | 23 | 11 |\n| plumbing calls | 9 | 2 |\n| active minutes | 6.4 | 3.1 |\n\n## Friction log\n\n1. Re-typed the app URL three times: now printed by the script. Fixed.\n2. Could not tell when step 4 was done: step 4 now ends on a check. Fixed.\n3. The demo profile was only in README.md: left, the prompt already points there.\n\n## Caveats\n\nOne trial is one data point; the old runs also covered a second screen.',
+  };
+  usage = { input_tokens: 184000, cache_read_input_tokens: 142000, output_tokens: 9100 };
 } else {
   steps = [
     () => say('Shaping the prompt into a skill with the bundled writing guidance: a trigger-first description, numbered steps and a clear stopping point.'),
