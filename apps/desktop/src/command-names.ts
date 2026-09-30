@@ -9,4 +9,4 @@ export type CommandName = typeof commandNames[number];
 /** `id` is the item for the `*-item` commands and the section for `navigate`. */
 export type KilnCommand = { name: CommandName; id?: string };
 /** Sections `navigate` accepts; the same ids the main window's navigation uses. */
-export const commandSections = ['library', 'machines', 'home', 'activity', 'settings', 'archive', 'trash', 'experiments'] as const;
+export const commandSections = ['library', 'machines', 'home', 'activity', 'settings', 'archive', 'trash', 'experiments', 'usage'] as const;

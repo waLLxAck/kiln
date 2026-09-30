@@ -34,6 +34,12 @@ const commandOptions: Record<string, string[]> = {
   'mcp install': ['client', 'project', 'replace'],
   'mcp remove': ['client', 'project', 'name', 'force'],
   'mcp rollback': ['receipt'],
+  'usage scan': [],
+  'usage report': ['days'],
+  'usage skills': ['days'],
+  'usage spend': ['days'],
+  'usage item': ['days'],
+  'usage prices': ['input'],
 };
 const globalOptions = ['library', 'local', 'json'];
 const knownOptions = new Set([...globalOptions, ...Object.values(commandOptions).flat(), 'input']);
@@ -56,7 +62,7 @@ export function parseArguments(args: string[]) {
   const command = `${resource} ${action}`;
   const allowed = new Set([...globalOptions, ...(commandOptions[command] ?? ['input'])]);
   for (const name of options.keys()) if (!allowed.has(name)) throw new WorkbenchError('INVALID_INPUT', `Option --${name} is not supported by ${command}.`);
-  const needsId = ['items read', 'items move', 'items update', 'items restore', 'approvals request', 'skills invocation', 'home read', 'home backups', 'home save', 'home backup', 'home restore', 'home remove', 'mcp status', 'mcp install', 'mcp remove'].includes(command);
+  const needsId = ['items read', 'items move', 'items update', 'items restore', 'approvals request', 'skills invocation', 'home read', 'home backups', 'home save', 'home backup', 'home restore', 'home remove', 'usage item', 'mcp status', 'mcp install', 'mcp remove'].includes(command);
   const maximum = command === 'items read' ? 100 : command === 'items move' ? 500 : command === 'mcp import' ? 1000 : needsId ? 1 : 0;
   if ((needsId && ids.length === 0) || ids.length > maximum) throw new WorkbenchError('INVALID_INPUT', command === 'items read' ? 'Provide 1–100 item IDs.' : command === 'items move' ? 'Provide 1–500 item IDs.' : `${command} expects ${needsId ? 'one ID' : 'no positional IDs'}.`);
   // Where items go is never a default: name a collection or say they leave every collection; likewise keep or trash on delete.
@@ -72,6 +78,7 @@ export function parseArguments(args: string[]) {
   if (resource === 'collections') for (const name of ['name', 'from', 'to']) if (commandOptions[command]?.includes(name) && !options.has(name)) throw new WorkbenchError('INVALID_INPUT', `${command} needs --${name}.`);
   if (ids.length > 1 && options.has('revision')) throw new WorkbenchError('INVALID_INPUT', '--revision requires exactly one item ID.');
   if (options.has('kind') && !kindSchema.safeParse(options.get('kind')).success) throw new WorkbenchError('INVALID_INPUT', `--kind must be one of: ${kindSchema.options.join(', ')}.`);
+  if (options.has('days') && !(Number.isSafeInteger(Number(options.get('days'))) && Number(options.get('days')) >= 0 && Number(options.get('days')) <= 3650)) throw new WorkbenchError('INVALID_INPUT', '--days must be a whole number of days from 0 (all time) to 3650.');
   for (const name of ['limit', 'offset']) {
     if (!options.has(name)) continue;
     const value = Number(options.get(name));

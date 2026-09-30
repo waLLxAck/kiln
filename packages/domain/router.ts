@@ -22,6 +22,8 @@ import { SessionStartMeter } from '../home/session-start';
 import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
 import { McpServers } from '../deployment/mcp';
+import { UsageService, type LibraryView } from '../usage/service';
+import { skillName } from './content';
 
 import { BackgroundFetch, pullFetched } from '../git/sync';
 import { GitQueue } from '../git/queue';
@@ -59,6 +61,10 @@ export class Router {
   readonly projects: ProjectInstalls;
   /** MCP servers: import from client configs, install one entry per client config (deployment/mcp.ts). */
   readonly mcp: McpServers;
+  /** Skill use and token spend from this machine's Claude Code and Codex logs (packages/usage); machine-private. */
+  readonly usage: UsageService;
+  /** Names each skill revision installs under, for mapping logged uses to items; keyed by revision hash. */
+  private usageNames = new Map<string, string[]>();
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
@@ -71,6 +77,7 @@ export class Router {
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
     this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
     this.mcp = new McpServers(wb, this.home);
+    this.usage = new UsageService({ local: wb.local, home: this.home.home, env: this.home.env });
     this.sessionStart = new SessionStartMeter({ home: this.home.home, env: this.home.env, projects: () => [...wb.targets().filter(t => t.scope === 'project').map(t => t.root), ...this.home.savedProjects()] });
   }
   /** Saves the revision at once, then fills in a generated note in the background when the user left "What changed?" empty. */
@@ -195,6 +202,10 @@ export class Router {
       case 'skills.update': return this.published(this.deployments.updateInstalls(args));
       case 'skills.invocation': return this.setInvocation(args);
       case 'context.sessionStart': return this.sessionStart.measure(args);
+      case 'usage.scan': return this.usage.scan(args);
+      case 'usage.report': return this.usageReport(args);
+      case 'usage.item': return this.usage.item(args, this.usageLibrary(false));
+      case 'usage.prices': return this.usage.prices(args);
       case 'skills.updateOutdated': return this.deployments.updateOutdated(args);
       case 'deploy.keepCopy': return this.deployments.keepCopy(args);
       case 'deploy.approveKept': return this.published(this.deployments.approveKept(args));
@@ -303,6 +314,31 @@ export class Router {
     this.wb.approveFlagChange({ id: item.id, revision: updated.revision, from: item.revision });
     if (this.wb.repositoryState().ready) this.publisher.enqueue('approve', item.id, updated.revision);
     return { itemId: item.id, title: item.title, revision: updated.revision, changed: true, approval: 'carried', invocation: readInvocation(next), update: this.deployments.updateInstalls({ itemId: item.id }) };
+  }
+  /**
+   * The Usage view: one capped scan of the session logs (skipped with `scan: false`), then the report from the cache. The
+   * desktop calls it again while `scan.complete` is false; the CLI's `usage scan` reads everything first.
+   */
+  async usageReport(args: unknown) {
+    const { scan } = z.object({ scan: z.boolean().default(true) }).passthrough().parse(args ?? {});
+    if (scan) await this.usage.scan();
+    return this.usage.report(args, this.usageLibrary(true));
+  }
+  /** Live skills with the names they install and are invoked as (folder name, SKILL.md name, title), Kiln's receipts and, for the report, this machine's copies. */
+  usageLibrary(withCopies: boolean): LibraryView {
+    const items = this.wb.listItems(), skills: LibraryView['skills'] = [];
+    for (const item of items) {
+      if (item.kind !== 'skill' || item.deletedAt) continue;
+      let names = this.usageNames.get(item.revision);
+      if (!names) {
+        // Imported skills remember their folder (`local:<folder>`) or file (`…/<name>/SKILL.md`) as the source.
+        names = [item.title, item.source.match(/[\\/]([^\\/]+)[\\/]SKILL\.md$/)?.[1] ?? (item.source.startsWith('local:') ? path.basename(item.source.slice(6)) : '')];
+        try { names.unshift(skillName(this.wb.getRevision(item.id))); } catch { /* A damaged revision still matches by title. */ }
+        this.usageNames.set(item.revision, names = [...new Set(names.filter(Boolean))]);
+      }
+      skills.push({ id: item.id, title: item.title, status: item.status, names });
+    }
+    return { skills, titles: Object.fromEntries(items.map(i => [i.id, i.title])), receipts: this.deployments.receipts(), ...(withCopies ? { copies: () => this.deployments.installations(skills.map(s => s.id)) } : {}) };
   }
   /** Installing an unapproved revision approves it first, so the same push to GitHub happens as with an explicit Approve. */
   installSkill(args: unknown) {

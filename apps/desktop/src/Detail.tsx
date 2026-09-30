@@ -27,6 +27,7 @@ import { OPEN_RESULT_TAB_EVENT } from './Runs';
 import { AddToInstructions, addToLabel, type InstructionAppend } from './AddToInstructions';
 import { entryTypeList, selectedEntryTypes } from '../../../packages/agent/distill';
 import { McpDefinition } from './Mcp';
+import { ItemUsageLine } from './Usage';
 import './item.css';
 import './consolidate.css';
 
@@ -35,6 +36,7 @@ type Props = {
   /** Opens the agent chat about this item. */ onAsk?: () => void;
   /** Instruction items: opens Config files on the chosen file with the snippet added as an unsaved edit. */ onAddToInstructions?: (append: InstructionAppend) => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
+  /** Shows the Usage section; a skill's header says how often this machine's agents used it. */ onUsage?: () => void;
   /** The model-invocation switch in the rail's Installs section (Invocation.tsx). */ onInvocation?: (item: Item, model: boolean) => void;
   /** Duplicates: opens the consolidate dialog for this item's group, marks it as not a duplicate of the others, and names a copy briefly. */
   onConsolidate?: () => void; onNotDuplicates?: () => void; where?: (item: Item) => string;
@@ -63,7 +65,7 @@ let shownTests = 0;
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onAddToInstructions, onMachines, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onAddToInstructions, onMachines, onUsage, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
@@ -165,7 +167,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
         {/* A captured source has no lifecycle to show; only archived or deleted ones get a badge. */}
         <div className="item-title-row"><h1>{item.title}</h1>{!(isSource && status === 'draft') && <span className="item-state"><Badge status={status} /></span>}</div>
         {item.description && <p className="item-lede">{item.description}</p>}
-        <div className="detail-meta">{origin && <button type="button" className="source-chip" onClick={() => onSelect(origin.id)} title={origin.kind === 'source' ? 'Open the source this was made from' : 'Open the item this was derived from'}><FileInput size={12} />From “{origin.title}”</button>}<span>Updated {date(item.updatedAt)}</span></div>
+        <div className="detail-meta">{origin && <button type="button" className="source-chip" onClick={() => onSelect(origin.id)} title={origin.kind === 'source' ? 'Open the source this was made from' : 'Open the item this was derived from'}><FileInput size={12} />From “{origin.title}”</button>}<span>Updated {date(item.updatedAt)}</span>{item.kind === 'skill' && onUsage && <ItemUsageLine itemId={item.id} onOpen={onUsage} />}</div>
       </div>
       <div className="detail-actions">
         <button className={`icon-button ${item.favourite ? 'favourited' : ''}`} aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'} title={item.favourite ? 'In favourites' : 'Add to favourites'} onClick={() => onMeta({ favourite: !item.favourite })}><Star size={18} fill={item.favourite ? 'currentColor' : 'none'} /></button>
