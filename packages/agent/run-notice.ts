@@ -9,7 +9,7 @@ import type { AgentJob, AgentKind } from './service';
 export const activeRun = (job: Pick<AgentJob, 'status'>) => job.status === 'running' || job.status === 'queued';
 export type RunFinished = { id: string; itemId: string; kind: AgentKind; status: AgentJob['status']; itemTitle: string; error?: string; judgement?: 'pass' | 'fail' | 'uncertain'; entries?: number; collection?: string; createdItemId?: string; createdTitle?: string };
 /** What each kind of run is called in a sentence of its own. */
-export const runKindLabel: Record<AgentKind, string> = { capture: 'Capture', trial: 'Experiment', derive: 'Skill draft', distill: 'Distillation', chat: 'Chat reply' };
+export const runKindLabel: Record<AgentKind, string> = { capture: 'Capture', trial: 'Experiment', derive: 'Skill draft', distill: 'Distillation', chat: 'Chat reply', 'distill-repo': 'Repository distillation' };
 const firstLine = (text: string, max = 120) => { const line = text.trim().split('\n')[0].trim(); return line.length > max ? line.slice(0, max - 1) + '…' : line; };
 
 /** The event for a finished job. `title` looks up an item's current title; a trashed or missing item falls back to the kind. */
@@ -19,7 +19,7 @@ export function runFinished(job: AgentJob, title: (id: string) => string | undef
     id: job.id, itemId: job.itemId, kind: job.kind, status: job.status, itemTitle: title(job.itemId) ?? runKindLabel[job.kind],
     ...(job.error ? { error: job.error } : {}),
     ...(result && typeof result.judgement === 'string' ? { judgement: result.judgement as RunFinished['judgement'] } : {}),
-    ...(job.kind === 'distill' && job.status === 'completed' ? { entries: job.createdItemIds?.length ?? 0, ...(job.collection ? { collection: job.collection } : {}) } : {}),
+    ...((job.kind === 'distill' || job.kind === 'distill-repo') && job.status === 'completed' ? { entries: job.createdItemIds?.length ?? 0, ...(job.collection ? { collection: job.collection } : {}) } : {}),
     ...(job.createdItemId ? { createdItemId: job.createdItemId, createdTitle: title(job.createdItemId) ?? (typeof result?.name === 'string' ? result.name : undefined) } : {}),
   };
 }
@@ -32,7 +32,7 @@ export function runNotice(event: RunFinished): { title: string; body: string } |
   if (event.status === 'failed') return { title: `Run failed · ${firstLine(event.error || 'The agent stopped without a result', 90)}`, body: `${runKindLabel[event.kind]} for “${event.itemTitle}”` };
   if (event.status !== 'completed') return null;
   if (event.kind === 'trial') return { title: `${event.judgement === 'pass' ? 'Experiment passed' : event.judgement === 'fail' ? 'Experiment failed' : 'Experiment finished'} · ${firstLine(event.itemTitle, 80)}`, body: event.judgement === 'uncertain' ? 'The agent was not sure. Open Trials to read why.' : 'Open Trials to read the output and assessment.' };
-  if (event.kind === 'distill') return { title: `Distillation finished · ${event.entries ?? 0} ${event.entries === 1 ? 'entry' : 'entries'} from ${firstLine(event.itemTitle, 70)}`, body: event.collection ? `Filed under “${event.collection}”.` : 'Open the source to see what was made from it.' };
+  if (event.kind === 'distill' || event.kind === 'distill-repo') return { title: `Distillation finished · ${event.entries ?? 0} ${event.entries === 1 ? 'entry' : 'entries'} from ${firstLine(event.itemTitle, 70)}`, body: event.collection ? `Filed under “${event.collection}”.` : 'Open the source to see what was made from it.' };
   if (event.kind === 'derive') return { title: `Skill draft ready${event.createdTitle ? ` · ${firstLine(event.createdTitle, 80)}` : ''}`, body: `Drafted from “${event.itemTitle}”. Review it before approving.` };
   if (event.kind === 'chat') return { title: `Chat reply · ${firstLine(event.itemTitle, 80)}`, body: 'Open Kiln to read the reply.' };
   return { title: `${runKindLabel[event.kind]} finished · ${firstLine(event.itemTitle, 80)}`, body: 'Open Kiln to see the result.' };

@@ -28,6 +28,9 @@ const commandOptions: Record<string, string[]> = {
   'machines mark': ['item', 'location', 'unmark'],
   'skills invocation': ['model', 'expect'],
   'context start': ['project'],
+  'repos scan': [],
+  'repos import': ['select', 'collection'],
+  'repos list': [],
 };
 const globalOptions = ['library', 'local', 'json'];
 const knownOptions = new Set([...globalOptions, ...Object.values(commandOptions).flat(), 'input']);
@@ -50,7 +53,7 @@ export function parseArguments(args: string[]) {
   const command = `${resource} ${action}`;
   const allowed = new Set([...globalOptions, ...(commandOptions[command] ?? ['input'])]);
   for (const name of options.keys()) if (!allowed.has(name)) throw new WorkbenchError('INVALID_INPUT', `Option --${name} is not supported by ${command}.`);
-  const needsId = ['items read', 'items move', 'items update', 'items restore', 'approvals request', 'skills invocation', 'home read', 'home backups', 'home save', 'home backup', 'home restore', 'home remove'].includes(command);
+  const needsId = ['items read', 'items move', 'items update', 'items restore', 'approvals request', 'skills invocation', 'repos scan', 'repos import', 'home read', 'home backups', 'home save', 'home backup', 'home restore', 'home remove'].includes(command);
   const maximum = command === 'items read' ? 100 : command === 'items move' ? 500 : needsId ? 1 : 0;
   if ((needsId && ids.length === 0) || ids.length > maximum) throw new WorkbenchError('INVALID_INPUT', command === 'items read' ? 'Provide 1–100 item IDs.' : command === 'items move' ? 'Provide 1–500 item IDs.' : `${command} expects ${needsId ? 'one ID' : 'no positional IDs'}.`);
   // Where items go is never a default: name a collection or say they leave every collection; likewise keep or trash on delete.

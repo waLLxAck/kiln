@@ -189,7 +189,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
           </div>
           : <div className="item-content">
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
-            <AgentPanel itemId={item.id} jobs={jobs} kinds={['capture', 'derive', 'distill']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} />
+            <AgentPanel itemId={item.id} jobs={jobs} kinds={['capture', 'derive', 'distill', 'distill-repo']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} />
             {recorded.map(a => <AnalysisRecord key={a.id} analysis={a} />)}
             {/* While editing, the editor lists the draft's own problems live instead. */}
             {!isSource && !editing && detail.validation.length > 0 && <div className="notice warning"><b>Needs attention before approval</b>{detail.validation.map(v => <p key={v}>{v}</p>)}</div>}

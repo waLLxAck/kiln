@@ -52,6 +52,6 @@ parentPort!.on('message', request => {
       parentPort!.postMessage({ id: request.id, error: { code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) } });
     }
   };
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine'].includes(request.args[0])) void run();
   else queue = queue.then(run);
 });

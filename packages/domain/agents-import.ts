@@ -52,3 +52,5 @@ export function importAgents(wb: Workbench, input: unknown) {
   }
   return { imported, failed };
 }
+/** One agent definition file as a draft, and the content identity imports dedupe on; shared with repository imports (repo-import.ts). */
+export { bundle as agentBundle, key as agentKey };

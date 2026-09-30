@@ -10,6 +10,7 @@ This guide covers everything the [README](../README.md) summarises. Together the
 - [The item page](#the-item-page)
 - [Capture](#capture)
 - [Distilling a YouTube video](#distilling-a-youtube-video)
+- [Skills from GitHub repositories](#skills-from-github-repositories)
 - [Experiments](#experiments)
 - [Agent runs](#agent-runs)
 - [Asking the agent](#asking-the-agent)
@@ -45,6 +46,7 @@ What ships today:
 | Custom agents | Import and manage native Codex, Claude Code and Copilot agent definitions; install approved definitions into compatible client locations. |
 | Review and approval | Approve an exact revision. Publish that reviewed snapshot to your Kiln GitHub repository, with visible progress and retry for failed publishing. New edits become drafts. |
 | Installation | Install approved skills and agent definitions into personal locations or any project folder. Inspect copies, drift and receipts; update copies behind the approved revision, remove copies, roll back supported deployments, and sync desired installs on another machine. |
+| GitHub repositories | Paste a repository link such as `github.com/mattpocock/skills` into Capture (or the import dialog) to list its skills and agent definitions, each marked new, already in the library, or different; import the ticked ones as drafts with their source commit and licence. **Dig deeper** asks an agent to read the repository for skills it does not package. Browse a list of well-known public skill repositories, or scan your own. |
 | Imports and portability | Import existing installed skills or skills repositories as drafts. Export/import authored library data and attachments, including empty custom collections. Imported approvals require local review. |
 | Configuration editor | Discover and edit agent instructions, settings, permissions, MCP configuration, hooks and shell profiles. Validate supported syntax, compare backups, restore versions and detect stale edits. |
 | Git and GitHub | Create or open a Kiln repository, inspect changes, checkpoint, synchronize and resolve conflicts. GitHub access uses the official `gh` CLI. |
@@ -199,6 +201,7 @@ Consolidating published copies is published too: when every copy was approved an
 Capture is a dialog that opens over whatever you are looking at: press **Capture** in the top bar or **Ctrl+N**, choose **Capture…** in [quick search](#quick-search), or paste or drop anything onto the window outside a text field. What you pasted or dropped is already in it. The field ("Paste, drop or type anything to keep it…") takes text, links and files; the upload button beside it picks files, and pasting or dropping onto the dialog adds more. Kiln reads what it was given and offers one main action, run with **Ctrl+Enter**:
 
 - **A bare YouTube link**: **Distill video** (see [Distilling a YouTube video](#distilling-a-youtube-video)), or **Save link only**.
+- **A GitHub repository link** (`github.com/owner/repo`, optionally `/tree/<branch>/<folder>`): **Scan repository** opens its review (see [Skills from GitHub repositories](#skills-from-github-repositories)), or **Save link**.
 - **Another link**: **Analyze page**, or **Save link**.
 - **Text**: **Save as draft**, or **Analyze with** your agent. `{{variables}}` in the text are listed.
 - **Files**: each file shows with its size (images with a preview); **Save N files**, or **Analyze with** your agent. Files: 25 MB in total.
@@ -250,6 +253,24 @@ Paste a bare YouTube link into Capture and its main action becomes **Distill vid
 Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description (listed under it on the source page, and the row's tooltip in the library). Prompts are stored bare so Copy yields only the prompt. The video's source page shows the summary and takeaway, a timeline of the video with each entry at the minute it came from and the skipped parts shaded, the entries grouped by minute to keep or archive, and the transcript with links to each minute (see [Sources](#sources)). `yt-dlp` must be on PATH.
 
 Distillation keeps a private copy of the CLI transcript in its run folder. It is never attached to the library item, included in a normal library export, or newly published to GitHub. The public video captions remain attached as `transcript.md`.
+
+## Skills from GitHub repositories
+
+A GitHub repository link is a source of skills, not a page to read. Paste or drop one into [Capture](#capture) and choose **Scan repository**, type it into **Import from a skills repository…** (the button becomes **Scan repository**), or pick one from **Browse skill repositories** or **Scan my GitHub repositories** (in the empty library and in Settings → GitHub). Links may name the repository (`https://github.com/owner/repo`, with or without `https://`), a branch or tag and a folder (`/tree/<ref>/<folder>`, which scans only that folder), or a file (`/blob/…`, which scans the folder holding it).
+
+**Scanning** reads without a model. Kiln fetches one commit of the repository with Git (a shallow fetch, no history) into the library's machine-private cache (`repo-sources/` beside the search index; the three newest commits of each repository are kept). Git hooks do not run, symlinks arrive as small text files naming their target, and Git LFS files are not downloaded. Private repositories work when GitHub CLI is signed in. Repositories GitHub reports as larger than about 250 MB, or larger than 300 MB once checked out, are refused; link to the folder that holds the skills instead. What the scan finds:
+
+- **Skills**: every folder with a SKILL.md, with its supporting files, whether it sits under `skills/`, `.claude/skills`, `.agents/skills`, `.cursor/skills`, `.github/skills`, a Claude plugin (a folder with `.claude-plugin/plugin.json`, or one `.claude-plugin/marketplace.json` lists), or anywhere else. A SKILL.md inside another skill's folder is part of that skill.
+- **Agent definitions**: `.claude/agents/*.md` and plugin `agents/` folders (Claude Code), `.github/agents/*.md` and `*.agent.md` files (Copilot), `.codex/agents/*.toml` (Codex), and a top-level `agents/` folder of Claude definitions.
+- **Instruction files**: AGENTS.md, CLAUDE.md, GEMINI.md and `.github/copilot-instructions.md` are named in the review, not imported.
+
+The **review** names the repository with its licence and commit, then "N skills, M agents found" and one row per skill and agent: a checkbox, the name (hover it for the path), and how it compares with your library. **new**: nothing like it yet. **in library**: the same SKILL.md and files as one of your items (its current or approved revision), so it is not offered. **differs** (or **differs from approved** when the item has an approved revision): an item with the same name, or one imported earlier from this same path, holds a different version. The eye button previews a skill's SKILL.md and lists its bundled files. Everything new or different is ticked, except skills a plugin's `plugin.json` leaves out of its skills list (often deprecated ones) and items you have edited in Kiln since importing them. **Collection** defaults to `owner/repo`, which files the items in a `repo` folder inside an `owner` folder.
+
+**Import N** copies the ticked ones into the library as drafts. It also creates a source item for the repository (see [Sources](#sources)), titled `owner/repo`, holding its link and README, and links every imported item to it, so the source page lists what came from it and **Scan again** there compares the latest commit with your library. Each item records where it came from as `https://github.com/<owner>/<repo>/tree/<commit>/<path>` and carries the licence of its own folder's LICENSE file, or else the repository's (MIT, Apache-2.0 and other common licences are named; anything else reads "See LICENSE"). An item imported earlier from the same path gets the new version as a new draft revision; its approval stays on the revision you reviewed, and installed copies stay until you approve and update them. A same-named skill from somewhere else becomes a separate item, which [Duplicates](#duplicates) can flag. Nothing is installed or approved.
+
+**Dig deeper** (with nothing ticked, or **Import N & dig deeper**) asks the chosen agent to go one step past the scan, the way distilling a video works. The checkout is its read-only working folder: it reads the README, docs, scripts, CI workflows, conventions and prompts in code, and returns new skills the repository implies but does not package (a complete SKILL.md, with bundled files when useful) plus entries of the types chosen in Settings (see [What an analysis produces](#what-an-analysis-produces)). It is told what the scan already found so it does not repeat them. Skills identical to one already in the library are skipped. Results are filed in the repository's collection and linked to its source item, whose page then shows the summary, takeaway and everything made from it; **Dig deeper again** on that page runs it again. The run is queued, cancelled, retried and shown like any [agent run](#agent-runs) and asks for the same [consent](#agent-access-warning). The agent is asked not to run the project's scripts or Git; files in the repository, including its AGENTS.md or CLAUDE.md, are treated as material, not instructions, though a client may still load a checkout's own instruction file as it would for any project.
+
+**Browse skill repositories** starts with a short list of well-known public ones (anthropics/skills, mattpocock/skills, openai/skills, obra/superpowers, vercel-labs/agent-skills, huggingface/skills, trailofbits/skills and microsoft/skills). **Scan** opens a repository's review; the × removes it from the list, and a link can be added below. The list is kept on this machine. **Scan my GitHub repositories** lists the signed-in account's 100 most recently updated repositories (through GitHub CLI) with a filter; tick some and **Scan** fetches them two at a time, each row then summing up its skills as new, in library or different, with **Review** to open its review.
 
 ## Experiments
 
@@ -414,6 +435,8 @@ npm run cli -- --library "C:\path\to\library" skills sync
 npm run cli -- --library "C:\path\to\library" skills invocation <id> --model off
 npm run cli -- --library "C:\path\to\library" context start --project "C:\code\my-game"
 npm run cli -- --library "C:\path\to\library" library export --file "C:\backups\kiln.json"
+npm run cli -- repos scan https://github.com/mattpocock/skills
+npm run cli -- repos import https://github.com/mattpocock/skills --select skill:skills/engineering/tdd --collection "Engineering"
 ```
 
 After building, `npm link` makes both `kiln` and `workbench` available through npm's bin directory.
@@ -425,6 +448,8 @@ Agents organise the library with the same commands as the desktop: `collections 
 `items duplicates` lists the groups of likely copies, each with its match and the copies' IDs, titles, collections, statuses and revisions. `items consolidate --input request.json` consolidates one group: `{ "keep": id, "expect": revision, "merge": [{ "id", "expect" }], "content": id?, "tags": [...]?, "collection": "..."? }`, where `content` names the copy whose text and files are kept (the kept one by default) and every `expect` must still be that item's current revision. It returns an `undo` object for `items unconsolidate --input`. `items distinct --input '{ "ids": [id, id] }'` marks items as not duplicates (`"distinct": false` takes it back).
 
 `skills invocation <id> --model on|off [--expect <revision>]` flips the model-invocation switch as the desktop does (see [Model invocation and session start](#model-invocation-and-session-start)): it returns whether anything changed, `approval` (`carried` or `draft`) and what happened to installed copies, and waits for the approval to reach GitHub. `context start [--project <folder>]` returns the session-start estimate for each agent, with every skill, file, hook and MCP server it counted.
+
+`repos scan <url>` returns what a [repository scan](#skills-from-github-repositories) found: the commit, licence, instruction files, and each skill and agent with its `key`, `path`, `status` (`new`, `identical` or `differs`), the library item it matches and whether it is offered (`selected`). `repos import <url>` imports what the scan offers, or the keys or paths given as `--select key,key`, into `--collection` (default `owner/repo`), and returns the source item's ID with what was imported, updated, unchanged or failed. `repos list` prints the public repository list. Dig deeper runs only from the desktop app.
 
 `items list --kind <kind>` narrows a list to one kind, and `--from <id>` to the items made from one item, wherever they are filed. Reading a source returns `madeFrom`, the items made from it.
 

@@ -77,6 +77,13 @@ machines list               # fetch, then every machine that reported to this li
 machines report             # share this machine's installs now (commit and push its workbench/machines/<id>.json)
 machines mark <machine id> --item <id> --location agents|claude|codex|copilot|project:<folder> [--unmark]
                             # ask a machine to install an approved item there on its next skills sync
+repos scan <url>            # a GitHub repository (github.com/owner/repo, optionally /tree/<ref>/<folder>): its skills, agent
+                            # definitions and AGENTS.md/CLAUDE.md files, each new, identical to a library item or different from one.
+                            # Fetches one commit into Kiln's machine-private cache; nothing is imported
+repos import <url> [--select key,key] [--collection "Name"]
+                            # copy what the scan offers (or the listed keys or paths) into the library as drafts, linked to a source
+                            # item for the repository; default collection owner/repo. Identical copies are skipped; nothing is installed
+repos list                  # the public skill repositories offered under Browse skill repositories
 providers detect
 observations list
 library export --file backup.json
@@ -155,6 +162,9 @@ try {
     // A carried approval is committed and pushed like any approval; wait so the process exits with it done.
     await router.publisher.idle();
   }
+  else if (resource === 'repos' && action === 'scan') result = await router.repos.scan({ url: id });
+  else if (resource === 'repos' && action === 'import') result = await router.repos.import({ url: id, confirm: true, ...(option('select') ? { select: option('select').split(',').map(key => key.trim()).filter(Boolean) } : {}), ...(option('collection') ? { collection: option('collection') } : {}) });
+  else if (resource === 'repos' && action === 'list') result = router.repos.registries();
   else if (resource === 'context' && action === 'start') result = router.call('context.sessionStart', option('project') ? { project: path.resolve(option('project')) } : {});
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));

@@ -12,8 +12,8 @@ import { Markdown } from './Markdown';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
 export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomEvent('kiln:agent-started', { detail: { kind } })); }
-const heading: Record<AgentKind, string> = { capture: 'notes', trial: 'experiment', derive: 'skill draft', distill: 'source analysis', chat: 'reply' };
-const entryLabel: Record<string, string> = Object.fromEntries(Object.entries(entryTypeInfo).map(([type, info]) => [type, info.plural]));
+const heading: Record<AgentKind, string> = { capture: 'notes', trial: 'experiment', derive: 'skill draft', distill: 'source analysis', chat: 'reply', 'distill-repo': 'repository analysis' };
+const entryLabel: Record<string, string> = { ...Object.fromEntries(Object.entries(entryTypeInfo).map(([type, info]) => [type, info.plural])), skill: 'skills' };
 const stepIcon: Record<AgentStep['kind'], typeof Terminal> = { status: Loader2, message: MessageSquare, reasoning: Brain, command: Terminal, search: Search, file: FileText, tool: Wrench, todo: ListChecks, error: AlertTriangle };
 export const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
 const kilobytes = (n: number) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;

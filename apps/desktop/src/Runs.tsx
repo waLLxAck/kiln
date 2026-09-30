@@ -60,7 +60,7 @@ export function RunsStatus({ jobs, items, onOpen, onOpenCollection }: Props) {
   const row = (job: AgentJob) => {
     const name = title(job.itemId) ?? job.focus?.title ?? 'Removed item', step = job.steps.at(-1)?.text && firstLine(job.steps.at(-1)!.text, 90);
     // A finished analysis says how many entries it made and opens the collection they were filed in.
-    const made = job.createdItemIds?.length ?? 0, analysis = (job.kind === 'distill' || job.kind === 'capture') && job.status === 'completed';
+    const made = job.createdItemIds?.length ?? 0, analysis = (job.kind === 'distill' || job.kind === 'distill-repo' || job.kind === 'capture') && job.status === 'completed';
     const detail = job.status === 'queued' ? 'Queued' : job.status === 'running' ? [job.phase, step !== job.phase && step].filter(Boolean).join(' · ') : job.error ? firstLine(job.error, 120) : job.status === 'completed' ? analysis && made ? `Done · ${made} entr${made === 1 ? 'y' : 'ies'}` : 'Done' : job.status[0].toUpperCase() + job.status.slice(1);
     return <li key={job.id} className={`run-row ${job.status}`} aria-label={`${runKindLabel[job.kind]} · ${name}`}>
       <span className="run-icon">{job.status === 'running' ? <Loader2 size={14} className="spin" /> : job.status === 'queued' ? <Clock size={14} /> : job.status === 'completed' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}</span>

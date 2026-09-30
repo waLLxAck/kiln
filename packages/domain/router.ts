@@ -21,6 +21,7 @@ import { HomeFiles } from '../home/service';
 import { SessionStartMeter } from '../home/session-start';
 import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
+import { RepoImports } from './repo-import';
 
 import { BackgroundFetch, pullFetched } from '../git/sync';
 import { GitQueue } from '../git/queue';
@@ -56,6 +57,8 @@ export class Router {
   readonly fleet: FleetService;
   /** Install into any project folder, enrolling it on first use. */
   readonly projects: ProjectInstalls;
+  /** Skills and agents from GitHub repositories: scan, preview, import, and the list of public skill repositories (repo-import.ts). */
+  readonly repos: RepoImports;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
@@ -66,6 +69,7 @@ export class Router {
     this.log = options.log ?? (() => {});
     this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
+    this.repos = new RepoImports(wb);
     this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
     this.sessionStart = new SessionStartMeter({ home: this.home.home, env: this.home.env, projects: () => [...wb.targets().filter(t => t.scope === 'project').map(t => t.root), ...this.home.savedProjects()] });
   }
@@ -170,6 +174,13 @@ export class Router {
       case 'items.consolidate': return this.consolidate(args);
       case 'items.unconsolidate': return this.unconsolidate(args);
       case 'items.distinct': return this.wb.markDistinct(args);
+      case 'repos.scan': return this.repos.scan(args);
+      case 'repos.preview': return this.repos.preview(args);
+      case 'repos.import': return this.repos.import(args);
+      case 'repos.source': return this.repos.source(args);
+      case 'repos.registries': return this.repos.registries();
+      case 'repos.saveRegistries': return this.repos.saveRegistries(args);
+      case 'repos.mine': return this.repos.mine(args);
       case 'agents.scan': return scanAgents(this.wb, args);
       case 'agents.import': return importAgents(this.wb, args);
       case 'skills.install': return this.installSkill(args);
