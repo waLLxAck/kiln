@@ -112,6 +112,8 @@ export default function App() {
   useEffect(() => { if (!chatOpen) setChatSeed(null); }, [chatOpen]);
   /** The item whose experiments grid was asked for from outside its page (the list's Test, quick search). */
   const [testRequest, setTestRequest] = useState<{ id: string; at: number }>();
+  /** An item quick search asked to score or tune; its page starts the score or opens Tune. */
+  const [itemRequest, setItemRequest] = useState<{ id: string; action: 'score' | 'tune'; at: number }>();
   // Duplicates: the group being consolidated (held here, since consolidating removes it from the snapshot), and every id in a group.
   const [consolidating, setConsolidating] = useState<DuplicateGroup | null>(null);
   const duplicateSet = useMemo(() => duplicateIds(snapshot?.duplicates ?? []), [snapshot?.duplicates]);
@@ -248,6 +250,8 @@ export default function App() {
     'new-collection': () => { setSection('library'); newCollection(); },
     'toggle-theme': toggleTheme,
     'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
+    'score-item': id => { if (id) revealFresh(id, () => setItemRequest({ id, action: 'score', at: Date.now() })); },
+    'tune-item': id => { if (id) revealFresh(id, () => setItemRequest({ id, action: 'tune', at: Date.now() })); },
     'check-updates': () => { navigate('settings'); void perform(() => checkUpdate(true), 'Checked for updates'); },
   });
   /**
@@ -507,7 +511,7 @@ export default function App() {
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
     <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
-      locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
+      locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} scores={snapshot.scores} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
       scroll={listScroll} empty={emptyState}
@@ -515,7 +519,7 @@ export default function App() {
   </section>;
   const itemPage = itemView && <div className="item-view">
     <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onAddToInstructions={append => { setHomeAppend(append); setSection('home'); }} onMachines={() => navigate('machines')} onUsage={() => navigate('usage')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onAddToInstructions={append => { setHomeAppend(append); setSection('home'); }} onMachines={() => navigate('machines')} onUsage={() => navigate('usage')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} request={itemRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));

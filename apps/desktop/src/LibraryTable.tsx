@@ -11,6 +11,7 @@ import { site, type GroupKey, type Sort, type SortKey } from './library-sort';
 import { SwipeToArchive } from './Swipe';
 import { DraftMark } from './item-editing';
 import { InvocationToggle } from './Invocation';
+import { ScoreBadge } from './Score';
 import { useListKeys } from './keyboard';
 import type { useItemDrag } from './ItemDrag';
 
@@ -20,6 +21,7 @@ type Props = {
   row: (item: Item) => Row; locations: Location[]; installations: Installation[]; approvals: Approval[];
   /** Per skill: whether a model may invoke it (the Invoked by column), and its switch. */
   invocation: Snapshot['invocation']; onInvocation: (item: Item, model: boolean) => void;
+  /** Per item: its latest score (the Score column). */ scores?: Snapshot['scores'];
   /** The order shown; null while a search orders by relevance, so no column heading shows as sorted. */
   selected: string; picked: string[]; sort: Sort; onSort: (key: SortKey) => void;
   onClick: (event: MouseEvent, item: Item) => void; onMenu: (event: MouseEvent, item: Item) => void;
@@ -40,12 +42,13 @@ type Props = {
  * dragging it up or down (or by its icon) carries it to a collection in the sidebar. Columns can be dragged into another order and
  * resized from their edges (LibraryHead.tsx); the Title cell holds only the title, with the description as the row's tooltip.
  */
-export function LibraryTable({ groups, group, collectionShown, row, locations, installations, approvals, invocation, onInvocation, selected, picked, sort, onSort, onClick, onMenu, onFocusRow, onPick, onOpen, onSelectAll, shortcut, canSwipe, onArchive, drag, onCopy, onTest, installEntries, scroll, empty, hint }: Props) {
+export function LibraryTable({ groups, group, collectionShown, row, locations, installations, approvals, invocation, onInvocation, scores = {}, selected, picked, sort, onSort, onClick, onMenu, onFocusRow, onPick, onOpen, onSelectAll, shortcut, canSwipe, onArchive, drag, onCopy, onTest, installEntries, scroll, empty, hint }: Props) {
   const [folded, setFolded] = useState<string[]>([]);
   const [install, setInstall] = useState<{ x: number; y: number; item: Item } | null>(null);
   const [layout, setLayout] = useColumnLayout();
   // Invoked by gives way while no skill is listed, as Collection does inside a collection: it would be dashes only.
-  const gone: ColumnKey[] = groups.some(g => g.items.some(i => i.kind === 'skill')) ? [] : ['model'];
+  // Score likewise gives way while nothing listed has been scored.
+  const gone: ColumnKey[] = [...(groups.some(g => g.items.some(i => i.kind === 'skill')) ? [] : ['model' as const]), ...(groups.some(g => g.items.some(i => scores[i.id])) ? [] : ['score' as const])];
   const shown = visibleColumns(layout.order, collectionShown, [...(layout.hidden ?? []), ...gone]), tracks = gridTracks(shown, layout.widths);
   const many = picked.length > 1;
   // Rows in the order shown, skipping folded groups: what the arrows walk through.
@@ -85,6 +88,7 @@ export function LibraryTable({ groups, group, collectionShown, row, locations, i
             installed: <InstalledCell item={item} locations={locations} installations={installations} />,
             model: <InvocationToggle item={item} listing={invocation[item.id]} onToggle={onInvocation} />,
             test: <TestCell item={item} trial={trial} place={place} />,
+            score: scores[item.id] ? <ScoreBadge score={scores[item.id]} item={item} /> : <span className="faint">—</span>,
             updatedAt: <span className="muted" title={`Updated ${date(item.updatedAt)} · added ${date(item.createdAt)}`}>{date(item.updatedAt)}</span>,
           };
           const swipes = !many && canSwipe(item);

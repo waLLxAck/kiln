@@ -88,7 +88,7 @@ const problemLines = StateField.define<DecorationSet>({
 });
 
 /** The CodeMirror editor behind `CodeEditor`; loaded on demand. */
-export default function CodeMirrorView({ value, onChange, language, ariaLabel, readOnly = false, onSave, diagnostics, diagnosticsTitle, autoFocus = false }: CodeEditorProps) {
+export default function CodeMirrorView({ value, onChange, language, ariaLabel, readOnly = false, onSave, diagnostics, diagnosticsTitle, autoFocus = false, goto }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null);
   const last = useRef(value), separator = useRef(lineSeparatorFor(value));
   const change = useRef(onChange), save = useRef(onSave);
@@ -129,6 +129,7 @@ export default function CodeMirrorView({ value, onChange, language, ariaLabel, r
   useEffect(() => { view.current?.dispatch({ effects: [compartments.language.reconfigure(languageSupport(language)), compartments.readOnly.reconfigure(EditorState.readOnly.of(readOnly)), compartments.label.reconfigure(EditorView.contentAttributes.of({ 'aria-label': ariaLabel }))] }); }, [language, readOnly, ariaLabel]);
   useEffect(() => { view.current?.dispatch({ effects: setProblems.of(diagnostics ?? []) }); }, [diagnostics]);
   const jump = (line: number) => { const editor = view.current; if (!editor) return; const target = editor.state.doc.line(Math.min(line, editor.state.doc.lines)); editor.dispatch({ selection: { anchor: target.from }, scrollIntoView: true }); editor.focus(); };
+  useEffect(() => { if (goto) jump(goto.line); }, [goto?.at]);
   return <>
     <div className="code-editor-view" ref={host} />
     {diagnostics && diagnostics.length > 0 && <div className="code-diagnostics" role="status"><b>{diagnosticsTitle ?? 'Problems'}</b><ul>{diagnostics.map((d, i) => <li key={`${i}:${d.message}`}>{d.line ? <button type="button" className="text-button" onClick={() => jump(d.line!)} title="Go to this line">Line {d.line}</button> : null}<span>{d.message}</span></li>)}</ul></div>}

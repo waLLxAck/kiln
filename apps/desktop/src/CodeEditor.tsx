@@ -8,6 +8,7 @@ export type CodeEditorProps = {
   /** Ctrl/Cmd+S inside the editor. Without it the key goes on to the surrounding view. */ onSave?: () => void;
   diagnostics?: EditorDiagnostic[]; /** Heading for the diagnostics list. */ diagnosticsTitle?: string; className?: string;
   /** Puts the cursor in the editor as soon as it is shown, e.g. for a file just added. */ autoFocus?: boolean;
+  /** Moves the cursor to this 1-based line and scrolls it into view, each time `at` changes (a score's line link). */ goto?: { line: number; at: number };
 };
 // CodeMirror is loaded only when an editor is first shown, so the app starts without it. The placeholder has no label, so
 // anything looking for the editor by its label waits for the real one.
