@@ -1,5 +1,5 @@
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
-import { Activity, Archive, ChevronDown, ChevronRight, Download, FileCog, FlaskConical, Folder, Inbox, Layers3, Monitor, Moon, PencilLine, Plus, Settings, ShieldCheck, Sun, Trash2 } from 'lucide-react';
+import { Activity, Archive, BarChart3, ChevronDown, ChevronRight, Download, FileCog, FlaskConical, Folder, Inbox, Layers3, Monitor, Moon, PencilLine, Plus, Settings, ShieldCheck, Sun, Trash2 } from 'lucide-react';
 import type { Item } from '../../../packages/protocol/schema';
 import { ancestorsOf, depthOf, isWithin, leafOf } from '../../../packages/domain/collections';
 import { CollectionNameInput, type useCollectionDrag } from './Collections';
@@ -11,7 +11,7 @@ import './shell.css';
 /** Collection filter for items outside every collection. Not a valid collection name, so it cannot clash with one. */
 export const UNFILED = '\u0000unfiled';
 const stageIcon: Record<Stage, ReactNode> = { drafts: <PencilLine size={16} />, testing: <FlaskConical size={16} />, approved: <ShieldCheck size={16} />, installed: <Download size={16} /> };
-export const tools = [{ id: 'experiments', label: 'Experiments', icon: FlaskConical }, { id: 'home', label: 'Config files', icon: FileCog }, { id: 'machines', label: 'Machines', icon: Monitor }, { id: 'activity', label: 'Activity', icon: Activity }];
+export const tools = [{ id: 'experiments', label: 'Experiments', icon: FlaskConical }, { id: 'home', label: 'Config files', icon: FileCog }, { id: 'machines', label: 'Machines', icon: Monitor }, { id: 'activity', label: 'Activity', icon: Activity }, { id: 'usage', label: 'Usage', icon: BarChart3 }];
 
 type Props = {
   style: CSSProperties; theme: string; onTheme: () => void;

@@ -1,8 +1,8 @@
 import { Markdown } from './Markdown';
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Activity, Archive, ArrowLeft, Check, ChevronRight, Copy, CornerDownLeft, Download, ExternalLink, FileCog, FlaskConical, FolderPlus, Layers3, MessageSquare, Monitor, Moon, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, BarChart3, Check, ChevronRight, Copy, CornerDownLeft, Download, ExternalLink, FileCog, FlaskConical, FolderPlus, Gauge, Layers3, MessageSquare, Monitor, Moon, Plus, RefreshCw, Search, Settings, Trash2, WandSparkles, X } from 'lucide-react';
 import type { Item, ItemDetail, Snapshot } from '../../../packages/protocol/schema';
-import { resolveVariables } from '../../../packages/domain/text';
+import { resolveVariables, scoreable } from '../../../packages/domain/text';
 import { api, variablesIn } from './api';
 import { Badge, KindIcon } from './components';
 import type { KilnCommand } from './command-names';
@@ -28,11 +28,12 @@ const sections = [
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, detail: 'Repository, skill locations, agent, theme, shortcut and updates.', keywords: 'preferences shortcut updates' },
   { id: 'archive', label: 'Archive', icon: <Archive size={15} />, detail: 'Archived and rejected items.' },
   { id: 'trash', label: 'Trash', icon: <Trash2 size={15} />, detail: 'Deleted items, until you empty the trash.', keywords: 'deleted' },
+  { id: 'usage', label: 'Usage', icon: <BarChart3 size={15} />, detail: 'Which skills your agents used, and estimated token spend, from this machine\'s session logs.', keywords: 'analytics spend cost tokens adoption' },
 ] as const;
 /** What Enter does: sources are read in Kiln, links open in the browser, everything else is pasted. */
 const defaultAction = (item: Item) => item.kind === 'source' ? 'kiln' : item.kind === 'link' ? 'link' : 'copy';
 const defaultVerb = (item: Item) => ({ kiln: 'Open in Kiln', link: 'Open link', copy: 'Copy' })[defaultAction(item)];
-const kindLabel = (kind: Item['kind']) => kind[0].toUpperCase() + kind.slice(1);
+const kindLabel = (kind: Item['kind']) => kind === 'mcp' ? 'MCP server' : kind[0].toUpperCase() + kind.slice(1);
 const openLabel = (item: Item) => item.kind === 'source' ? 'Open original' : item.kind === 'link' ? 'Open link in browser' : ['file', 'image', 'reference'].includes(item.kind) ? 'Reveal stored file' : 'Open stored file';
 /** The main window's rule: a saved choice, else the library setting, with "system" following the OS. */
 const applyTheme = (setting?: string) => { const chosen = localStorage.getItem('kiln-theme') ?? setting; document.documentElement.dataset.theme = chosen === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : chosen ?? 'light'; };
@@ -154,6 +155,8 @@ export default function Palette() {
     { id: 'kiln', label: 'Open in Kiln', icon: <ChevronRight size={15} />, run: () => run(current, 'kiln') },
     ...(item.kind === 'source' ? [] : [{ id: 'test', label: 'Test…', icon: <FlaskConical size={15} />, run: () => run(current, 'test') }]),
     { id: 'ask', label: 'Ask the agent', icon: <MessageSquare size={15} />, run: () => command({ name: 'ask-item', id: item.id }) },
+    ...(scoreable(item.kind) ? [{ id: 'score', label: 'Score', icon: <Gauge size={15} />, run: () => command({ name: 'score-item', id: item.id }) }] : []),
+    ...(item.kind === 'skill' ? [{ id: 'tune', label: 'Tune…', icon: <WandSparkles size={15} />, run: () => command({ name: 'tune-item', id: item.id }) }] : []),
     { id: 'open', label: openLabel(item), icon: <ExternalLink size={15} />, run: () => openStored(item) },
   ] : [];
   const inActions = mode === 'actions' && item;

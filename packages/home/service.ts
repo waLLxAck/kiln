@@ -141,6 +141,13 @@ export class HomeFiles {
     atomicWrite(entry.path, bytes);
     return this.read(data.key);
   }
+  /** The key Config files lists `file` under (a file the user adds later gets the same `custom-` key), so versions kept for it show there. */
+  keyFor(file: string) {
+    const resolved = path.resolve(file), entry = configCatalog(this.home, this.projects(), this.env, this.platform).find(e => path.resolve(e.path) === resolved);
+    return entry?.key ?? `custom-${digest(resolved.toLowerCase()).slice(0, 16)}`;
+  }
+  /** Keeps `bytes` as a version of `file` before Kiln changes it from elsewhere (MCP installs), with the same 30-version limit as the editor. */
+  keepVersion(file: string, bytes: Buffer) { const key = this.keyFor(file); this.keep(key, file, bytes); return key; }
   async backups(key: string): Promise<HomeBackup[]> {
     await this.entry(key); const dir = this.backupDir(key);
     if (!fs.existsSync(dir)) return [];

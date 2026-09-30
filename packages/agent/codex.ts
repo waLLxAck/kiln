@@ -29,6 +29,12 @@ export type RunInput = {
   resume?: string;
   /** Folders the agent may write to besides its working folder. Absent means a read-only run. */
   writable?: string[];
+  /**
+   * The Tune profile: the agent may edit files and run commands in its working folder (`workdir`) and start subagents. Absent
+   * for every other run. Codex confines the writes with its workspace-write sandbox (none on Windows); Claude Code's file tools
+   * stay in the folder, but its Bash is not confined.
+   */
+  workspaceWrite?: boolean;
   signal: AbortSignal;
   onEvent: (event: AgentEvent) => void;
   onProcess?: (pid: number, running: boolean) => void;
@@ -66,7 +72,8 @@ export function codexArguments(input: RunInput, files: { schema: string; result:
   args.push('--ignore-user-config', '--skip-git-repo-check', '--json', '--output-last-message', files.result, '-c', 'approval_policy="never"', '-c', 'web_search="live"');
   if (!input.persist) args.push('--ephemeral');
   // Codex has no Windows sandbox: workspace-write there rejects every command once approvals are off, so a run that must write goes unsandboxed.
-  if (input.writable?.length) args.push('-c', process.platform === 'win32' ? 'sandbox_mode="danger-full-access"' : 'sandbox_mode="workspace-write"', '-c', `sandbox_workspace_write.writable_roots=${tomlPaths(input.writable)}`);
+  const writable = input.writable?.length ? input.writable : input.workspaceWrite ? [input.workdir ?? input.folder] : [];
+  if (writable.length) args.push('-c', process.platform === 'win32' ? 'sandbox_mode="danger-full-access"' : 'sandbox_mode="workspace-write"', '-c', `sandbox_workspace_write.writable_roots=${tomlPaths(writable)}`);
   else args.push('-c', 'sandbox_mode="read-only"');
   if (input.schema) args.push('--output-schema', files.schema);
   if (input.model) args.push('-m', input.model);

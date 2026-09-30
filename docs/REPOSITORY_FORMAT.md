@@ -22,11 +22,14 @@ workbench/
   experiments/<uuid>.json
   activity/<uuid>.json
   analyses/<uuid>.json    # what each analysis of a source produced
+  scores/<uuid>.json      # each writing-for-agents score of an exact revision
 ```
 
 `kiln.json` declares `format: kiln-library`, `schemaVersion: 1`, a stable `repositoryId`, `library: workbench`, and `infrastructureVersion`. Kiln rejects unsupported schema versions and does not downgrade newer infrastructure.
 
-Item kind `source` marks material an agent analysed (a pasted chat, a page, files, a video). Items made from it name it in `origin`. `analyses/<job id>.json` records each completed analysis: provider, model, effort, token usage, times, summary, takeaway, skipped notes, counts by kind, the created item IDs and the collection. It never holds run steps, commands, paths or the CLI session, which stay machine-private. Records are written once, exported with the library and removed when their source is purged.
+Item kind `mcp` holds one MCP server definition as JSON (`name`, `transport`, `command`/`args`/`env` or `url`/`headers`, `description`); values refer to environment variables as `${NAME}` and never hold secrets. Item kind `source` marks material an agent analysed (a pasted chat, a page, files, a video). Items made from it name it in `origin`. `analyses/<job id>.json` records each completed analysis: provider, model, effort, token usage, times, summary, takeaway, skipped notes, counts by kind, the created item IDs and the collection. It never holds run steps, commands, paths or the CLI session, which stay machine-private. Records are written once, exported with the library and removed when their source is purged.
+
+`scores/<job id>.json` records one Score run: the item and the exact revision it scored, provider, model, effort, token usage, times, the score (an integer from 0 to 100), the summary and the improvements (title, why, severity `high`, `medium` or `low`, an optional 1-based line in that revision's content, and a suggestion). A score of any other revision than the item's current one is stale. Like analyses, scores hold no run steps or paths, are written once, exported with the library and removed when their item is purged.
 
 Item status is one of `captured`, `testing`, `approved`, `rejected`, or `archived`. Libraries written before v0.2 stored `inbox` for newly captured items; Kiln reads that as `captured` and rewrites the file on its next save.
 

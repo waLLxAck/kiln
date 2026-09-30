@@ -3,8 +3,11 @@ import { z } from 'zod';
 
 export const idSchema = z.string().uuid();
 export const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
-/** `source` is material an agent analysed into entries (a pasted chat, a page, a video); those entries point back to it through `origin`. */
-export const kindSchema = z.enum(['prompt', 'skill', 'agent', 'instruction', 'link', 'insight', 'technique', 'tool', 'resource', 'image', 'file', 'reference', 'source']);
+/**
+ * `source` is material an agent analysed into entries (a pasted chat, a page, a video); those entries point back to it through `origin`.
+ * `mcp` is an MCP server definition (packages/domain/mcp-format.ts), installed as one entry in each client's MCP config.
+ */
+export const kindSchema = z.enum(['prompt', 'skill', 'agent', 'instruction', 'link', 'insight', 'technique', 'tool', 'resource', 'image', 'file', 'reference', 'source', 'mcp']);
 export const statusSchema = z.enum(['captured', 'testing', 'approved', 'rejected', 'archived']);
 /** Libraries written before v0.2 stored `inbox`; read it as `captured`. Files are rewritten on their next save. */
 const legacyStatuses: Record<string, string> = { inbox: 'captured' };
@@ -80,6 +83,25 @@ export const analysisSchema = z.object({
   counts: z.record(z.string(), z.number().int().nonnegative()), created: z.array(idSchema).max(200), collection: z.string(),
 });
 export type Analysis = z.infer<typeof analysisSchema>;
+/** One change a score suggests. `line` is 1-based in the scored revision's content; absent when it applies to the whole document. */
+export const scoreImprovementSchema = z.object({
+  title: z.string().min(1).max(200), why: z.string().max(2000), severity: z.enum(['high', 'medium', 'low']),
+  line: z.number().int().positive().optional(), suggestion: z.string().max(4000),
+});
+/**
+ * One score of an exact revision against Kiln's writing-for-agents guidance, shared with the library like `analysisSchema`. The run
+ * itself stays in the machine-private job. A score of an earlier revision is stale: it says nothing about the current one.
+ */
+export const scoreSchema = z.object({
+  schemaVersion: z.literal(1), id: idSchema, itemId: idSchema, revision: hashSchema, provider: z.enum(['codex', 'claude']),
+  model: z.string().max(200), effort: z.string().max(40), usage: z.object({ input: z.number(), cached: z.number(), output: z.number(), reasoning: z.number() }).optional(),
+  startedAt: z.string(), finishedAt: z.string(), score: z.number().int().min(0).max(100), summary: z.string().max(2000),
+  improvements: z.array(scoreImprovementSchema).max(50),
+});
+export type Score = z.infer<typeof scoreSchema>;
+export type ScoreImprovement = z.infer<typeof scoreImprovementSchema>;
+/** The latest score of a live item, for the library: the number and the revision it scored. */
+export type ScoreSummary = { score: number; revision: string; finishedAt: string };
 export type Item = z.infer<typeof itemSchema>;
 export type Revision = z.infer<typeof revisionSchema>;
 export type Authoring = z.infer<typeof authoringSchema>;
@@ -96,7 +118,7 @@ export type Bundle = z.infer<typeof bundleSchema>;
 export type DuplicateGroup = { ids: string[]; match: 'identical' | 'same-text' | 'similar'; similarity: number };
 /** Pairs of items the user said are not duplicates, stored in the library (`workbench/distinct.json`) so every machine agrees. */
 export const distinctSchema = z.object({ schemaVersion: z.literal(1), pairs: z.array(z.tuple([idSchema, idSchema])).max(20_000) });
-export type ItemDetail = { item: Item; revision: Revision; revisions: Revision[]; approvals: Approval[]; trials: Trial[]; observations: Observation[]; validation: string[]; duplicates: Item[]; /** Recorded analyses of this source, newest first. */ analyses: Analysis[] };
+export type ItemDetail = { item: Item; revision: Revision; revisions: Revision[]; approvals: Approval[]; trials: Trial[]; observations: Observation[]; validation: string[]; duplicates: Item[]; /** Recorded analyses of this source, newest first. */ analyses: Analysis[]; /** Recorded scores of this item, newest first, any revision. */ scores?: Score[] };
 export type Plan = { id: string; itemId: string; revision: string; targetId: string; destination: string; operation: 'create' | 'replace'; expectedState: string | null; proposedHash: string; files: Record<string, string>; createdAt: string; expiresAt: string; blocked: string | null };
 export type Receipt = { id: string; planId: string; itemId: string; revision: string; targetId: string; destination: string; hash: string; previousHash: string | null; previousFiles: Record<string, string> | null; previousRevision: string | null; status: 'applied' | 'rolled_back' | 'uninstalled' | 'partial'; createdAt: string; newSessionRequired: true; error?: string };
 export type Activity = { id: string; at: string; itemId: string | null; kind: string; message: string; revision?: string };
@@ -119,7 +141,7 @@ export type PublishJob = { id: string; itemId: string; revision: string; title: 
 /** Result of a local update check. `available` is the newest installer in the update source whose version is above the running app. */
 export type UpdateStage = { state: 'idle' } | { state: 'preparing'; version: string; progress: number } | { state: 'ready'; version: string } | { state: 'failed'; message: string };
 export type UpdateStatus = { current: string; source: string; /** github: published releases (the default for published builds); setting: a folder chosen in Settings; build: the release folder of the repository this build came from; off: checks disabled; none: nothing to watch. */ sourceKind: 'github' | 'setting' | 'build' | 'off' | 'none'; packaged: boolean; /** For GitHub, `path` is the release page. */ available: { version: string; path: string } | null; stage: UpdateStage; /** Git commit this build was made from, when known. */ commit: string; /** False for a watched folder on macOS and Linux: that path runs the Windows installer. */ supported?: boolean; /** GitHub only. app: downloads and installs in place; download: the new version is downloaded from the release page by hand. */ install?: 'app' | 'download'; /** GitHub only: when the last check finished. */ checkedAt?: string; error?: string };
-export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; /** Commits on GitHub, as of the last fetch, that this machine has not pulled. */ behind: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string; /** Per item id: times copied, and every usage observation (copies, opens, tests, agent use). Items never used are absent. */ usage: Usage; /** Likely duplicates among live items, not counting pairs marked as distinct. */ duplicates: DuplicateGroup[]; /** Per live skill id: whether its current revision lets each client's model invoke it (packages/domain/invocation.ts). */ invocation: Record<string, SkillListing> };
+export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: Trial[]; approvals: Approval[]; targets: Target[]; receipts: Receipt[]; activity: Activity[]; warnings: string[]; collections: string[]; git: { attached: boolean; branch: string; changes: string[]; commit: string; remote: string; ahead: number; /** Commits on GitHub, as of the last fetch, that this machine has not pulled. */ behind: number; error?: string }; repository: RepositoryState; /** Approvals on their way to GitHub, newest first. Filled by the router; the bare workbench reports none. */ publish: PublishJob[]; settings: Settings; installs: Installs; coverage: string; /** Per item id: times copied, and every usage observation (copies, opens, tests, agent use). Items never used are absent. */ usage: Usage; /** Likely duplicates among live items, not counting pairs marked as distinct. */ duplicates: DuplicateGroup[]; /** Per live skill id: whether its current revision lets each client's model invoke it (packages/domain/invocation.ts). */ invocation: Record<string, SkillListing>; /** Per live item id: its latest score (stale when `revision` is not the item's). Items never scored are absent. */ scores?: Record<string, ScoreSummary> };
 export type Usage = Record<string, { copied: number; used: number }>;
 /**
  * Whether a skill's own files let the model invoke it on its own (packages/domain/invocation.ts). `claude`: no

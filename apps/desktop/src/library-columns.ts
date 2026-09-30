@@ -1,7 +1,7 @@
 import type { SortKey } from './library-sort';
 
 /** The library table's columns. The kind icon belongs to Title; Collection gives way when a collection is chosen in the rail. */
-export type ColumnKey = 'collection' | 'title' | 'status' | 'installed' | 'model' | 'test' | 'updatedAt';
+export type ColumnKey = 'collection' | 'title' | 'status' | 'installed' | 'model' | 'test' | 'score' | 'updatedAt';
 /**
  * `width` is the default width in px; `min` and `max` bound what a resize can set. Title has no width of its own: it takes the
  * space the other columns leave, never less than its `min`.
@@ -15,13 +15,15 @@ export const COLUMNS: Record<ColumnKey, Column> = {
   /** Whether a model may invoke the skill on its own, with its switch (Invocation.tsx). Shown only while a skill is listed. */
   model: { key: 'model', label: 'Invoked by', sortable: false, width: 124, min: 96, max: 240 },
   test: { key: 'test', label: 'Last test', sortable: false, width: 130, min: 90, max: 400 },
+  /** The latest writing-for-agents score (Score.tsx), faded when it scored an earlier revision. Shown only while a scored item is listed. */
+  score: { key: 'score', label: 'Score', sortable: false, width: 64, min: 56, max: 140 },
   updatedAt: { key: 'updatedAt', label: 'Updated', sortable: true, width: 110, min: 80, max: 200 },
 };
 /**
  * Collection first: it is what people look at before the title. Invoked by comes before Installed so a row's hover actions,
  * which cover the right end of the row, never hide its switch.
  */
-export const DEFAULT_ORDER: ColumnKey[] = ['collection', 'title', 'status', 'model', 'installed', 'test', 'updatedAt'];
+export const DEFAULT_ORDER: ColumnKey[] = ['collection', 'title', 'status', 'model', 'installed', 'test', 'score', 'updatedAt'];
 export const sortKeyOf = (key: ColumnKey) => key as SortKey;
 
 /** A stored order made whole: unknown keys and repeats dropped, columns it does not name added where the default has them. */
@@ -116,8 +118,8 @@ export function resizeEdge(shown: ColumnKey[], key: ColumnKey): 'left' | 'right'
   return shown.indexOf(key) < shown.indexOf('title') ? 'right' : 'left';
 }
 
-/** Columns that give way as the window narrows (see library.css): Last test first, then Installed, Invoked by and Collection. */
-const dropsAt = { mid: ['test'], narrow: ['test', 'installed', 'model', 'collection'] } as const;
+/** Columns that give way as the window narrows (see library.css): Last test first, then Installed, Invoked by, Score and Collection. */
+const dropsAt = { mid: ['test'], narrow: ['test', 'installed', 'model', 'score', 'collection'] } as const;
 /**
  * A column's grid track. It never grows past its width, and shrinks toward its minimum only when the window cannot fit every
  * width with Title at its minimum, so saved widths never make the table wider than the window.
