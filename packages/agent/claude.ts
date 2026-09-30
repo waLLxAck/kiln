@@ -6,16 +6,19 @@ import type { RunInput } from './codex';
 
 /**
  * Command line for one Claude Code turn. First turns get read-only tools and a JSON schema; a continued conversation (`--resume`) that may
- * change the library additionally gets Bash, Write and Edit with `--add-dir` for the folders it may touch.
+ * change the library additionally gets Bash, Write and Edit with `--add-dir` for the folders it may touch. A Tune run (`workspaceWrite`)
+ * gets those in its working folder plus the Agent tool for its field trial.
  */
 export function claudeArguments(input: RunInput): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--setting-sources', '', '--strict-mcp-config'];
   if (input.resume) args.push('--resume', input.resume);
   if (input.schema) args.push('--json-schema', JSON.stringify(input.schema));
   if (input.writable?.length) args.push('--tools', 'Read,Glob,Grep,Bash,Write,Edit', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', ...input.writable.flatMap(dir => ['--add-dir', dir]), '--max-turns', '80');
+  // Tune: edits and commands in its working folder and a subagent for the field trial. No --add-dir: the file tools stay in the folder.
+  else if (input.workspaceWrite) args.push('--tools', 'Read,Glob,Grep,Bash,Write,Edit,Agent', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'Agent', '--max-turns', '200');
   else args.push('--tools', 'Read,Glob,Grep,WebFetch,WebSearch', '--allowedTools', 'WebFetch', 'WebSearch', '--permission-mode', 'default', '--max-turns', '40');
   // Repository trials still need read access to their private attachment folder. No write tools are added.
-  if (input.workdir && input.workdir !== input.folder && !input.writable?.length) args.push('--add-dir', input.folder);
+  if (input.workdir && input.workdir !== input.folder && !input.writable?.length && !input.workspaceWrite) args.push('--add-dir', input.folder);
   if (input.model) args.push('--model', input.model);
   return args;
 }

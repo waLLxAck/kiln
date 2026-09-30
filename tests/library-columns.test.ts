@@ -3,37 +3,37 @@ import assert from 'node:assert/strict';
 import { COLUMNS, DEFAULT_ORDER, clampWidth, gridColumns, gridTracks, isDefaultLayout, isDefaultOrder, moveColumn, normalizeHidden, normalizeOrder, normalizeWidths, parseLayout, resetWidth, resizeEdge, setHidden, setWidth, stepColumn, storedLayout, visibleColumns } from '../apps/desktop/src/library-columns';
 
 test('Collection leads the default order and gives way while a collection is chosen', () => {
-  assert.deepEqual(DEFAULT_ORDER, ['collection', 'title', 'status', 'model', 'installed', 'test', 'updatedAt']);
-  assert.deepEqual(visibleColumns(DEFAULT_ORDER, true), ['title', 'status', 'model', 'installed', 'test', 'updatedAt']);
+  assert.deepEqual(DEFAULT_ORDER, ['collection', 'title', 'status', 'model', 'installed', 'test', 'score', 'updatedAt']);
+  assert.deepEqual(visibleColumns(DEFAULT_ORDER, true), ['title', 'status', 'model', 'installed', 'test', 'score', 'updatedAt']);
 });
 test('a stored order is repaired: unknown and repeated keys go, missing columns come back where the default has them', () => {
-  assert.deepEqual(normalizeOrder(['title', 'title', 'nope', 'updatedAt', 'collection']), ['title', 'updatedAt', 'status', 'model', 'installed', 'test', 'collection']);
+  assert.deepEqual(normalizeOrder(['title', 'title', 'nope', 'updatedAt', 'collection']), ['title', 'updatedAt', 'status', 'model', 'installed', 'test', 'score', 'collection']);
   assert.deepEqual(normalizeOrder(null), DEFAULT_ORDER);
   assert.deepEqual(normalizeOrder('broken'), DEFAULT_ORDER);
   assert.ok(isDefaultOrder(normalizeOrder([])));
 });
 test('moving a column puts it before the column at the drop index; dropping next to itself changes nothing', () => {
-  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'title', 0, false), ['title', 'collection', 'status', 'model', 'installed', 'test', 'updatedAt']);
-  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'collection', 7, false), ['title', 'status', 'model', 'installed', 'test', 'updatedAt', 'collection']);
-  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'updatedAt', 2, false), ['collection', 'title', 'updatedAt', 'status', 'model', 'installed', 'test']);
+  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'title', 0, false), ['title', 'collection', 'status', 'model', 'installed', 'test', 'score', 'updatedAt']);
+  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'collection', 8, false), ['title', 'status', 'model', 'installed', 'test', 'score', 'updatedAt', 'collection']);
+  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'updatedAt', 2, false), ['collection', 'title', 'updatedAt', 'status', 'model', 'installed', 'test', 'score']);
   assert.equal(moveColumn(DEFAULT_ORDER, 'status', 2, false), DEFAULT_ORDER);
   assert.equal(moveColumn(DEFAULT_ORDER, 'status', 3, false), DEFAULT_ORDER);
 });
 test('with Collection hidden, moves count only visible columns and Collection keeps its place', () => {
   // Visible: title, status, installed, model, test, updatedAt. Status to the front goes before Title, after the hidden Collection.
-  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'status', 0, true), ['collection', 'status', 'title', 'model', 'installed', 'test', 'updatedAt']);
+  assert.deepEqual(moveColumn(DEFAULT_ORDER, 'status', 0, true), ['collection', 'status', 'title', 'model', 'installed', 'test', 'score', 'updatedAt']);
   assert.deepEqual(stepColumn(DEFAULT_ORDER, 'title', -1, true), DEFAULT_ORDER);
 });
 test('Move left and Move right step one visible column and stop at the ends', () => {
-  assert.deepEqual(stepColumn(DEFAULT_ORDER, 'title', -1, false), ['title', 'collection', 'status', 'model', 'installed', 'test', 'updatedAt']);
-  assert.deepEqual(stepColumn(DEFAULT_ORDER, 'title', 1, false), ['collection', 'status', 'title', 'model', 'installed', 'test', 'updatedAt']);
+  assert.deepEqual(stepColumn(DEFAULT_ORDER, 'title', -1, false), ['title', 'collection', 'status', 'model', 'installed', 'test', 'score', 'updatedAt']);
+  assert.deepEqual(stepColumn(DEFAULT_ORDER, 'title', 1, false), ['collection', 'status', 'title', 'model', 'installed', 'test', 'score', 'updatedAt']);
   assert.deepEqual(stepColumn(DEFAULT_ORDER, 'updatedAt', 1, false), DEFAULT_ORDER);
   assert.deepEqual(stepColumn(DEFAULT_ORDER, 'collection', -1, false), DEFAULT_ORDER);
 });
 test('grid tracks follow the order, Title takes the flexible space, and narrow widths drop the same columns as the CSS', () => {
   const tracks = gridTracks(['title', 'collection', 'status']);
   assert.equal(tracks.full, 'minmax(180px, 1fr) minmax(80px, 200px) minmax(100px, 150px)');
-  assert.equal(gridTracks(DEFAULT_ORDER).mid, 'minmax(80px, 200px) minmax(180px, 1fr) minmax(100px, 150px) minmax(96px, 124px) minmax(90px, 150px) minmax(80px, 110px)');
+  assert.equal(gridTracks(DEFAULT_ORDER).mid, 'minmax(80px, 200px) minmax(180px, 1fr) minmax(100px, 150px) minmax(96px, 124px) minmax(90px, 150px) minmax(56px, 64px) minmax(80px, 110px)');
   assert.equal(gridTracks(DEFAULT_ORDER).narrow, 'minmax(180px, 1fr) minmax(100px, 150px) minmax(80px, 110px)');
 });
 test('set widths cap the tracks, so a narrow window squeezes columns toward their minimums instead of overflowing', () => {
@@ -58,8 +58,8 @@ test('stored widths are repaired: unknown keys, Title, non-numbers and defaults 
   assert.deepEqual(normalizeWidths([120, 130]), {});
 });
 test('the layout reads the order-only format of 0.23.0, the current format, and anything broken as the default', () => {
-  assert.deepEqual(parseLayout(['title', 'collection']), { order: ['title', 'collection', 'status', 'model', 'installed', 'test', 'updatedAt'], widths: {} });
-  assert.deepEqual(parseLayout({ order: ['status', 'collection', 'title'], widths: { status: 200 } }), { order: ['status', 'collection', 'title', 'model', 'installed', 'test', 'updatedAt'], widths: { status: 200 } });
+  assert.deepEqual(parseLayout(['title', 'collection']), { order: ['title', 'collection', 'status', 'model', 'installed', 'test', 'score', 'updatedAt'], widths: {} });
+  assert.deepEqual(parseLayout({ order: ['status', 'collection', 'title'], widths: { status: 200 } }), { order: ['status', 'collection', 'title', 'model', 'installed', 'test', 'score', 'updatedAt'], widths: { status: 200 } });
   assert.deepEqual(parseLayout({ widths: { collection: 90 } }), { order: DEFAULT_ORDER, widths: { collection: 90 } });
   for (const broken of [null, 'x', 7, { order: 'x', widths: 'y' }]) assert.ok(isDefaultLayout(parseLayout(broken)));
 });
@@ -87,21 +87,22 @@ test("handles take their column's grid position at each window width, and none w
   assert.deepEqual(at.collection, { full: 1, mid: 1, narrow: 0 });
   assert.deepEqual(at.model, { full: 4, mid: 4, narrow: 0 });
   assert.deepEqual(at.test, { full: 6, mid: 0, narrow: 0 });
-  assert.deepEqual(at.updatedAt, { full: 7, mid: 6, narrow: 3 });
+  assert.deepEqual(at.score, { full: 7, mid: 6, narrow: 0 });
+  assert.deepEqual(at.updatedAt, { full: 8, mid: 7, narrow: 3 });
 });
-test('a 0.23.0 order without Invoked by gets it back where the default has it', () => {
+test('a 0.23.0 order without Invoked by (or Score) gets them back where the default has them', () => {
   assert.deepEqual(normalizeOrder(['collection', 'title', 'status', 'installed', 'test', 'updatedAt']), DEFAULT_ORDER);
 });
 test('any column but Title can be hidden, keeps its place, and is stored with the layout', () => {
   const hidden = setHidden({ order: [...DEFAULT_ORDER], widths: {} }, 'model', true);
   assert.deepEqual(hidden.hidden, ['model']);
-  assert.deepEqual(visibleColumns(hidden.order, false, hidden.hidden), ['collection', 'title', 'status', 'installed', 'test', 'updatedAt']);
+  assert.deepEqual(visibleColumns(hidden.order, false, hidden.hidden), ['collection', 'title', 'status', 'installed', 'test', 'score', 'updatedAt']);
   assert.equal(isDefaultLayout(hidden), false);
   assert.deepEqual(setHidden(hidden, 'title', true).hidden, ['model'], 'Title always shows');
   assert.deepEqual(setHidden(setHidden(hidden, 'collection', true), 'model', false), { order: DEFAULT_ORDER, widths: {}, hidden: ['collection'] });
   assert.deepEqual(setHidden(hidden, 'model', false), { order: DEFAULT_ORDER, widths: {} }, 'shown again: no hidden list left');
   // Moves skip hidden columns; stored and read back through JSON.
-  assert.deepEqual(stepColumn(DEFAULT_ORDER, 'installed', 1, false, ['model']), ['collection', 'title', 'status', 'model', 'test', 'installed', 'updatedAt']);
+  assert.deepEqual(stepColumn(DEFAULT_ORDER, 'installed', 1, false, ['model']), ['collection', 'title', 'status', 'model', 'test', 'installed', 'score', 'updatedAt']);
   assert.deepEqual(parseLayout(JSON.parse(JSON.stringify(storedLayout(hidden)))), hidden);
   assert.deepEqual(normalizeHidden(['test', 'title', 'nope', 'model', 'test']), ['model', 'test']);
   assert.ok(isDefaultLayout(parseLayout({ order: DEFAULT_ORDER, hidden: 'model' })));

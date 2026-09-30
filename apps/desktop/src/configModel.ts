@@ -2,6 +2,7 @@
 // settings editor makes. Edits are applied to the JSON text itself, so unknown keys, key order and indentation survive.
 import { applyEdits, modify, parse as parseJsonc, printParseErrorCode, type JSONPath, type ParseError } from 'jsonc-parser/lib/esm/main';
 import type { HomeFile, HomeFileKind } from '../../../packages/home/service';
+import type { InstructionFile, InstructionTarget } from '../../../packages/agent/distill';
 
 export type Purpose = 'instructions' | 'settings' | 'hooks' | 'mcp' | 'profile';
 export const purposeLabel: Record<Purpose, string> = { instructions: 'Instructions', settings: 'Permissions & settings', hooks: 'Hooks', mcp: 'MCP', profile: 'Shell profile' };
@@ -30,6 +31,23 @@ export function isClaudeSettings(file: FileRef & { key?: string }): boolean {
 export function scopeName(scope: string | undefined): string {
   if (!scope?.startsWith('Project · ')) return scope ?? 'Personal';
   return base(scope.slice('Project · '.length).replace(/[\\/]+$/, ''));
+}
+
+/** Whether a listed file is the one an instruction entry names: CLAUDE.md (also .claude/CLAUDE.md), AGENTS.md, Copilot's instructions, a Cursor rule. */
+const namesFile = (file: HomeFile, target: InstructionFile) => {
+  const name = base(file.path), unix = file.path.replaceAll('\\', '/');
+  return target === '.cursor/rules' ? unix.includes('/.cursor/rules/') : target === '.github/copilot-instructions.md' ? name === 'copilot-instructions.md' : name === target;
+};
+/**
+ * The Markdown instruction files an instruction item can be added to, the ones its target names first (in the right
+ * scope: personal files for a personal rule, project files for a project one), then the rest in Config files order.
+ */
+export function instructionChoices(files: HomeFile[], target: InstructionTarget | null): { file: HomeFile; suggested: boolean }[] {
+  const project = (file: HomeFile) => Boolean(file.scope?.startsWith('Project · '));
+  const inScope = (file: HomeFile) => !target?.scope || target.scope === 'either' || (target.scope === 'project') === project(file);
+  const choices = files.filter(file => purposeOf(file) === 'instructions' && !file.error)
+    .map(file => ({ file, suggested: Boolean(target?.files.some(name => namesFile(file, name))) && inScope(file) }));
+  return [...choices.filter(c => c.suggested), ...choices.filter(c => !c.suggested)];
 }
 
 export const columns = ['allow', 'ask', 'deny'] as const;

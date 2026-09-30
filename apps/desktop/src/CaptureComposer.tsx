@@ -1,11 +1,13 @@
 import { activeRun } from '../../../packages/agent/run-notice';
 import { MAX_ATTACHMENT_BYTES } from '../../../packages/protocol/limits';
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
-import { AlertTriangle, Bot, Check, Clapperboard, File, FileText, Globe, Loader2, Paperclip, Plus, Sparkles, Type, Upload, X } from 'lucide-react';
+import { AlertTriangle, Bot, Check, Clapperboard, File, FileText, Github, Globe, Loader2, Paperclip, Plus, ScanSearch, Sparkles, Type, Upload, X } from 'lucide-react';
+import { parseGitHubRepo } from '../../../packages/domain/github-url';
 import { api, variablesIn } from './api';
 import { agentStarted } from './AgentPanel';
 import { youtubeId } from '../../../packages/agent/video-link';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
+import { entryTypeList, type EntryType } from '../../../packages/agent/distill';
 import { ContextMenu, KindIcon, Lightbox, providerName } from './components';
 import type { Item, Provider, RunProviderId } from '../../../packages/protocol/schema';
 import { elapsed } from './StatusBar';
@@ -30,12 +32,13 @@ function Thumbnail({ file, onOpen }: { file: File; onOpen: () => void }) {
   return <button type="button" className="capture-thumb" aria-label={`Preview ${file.name}`} onClick={onOpen}>{url && <img src={url} alt={file.name} />}</button>;
 }
 /** What was pasted decides the main action: a bare YouTube link is distilled, another link is a page, anything else is text or files. */
-type Detected = 'empty' | 'video' | 'link' | 'text' | 'files';
-const detect = (text: string, files: File[]): Detected => files.length ? 'files' : !text.trim() ? 'empty' : /^\S+$/.test(text.trim()) && youtubeId(text) ? 'video' : /^https?:\/\/\S+$/i.test(text.trim()) ? 'link' : 'text';
-const detectedLabel: Record<Detected, string> = { empty: '', video: 'YouTube video', link: 'Web page', text: 'Text', files: 'Files' };
-const detectedIcon: Record<Detected, ReactNode> = { empty: <Plus size={16} />, video: <Clapperboard size={16} />, link: <Globe size={16} />, text: <Type size={16} />, files: <Paperclip size={16} /> };
+/** `repo`: a GitHub repository link (github.com/owner/repo, optionally /tree/<ref>/<folder>), scanned for skills instead of read as a page. */
+type Detected = 'empty' | 'video' | 'repo' | 'link' | 'text' | 'files';
+const detect = (text: string, files: File[]): Detected => files.length ? 'files' : !text.trim() ? 'empty' : /^\S+$/.test(text.trim()) && youtubeId(text) ? 'video' : parseGitHubRepo(text) ? 'repo' : /^https?:\/\/\S+$/i.test(text.trim()) ? 'link' : 'text';
+const detectedLabel: Record<Detected, string> = { empty: '', video: 'YouTube video', repo: 'GitHub repository', link: 'Web page', text: 'Text', files: 'Files' };
+const detectedIcon: Record<Detected, ReactNode> = { empty: <Plus size={16} />, video: <Clapperboard size={16} />, repo: <Github size={16} />, link: <Globe size={16} />, text: <Type size={16} />, files: <Paperclip size={16} /> };
 
-type Props = { request?: CaptureRequest; provider: RunProviderId; providers: Provider[]; jobs: AgentJob[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void };
+type Props = { request?: CaptureRequest; provider: RunProviderId; /** Entry types Settings asks distillation for, named in the analyze buttons' tooltips. */ entryTypes: EntryType[]; providers: Provider[]; jobs: AgentJob[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void; /** Opens the repository review for a GitHub repository link; without it such a link is only saved. */ onRepository?: (url: string) => void };
 
 /**
  * Capture as a dialog over whatever is on screen. It opens from the Capture button, Ctrl+N, the palette, or a paste or drop on
@@ -43,7 +46,7 @@ type Props = { request?: CaptureRequest; provider: RunProviderId; providers: Pro
  * action; Save only keeps the material without running an agent. Recent and running analyses show under the input.
  * The dialog stays mounted while closed, so a half-written capture or a save in flight survives closing it.
  */
-export function CaptureDialog({ request, provider, providers, jobs, items, onSaved, onOpenItem, onOpenCollection }: Props) {
+export function CaptureDialog({ request, provider, entryTypes, providers, jobs, items, onSaved, onOpenItem, onOpenCollection, onRepository }: Props) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(''), [attachments, setAttachments] = useState<File[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState(''), [preview, setPreview] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false), [agent, setAgent] = useState<RunProviderId>(provider), [saveOnly, setSaveOnly] = useState(false);
@@ -83,6 +86,8 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
   const done = (id: string, analyzing: boolean) => { reset(); close(); onSaved(id, analyzing); };
   const submit = async (analyze: boolean) => {
     if (saving.current || (!text.trim() && !attachments.length)) return;
+    // A repository is reviewed, not saved: its skills and agents are listed for import.
+    if (analyze && onRepository && !savedItem.current && detect(text, attachments) === 'repo') { const url = text.trim(); reset(); close(); onRepository(url); return; }
     if (savedItem.current) {
       saving.current = true; setBusy(true); setError('');
       try { await api('agent.start', { id: savedItem.current, kind: 'distill', provider: agent }); agentStarted('distill'); done(savedItem.current, true); }
@@ -116,14 +121,17 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
   const primary: { label: string; analyze: boolean; icon: ReactNode } | null = savedId ? { label: 'Retry analysis', analyze: true, icon: <Sparkles size={15} /> }
     : kind === 'video' ? (saveOnly ? { label: 'Save link', analyze: false, icon: <Check size={15} /> } : { label: 'Distill video', analyze: true, icon: <Sparkles size={15} /> })
     : kind === 'link' ? (saveOnly ? { label: 'Save link', analyze: false, icon: <Check size={15} /> } : { label: 'Analyze page', analyze: true, icon: <Sparkles size={15} /> })
+    : kind === 'repo' ? (saveOnly || !onRepository ? { label: 'Save link', analyze: false, icon: <Check size={15} /> } : { label: 'Scan repository', analyze: true, icon: <ScanSearch size={15} /> })
     : kind === 'text' ? { label: 'Save as draft', analyze: false, icon: <Check size={15} /> }
     : kind === 'files' ? { label: `Save ${attachments.length} file${attachments.length === 1 ? '' : 's'}`, analyze: false, icon: <Check size={15} /> } : null;
   const secondary: { label: string; analyze: boolean } | null = savedId || saveOnly ? null
-    : kind === 'video' ? { label: 'Save link only', analyze: false } : kind === 'link' ? { label: 'Save link', analyze: false }
+    : kind === 'video' ? { label: 'Save link only', analyze: false } : kind === 'link' || (kind === 'repo' && onRepository) ? { label: 'Save link', analyze: false }
     : kind === 'text' || kind === 'files' ? { label: `Analyze with ${agentName}`, analyze: true } : null;
   const variables = kind === 'text' ? variablesIn(text) : [];
-  const note = kind === 'video' ? (saveOnly ? 'Keeps the link as a source without fetching captions. Distill it later from the item.' : `${agentName} reads the captions and turns the video into a source plus the prompts, tools, techniques and resources in it.`)
+  const produces = `Produces ${entryTypeList(entryTypes)}. Choose the types in Settings → Distillation.`;
+  const note = kind === 'video' ? (saveOnly ? 'Keeps the link as a source without fetching captions. Distill it later from the item.' : `${agentName} reads the captions and turns the video into a source plus the ${entryTypeList(entryTypes)} in it.`)
     : kind === 'link' ? (saveOnly ? 'Keeps the link. Analyze it later from the item.' : `Analyze page keeps the link as a source and asks ${agentName} for what is reusable in it.`)
+    : kind === 'repo' ? (saveOnly || !onRepository ? 'Keeps the link. Paste it again to scan the repository.' : 'Lists the repository’s skills and agents, each compared with your library. Nothing is imported until you choose.')
     : kind === 'files' ? `Files: 25 MB in total. Images, PDFs and any other type.` : '';
 
   return <dialog ref={dialog} className="modal capture-dialog" aria-label="New capture"
@@ -157,8 +165,8 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
         <button type="button" className={`capture-chip toggle ${saveOnly ? 'on' : ''}`} role="switch" aria-checked={saveOnly} disabled={Boolean(savedId)} onClick={() => setSaveOnly(value => !value)} title="Keep the material without running an agent or fetching captions"><span className="capture-switch" />Save only</button>
         <span className="capture-grow" />
         {empty && !savedId ? <span className="faint small">Ctrl V pastes · drop files anywhere</span> : <>
-          {secondary && <button type="button" className="button" disabled={busy} onClick={() => void submit(secondary.analyze)}>{secondary.label}</button>}
-          {primary && <button type="button" className="button primary" disabled={busy} onClick={() => void submit(primary.analyze)}>{busy ? <><Loader2 className="spin" size={15} />Saving…</> : <>{primary.icon}{primary.label}<kbd>Ctrl ↵</kbd></>}</button>}
+          {secondary && <button type="button" className="button" disabled={busy} title={secondary.analyze ? produces : undefined} onClick={() => void submit(secondary.analyze)}>{secondary.label}</button>}
+          {primary && <button type="button" className="button primary" disabled={busy} title={primary.analyze ? produces : undefined} onClick={() => void submit(primary.analyze)}>{busy ? <><Loader2 className="spin" size={15} />Saving…</> : <>{primary.icon}{primary.label}<kbd>Ctrl ↵</kbd></>}</button>}
         </>}
       </div>
       {agentMenu && <ContextMenu x={agentMenu.x} y={agentMenu.y} onClose={() => setAgentMenu(null)} entries={providers.filter(p => p.id !== 'copilot').map(p => ({ label: `${p.label}${p.available ? '' : ' · not detected'}`, checked: agent === p.id, onSelect: () => setAgent(p.id as RunProviderId) }))} />}
@@ -171,7 +179,7 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
 /** Analyses running now, and those that finished in the last half hour, newest first. Hidden when there are none. */
 function RecentCaptures({ jobs, items, onOpenItem, onOpenCollection }: { jobs: AgentJob[]; items: Item[]; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void }) {
   const [now, setNow] = useState(Date.now()), [dismissed, setDismissed] = useState<string[]>([]);
-  const recent = jobs.filter(j => (j.kind === 'distill' || j.kind === 'capture') && !dismissed.includes(j.id) && (activeRun(j) || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
+  const recent = jobs.filter(j => (j.kind === 'distill' || j.kind === 'distill-repo' || j.kind === 'capture') && !dismissed.includes(j.id) && (activeRun(j) || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
   const running = recent.some(activeRun);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), running ? 1000 : 30_000); return () => clearInterval(timer); }, [running]);
   if (!recent.length) return null;

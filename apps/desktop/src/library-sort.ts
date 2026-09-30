@@ -56,8 +56,8 @@ export function moveInOrder(shown: Item[], id: string, direction: number, pinSou
 }
 
 /** Every kind, in the order kind groups and suggestions list them. */
-export const KINDS: Item['kind'][] = ['source', 'prompt', 'skill', 'agent', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
-export const kindPlural: Record<Item['kind'], string> = { source: 'Sources', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References' };
+export const KINDS: Item['kind'][] = ['source', 'prompt', 'skill', 'agent', 'mcp', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
+export const kindPlural: Record<Item['kind'], string> = { source: 'Sources', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References', mcp: 'MCP servers' };
 export type GroupKey = 'none' | 'collection' | 'kind' | 'status';
 const statusGroup: Record<Item['status'], string> = { captured: 'Drafts', testing: 'Testing', approved: 'Approved', rejected: 'Rejected', archived: 'Archived' };
 /**

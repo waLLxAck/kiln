@@ -41,6 +41,9 @@ export async function openDemoApp(options: { viewport?: { width: number; height:
       case 'agent.models': return [];
       case 'agent.cancel': return agent.cancel(args.id);
       case 'trials.delete': return agent.deleteTrial(args);
+      case 'agent.tuneProposal': return agent.tuneProposal(args);
+      case 'agent.tuneAccept': return agent.tuneAccept(args);
+      case 'agent.tuneDiscard': return agent.tuneDiscard(args);
     }
     if (method.startsWith('desktop.')) return true;
     return router.call(method, args);

@@ -60,6 +60,22 @@ skills invocation <id> --model on|off [--expect <hash>]
 context start [--project <folder>]
                             # estimate what Claude Code, Codex and Copilot CLI load at session start on this machine: skill descriptions,
                             # instruction files, SessionStart hooks (listed, never run) and MCP servers
+mcp scan                    # MCP servers in Claude Code, Codex, Copilot CLI, VS Code and Cursor configs (personal and project) that the library
+                            # lacks: each distinct definition once, with every place it was found; literal secrets become \${NAME} references
+mcp import --all | <key> [key...] [--collection "MCP servers"]   # import scanned servers as draft mcp items; configs are untouched
+mcp status <id>             # each client location: absent, installed (by Kiln), drifted (edited since), external (not Kiln's), outdated
+mcp install <id> --client claude|codex|copilot|vscode|cursor [--project <folder>] [--replace]
+                            # writes only this server's entry into that client's config (approving the revision first if needed);
+                            # --replace writes over a different entry of the same name (kept in the receipt and in Config files versions)
+mcp remove <id> --client <client> [--project <folder>] [--name <old name>] [--force]   # removes only that entry
+mcp rollback --receipt <id> # puts back what the latest install replaced, if the entry is unchanged since
+usage scan                  # read this machine's Claude Code and Codex session logs into the usage cache (incremental; first run reads everything)
+usage report [--days 30]    # scan, then skills (uses, last used, active days, projects, trend, attributed tokens), unused installs and spend
+usage skills [--days 30]    # scan, then only the skill rows and installed skills unused in the window (--days 0: all time)
+usage spend [--days 30]     # scan, then tokens and estimated $ by model, project, harness, month, and Kiln's own runs by kind and item
+usage item <id> [--days 30] # one library skill's uses from the cache (no scan)
+usage prices [--input prices.json]   # the estimate price table; { "set": { "<model>": { input, cached, cacheWrite, cacheWrite1h, output } } } saves overrides ($/M tokens)
+                            # usage data stays machine-private; dollar figures are estimates from list prices (subscriptions pay a flat fee)
 skills scan --input request.json
 targets remove --input request.json
 items purge --input request.json
@@ -77,6 +93,13 @@ machines list               # fetch, then every machine that reported to this li
 machines report             # share this machine's installs now (commit and push its workbench/machines/<id>.json)
 machines mark <machine id> --item <id> --location agents|claude|codex|copilot|project:<folder> [--unmark]
                             # ask a machine to install an approved item there on its next skills sync
+repos scan <url>            # a GitHub repository (github.com/owner/repo, optionally /tree/<ref>/<folder>): its skills, agent
+                            # definitions and AGENTS.md/CLAUDE.md files, each new, identical to a library item or different from one.
+                            # Fetches one commit into Kiln's machine-private cache; nothing is imported
+repos import <url> [--select key,key] [--collection "Name"]
+                            # copy what the scan offers (or the listed keys or paths) into the library as drafts, linked to a source
+                            # item for the repository; default collection owner/repo. Identical copies are skipped; nothing is installed
+repos list                  # the public skill repositories offered under Browse skill repositories
 providers detect
 observations list
 library export --file backup.json
@@ -155,7 +178,26 @@ try {
     // A carried approval is committed and pushed like any approval; wait so the process exits with it done.
     await router.publisher.idle();
   }
+  else if (resource === 'repos' && action === 'scan') result = await router.repos.scan({ url: id });
+  else if (resource === 'repos' && action === 'import') result = await router.repos.import({ url: id, confirm: true, ...(option('select') ? { select: option('select').split(',').map(key => key.trim()).filter(Boolean) } : {}), ...(option('collection') ? { collection: option('collection') } : {}) });
+  else if (resource === 'repos' && action === 'list') result = router.repos.registries();
+  else if (resource === 'mcp' && action === 'import') result = router.call('mcp.import', { keys: ids, all: Boolean(option('all')), ...(option('collection') ? { collection: option('collection') } : {}) });
+  else if (resource === 'mcp' && action === 'status') result = router.call('mcp.status', { itemId: id });
+  else if (resource === 'mcp' && ['install', 'remove'].includes(action)) {
+    result = router.call(`mcp.${action}`, { itemId: id, client: option('client'), ...(option('project') ? { project: path.resolve(option('project')) } : {}), ...(option('name') ? { name: option('name') } : {}), ...(action === 'install' ? { replace: Boolean(option('replace')) } : { force: Boolean(option('force')) }), confirm: true });
+    // Installing a draft approves it; wait so the process exits with that approval pushed.
+    await router.publisher.idle();
+  }
+  else if (resource === 'mcp' && action === 'rollback') result = router.call('mcp.rollback', { receiptId: option('receipt'), confirm: true });
   else if (resource === 'context' && action === 'start') result = router.call('context.sessionStart', option('project') ? { project: path.resolve(option('project')) } : {});
+  else if (resource === 'usage' && ['scan', 'report', 'skills', 'spend'].includes(action)) {
+    // The CLI reads every log before answering; the desktop scans in capped passes instead.
+    const scan = await router.usage.scanAll();
+    const days = Number(option('days', '30'));
+    const report = action === 'scan' ? null : await router.usageReport({ days, scan: false });
+    result = !report ? scan : action === 'skills' ? { days: report.days, since: report.since, skills: report.skills, unused: report.unused } : action === 'spend' ? { days: report.days, since: report.since, spend: report.spend, prices: report.prices } : report;
+  }
+  else if (resource === 'usage' && action === 'item') result = router.call('usage.item', { itemId: id, days: Number(option('days', '30')) || 30 });
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));
   else if (resource === 'home' && ['read', 'backups'].includes(action)) result = await router.call(`home.${action}`, { key: id });

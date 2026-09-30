@@ -1,4 +1,5 @@
 import { validateAgent } from './agent-format';
+import { mcpChecks } from './mcp-format';
 import { parse } from 'yaml';
 import type { Authoring } from '../protocol/schema';
 
@@ -44,6 +45,7 @@ export function contentChecks(value: Checked): ContentCheck[] {
   if (value.kind === 'link') {
     try { const url = new URL(value.content.trim().split('\n')[0]); if (!['http:', 'https:'].includes(url.protocol)) problems.push({ message: 'Links must use HTTP or HTTPS.', line: 1 }); } catch { problems.push({ message: 'The first line must be a valid web URL.', line: 1 }); }
   }
+  if (value.kind === 'mcp') problems.push(...mcpChecks(value.content));
   if (value.kind === 'reference' && !value.content.trim()) problems.push({ message: 'Add an absolute file path. This is a reference, not a backup.', line: 1 });
   return problems;
 }

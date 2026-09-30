@@ -1,0 +1,30 @@
+/* GitHub repositories: review of one scan, the public list and the user's own repositories (Repositories.tsx). Dense rows, one fact each. */
+.repo-found { margin: 0 0 8px; font-size: 13px; }
+.repo-loading { display: flex; align-items: center; gap: 8px; }
+.repo-list { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); }
+.repo-row { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 3px 8px 3px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.repo-list > .repo-row:last-child, .repo-list > div:last-child > .repo-row:last-child { border-bottom: 0; }
+.repo-row.open { background: var(--subtle); }
+.repo-row .icon-button { width: 26px; height: 26px; }
+.repo-check { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+.repo-check input { margin: 0; flex: none; }
+.repo-title { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.repo-title { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 550; cursor: pointer; text-align: left; flex: none; max-width: 45%; }
+button.repo-title:hover { color: var(--accent-text); }
+.repo-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.repo-desc { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.repo-error { color: var(--bad); overflow: hidden; text-overflow: ellipsis; }
+.repo-warn { color: var(--warn); display: inline-flex; }
+.repo-row .badge { flex: none; }
+.repo-group { position: sticky; top: 0; z-index: 1; padding: 4px 10px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--subtle); border-bottom: 1px solid var(--line); }
+.repo-preview { max-height: 260px; overflow: auto; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--subtle); font-size: 12.5px; }
+.repo-preview p.muted { margin: 0 0 6px; }
+.repo-collection { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; font-size: 13px; }
+.repo-collection span { color: var(--muted); }
+.repo-collection input { flex: 1; max-width: 320px; }
+.repo-dig { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; color: var(--text-2); background: var(--accent-tint); border-radius: var(--r-md); }
+.repo-dig svg { flex: none; margin-top: 2px; color: var(--accent-text); }
+.repo-add { display: flex; gap: 8px; margin: 10px 0 0; }
+.repo-add input { flex: 1; }
+.repo-grow { flex: 1; }
+.repo-front { margin: 0 0 8px; padding: 6px 8px; font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm, 6px); }

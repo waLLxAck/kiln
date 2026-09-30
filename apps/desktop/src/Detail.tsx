@@ -5,11 +5,13 @@ import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, Files, FlaskConical, Folder, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, X, ZoomIn } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, FilePlus2, Files, FlaskConical, Folder, Gauge, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, WandSparkles, X, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
 import { api, date, variablesIn } from './api';
-import { isTextFile } from '../../../packages/domain/text';
+import { isTextFile, scoreable } from '../../../packages/domain/text';
+import { activeRun } from '../../../packages/agent/run-notice';
+import { ScoreBadge, ScorePanel, TuneDialog, TuneReview } from './Score';
 import { Badge, ContextMenu, Field, KindIcon, Lightbox, imageFile, imageSource, statusHelp, type MenuEntry } from './components';
 import { personalTarget } from './Skills';
 import { ExperimentsGrid } from './Experiments';
@@ -24,22 +26,29 @@ import { languageFor } from './code-language';
 import { ItemEditor, useItemDraft, type ItemDraftState } from './item-editing';
 import { EDITABLE_TEXT_LIMIT } from './bundled-text';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
+import { AddToInstructions, addToLabel, type InstructionAppend } from './AddToInstructions';
+import { entryTypeList, selectedEntryTypes } from '../../../packages/agent/distill';
+import { McpDefinition } from './Mcp';
+import { ItemUsageLine } from './Usage';
 import './item.css';
 import './consolidate.css';
 
 type Props = {
   jobs: AgentJob[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
   /** Opens the agent chat about this item. */ onAsk?: () => void;
+  /** Instruction items: opens Config files on the chosen file with the snippet added as an unsaved edit. */ onAddToInstructions?: (append: InstructionAppend) => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
+  /** Shows the Usage section; a skill's header says how often this machine's agents used it. */ onUsage?: () => void;
   /** The model-invocation switch in the rail's Installs section (Invocation.tsx). */ onInvocation?: (item: Item, model: boolean) => void;
   /** Duplicates: opens the consolidate dialog for this item's group, marks it as not a duplicate of the others, and names a copy briefly. */
   onConsolidate?: () => void; onNotDuplicates?: () => void; where?: (item: Item) => string;
   /** Stars, moves to another status, trashes or restores the item as one action on the library's undo stack (Ctrl+Z). */ onMeta: (patch: { favourite: boolean } | { status: Item['status'] } | { deleted: boolean }) => void;
   /** Set when something outside the page (the list's Test, quick search) asks for this item's tests. */ showTests?: { id: string; at: number };
+  /** Set when quick search asks to score or tune this item. */ request?: { id: string; action: 'score' | 'tune'; at: number };
 };
 type View = 'content' | 'tests' | 'history';
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
-const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'source' ? 'Original material' : 'Content';
+const mainFile = (detail: ItemDetail) => detail.item.kind === 'agent' ? detail.item.agent?.filename ?? 'Agent file' : detail.item.kind === 'skill' ? 'SKILL.md' : detail.item.kind === 'mcp' ? 'Server definition' : detail.item.kind === 'source' ? 'Original material' : 'Content';
 
 /** Copies plain text during a click. The window denies the async clipboard permission, so this uses a selected textarea. */
 function copyText(text: string) {
@@ -53,13 +62,15 @@ function copyText(text: string) {
 
 /** The last `showTests` request a page acted on. */
 let shownTests = 0;
+/** The last `request` (score or tune from quick search) a page acted on. */
+let handledRequest = 0;
 
 /**
  * The item page (design 5): a small header with one primary action, the content itself as the main column (edited in
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onAddToInstructions, onMachines, onUsage, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests, request }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
@@ -69,7 +80,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
   const [deployRevision, setDeployRevision] = useState<string | null>(null);
   const [addingFile, setAddingFile] = useState(false);
-  useEffect(() => { setFilePreview(null); setAddingFile(false); setView('content'); }, [item.id]);
+  const [addingTo, setAddingTo] = useState(false);
+  // Score and Tune: the score panel, the Tune dialog, the Tune run whose diff is open, and a line for the editor to jump to.
+  const [scoreOpen, setScoreOpen] = useState(false), [tuning, setTuning] = useState(false), [review, setReview] = useState<string | null>(null), [gotoLine, setGotoLine] = useState<{ line: number; at: number }>();
+  useEffect(() => { setFilePreview(null); setAddingFile(false); setView('content'); setScoreOpen(false); setTuning(false); setReview(null); }, [item.id]);
   // After the reset above, which runs when the page mounts; each request opens the tests once, not again when the item is reopened later.
   useEffect(() => { if (showTests?.id === item.id && showTests.at !== shownTests) { shownTests = showTests.at; setView('tests'); } }, [showTests, item.id]);
   const isSource = item.kind === 'source';
@@ -78,11 +92,20 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const installable = ['skill', 'agent', 'instruction'].includes(item.kind);
   // Save-only captures (a pasted note, a link, files) can still be analysed; doing so makes them a source.
   const analysable = isSource || (['prompt', 'link', 'file', 'image'].includes(item.kind) && !item.origin);
+  const produces = entryTypeList(selectedEntryTypes(snapshot.settings));
   const analyse = () => void perform(async () => { await api('agent.start', { id: item.id, kind: 'distill' }); agentStarted('distill'); await refresh(); });
+  const canScore = scoreable(item.kind) && !item.deletedAt, canTune = item.kind === 'skill' && !item.deletedAt;
+  const scoring = jobs.some(j => j.itemId === item.id && j.kind === 'score' && activeRun(j));
+  const latestScore = snapshot.scores?.[item.id];
+  const score = () => { setView('content'); setScoreOpen(true); if (!scoring) void perform(async () => { await api('agent.start', { id: item.id, kind: 'score' }); agentStarted('score'); await refresh(); }); };
+  const tune = () => { setView('content'); setTuning(true); };
+  // A score's line link: open the editor and put the cursor on that line.
+  const showLine = (line: number) => { startEdit(); setGotoLine({ line, at: Date.now() }); };
+  useEffect(() => { if (request?.id === item.id && request.at !== handledRequest) { handledRequest = request.at; if (request.action === 'score' && canScore) score(); else if (request.action === 'tune' && canTune) tune(); } }, [request, item.id]);
   const recorded = detail.analyses.filter(a => !jobs.some(j => j.id === a.id));
   const scroll = useScrollMemory(`detail:${item.id}:${view}`, true);
   // Experiments belong to the tests view, notes and skill drafts to the content, so jump there when a run starts.
-  const viewFor = (kind: AgentKind) => setView(kind === 'trial' ? 'tests' : 'content');
+  const viewFor = (kind: AgentKind) => { setView(kind === 'trial' ? 'tests' : 'content'); if (kind === 'score') setScoreOpen(true); };
   // "Open result" on a finished run (toast or desktop notification) shows the same view.
   useEffect(() => { const jump = (event: Event) => { const kind = (event as CustomEvent<{ kind?: AgentKind }>).detail?.kind; if (kind) viewFor(kind); }; window.addEventListener('kiln:agent-started', jump); window.addEventListener(OPEN_RESULT_TAB_EVENT, jump); return () => { window.removeEventListener('kiln:agent-started', jump); window.removeEventListener(OPEN_RESULT_TAB_EVENT, jump); }; }, []);
   const currentApproved = detail.approvals.some(a => a.revision === item.revision && a.trust === 'local');
@@ -106,7 +129,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const run: Record<PrimaryAction, { label: string; icon: ReactNode; onClick: () => void; title?: string }> = {
     restore: { label: 'Restore', icon: <RotateCcw size={15} />, onClick: () => onMeta({ deleted: false }) },
     'open-original': { label: 'Open original', icon: <ExternalLink size={15} />, onClick: openItem },
-    analyze: { label: 'Analyze again', icon: <ScanSearch size={15} />, onClick: analyse, title: 'Run the analysis again; new entries are added beside the earlier ones' },
+    analyze: { label: 'Analyze again', icon: <ScanSearch size={15} />, onClick: analyse, title: `Run the analysis again; new entries are added beside the earlier ones. Produces ${produces} (Settings → Distillation).` },
     resolve: { label: changedCopiesLabel(drifted.length), icon: <TriangleAlert size={15} />, onClick: () => drifted[0] && onToggleInstall(drifted[0].provider, drifted[0].targetId), title: 'A copy was edited outside Kiln. Compare it, then reinstall the approved version or remove it.' },
     test: { label: 'Test', icon: <FlaskConical size={15} />, onClick: test, title: 'Run this revision on a real task' },
     approve: { label: 'Approve', icon: <ShieldCheck size={15} />, onClick: () => onAction('approve'), title: 'Approve this revision and publish it to GitHub.' },
@@ -137,8 +160,10 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   ] : [
     ...(primary !== 'copy' ? [{ label: 'Copy', icon: <Copy />, onSelect: () => onAction('copy') }] : []),
     ...(['skill', 'agent'].includes(item.kind) && locations.length > 0 && !['approve-install', 'install'].includes(primary) ? [{ label: currentApproved ? 'Install in every location' : 'Approve & install', icon: <Download />, hint: 'Install the approved revision in every configured location.', onSelect: () => onAction('approve-install') }] : []),
-    ...(installable ? [] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
-    ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: 'Ask your agent to distill it into prompts, techniques, tools and insights. It becomes a source that links to them.', onSelect: analyse }] : []),
+    ...(installable || item.kind === 'mcp' ? [] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
+    ...(canScore ? [{ label: latestScore ? 'Score again' : 'Score', icon: <Gauge />, disabled: scoring, hint: 'Rate this revision against the writing-for-agents guidance and list what would improve it. Read-only.', onSelect: score }] : []),
+    ...(canTune ? [{ label: 'Tune…', icon: <WandSparkles />, hint: 'Run tune-skill on a copy: measure past runs, rewrite, mechanize and field-test. You review the diff before it becomes a draft.', onSelect: tune }] : []),
+    ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: `Ask your agent to distill it into ${produces} (Settings → Distillation). It becomes a source that links to them.`, onSelect: analyse }] : []),
     ...(onAsk ? [{ label: 'Ask the agent about it', icon: <MessageSquare />, onSelect: onAsk }] : []),
     ...openStored, addFile, copyId, 'separator',
     ...statusEntries(['captured', 'testing', 'rejected', 'archived']), trash,
@@ -157,9 +182,9 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
       <div className="item-head-text">
         <div className="eyebrow"><KindIcon kind={item.kind} size={14} />{item.kind}<span className="dot">·</span>{item.collection ? <button type="button" className="item-crumb" title="Open this collection" onClick={() => onCollection(item.collection)}><Folder size={13} />{collection}</button> : <span title="Not in any collection"><Folder size={13} />Unfiled</span>}</div>
         {/* A captured source has no lifecycle to show; only archived or deleted ones get a badge. */}
-        <div className="item-title-row"><h1>{item.title}</h1>{!(isSource && status === 'draft') && <span className="item-state"><Badge status={status} /></span>}</div>
+        <div className="item-title-row"><h1>{item.title}</h1>{!(isSource && status === 'draft') && <span className="item-state"><Badge status={status} /></span>}{latestScore && <ScoreBadge score={latestScore} item={item} onClick={() => { setView('content'); setScoreOpen(open => !open); }} />}</div>
         {item.description && <p className="item-lede">{item.description}</p>}
-        <div className="detail-meta">{origin && <button type="button" className="source-chip" onClick={() => onSelect(origin.id)} title={origin.kind === 'source' ? 'Open the source this was made from' : 'Open the item this was derived from'}><FileInput size={12} />From “{origin.title}”</button>}<span>Updated {date(item.updatedAt)}</span></div>
+        <div className="detail-meta">{origin && <button type="button" className="source-chip" onClick={() => onSelect(origin.id)} title={origin.kind === 'source' ? 'Open the source this was made from' : 'Open the item this was derived from'}><FileInput size={12} />From “{origin.title}”</button>}<span>Updated {date(item.updatedAt)}</span>{item.kind === 'skill' && onUsage && <ItemUsageLine itemId={item.id} onOpen={onUsage} />}</div>
       </div>
       <div className="detail-actions">
         <button className={`icon-button ${item.favourite ? 'favourited' : ''}`} aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'} title={item.favourite ? 'In favourites' : 'Add to favourites'} onClick={() => onMeta({ favourite: !item.favourite })}><Star size={18} fill={item.favourite ? 'currentColor' : 'none'} /></button>
@@ -184,20 +209,25 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
           </div>
           : <div className="item-content">
             <AgentStatus itemId={item.id} jobs={jobs} onOpen={viewFor} />
-            <AgentPanel itemId={item.id} jobs={jobs} kinds={['capture', 'derive', 'distill']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} />
+            {scoreOpen && canScore && <ScorePanel detail={detail} jobs={jobs} onScore={score} onLine={showLine} onClose={() => setScoreOpen(false)} />}
+            <AgentPanel itemId={item.id} jobs={jobs} kinds={['capture', 'derive', 'distill', 'distill-repo', 'score', 'tune']} onOpen={onSelect} onOpenCollection={onCollection} collections={snapshot.collections} onReviewTune={setReview} />
             {recorded.map(a => <AnalysisRecord key={a.id} analysis={a} />)}
             {/* While editing, the editor lists the draft's own problems live instead. */}
             {!isSource && !editing && detail.validation.length > 0 && <div className="notice warning"><b>Needs attention before approval</b>{detail.validation.map(v => <p key={v}>{v}</p>)}</div>}
             {!item.deletedAt && <Duplicates detail={detail} snapshot={snapshot} where={where} onSelect={onSelect} onConsolidate={onConsolidate} onNotDuplicates={onNotDuplicates} />}
             {item.deletedAt && item.mergedInto && <MergedNote item={item} snapshot={snapshot} onSelect={onSelect} />}
-            {editing ? <ItemEditor detail={detail} draft={draft} collections={snapshot.collections} name={mainFile(detail)} />
-            : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom} />}
+            {editing ? <ItemEditor detail={detail} draft={draft} collections={snapshot.collections} name={mainFile(detail)} goto={gotoLine} />
+            : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom}
+              extra={item.kind === 'instruction' && !item.deletedAt && onAddToInstructions ? <button type="button" className="text-button" title="Open an instruction file in Config files with this text added. Nothing is saved until you save it there." onClick={() => setAddingTo(true)}><FilePlus2 size={13} />{addToLabel(revision.content)}</button> : undefined} />}
             <BundledFiles detail={detail} draft={draft} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
           </div>}
         </div>
         <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onMachines={onMachines} onInvocation={onInvocation} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} approveInHeader={showPrimary && primary === 'approve'} sourceInHeader={['open-original', 'open-link'].includes(primary)} />
       </div>
     </div>
+    {addingTo && onAddToInstructions && <AddToInstructions content={revision.content} onClose={() => setAddingTo(false)} onChoose={append => { setAddingTo(false); onAddToInstructions(append); }} />}
+    {tuning && <TuneDialog item={item} providers={providers} defaultProvider={snapshot.settings.agentProvider} onClose={() => setTuning(false)} />}
+    {review && <TuneReview jobId={review} onClose={() => setReview(null)} onAccepted={() => { window.dispatchEvent(new Event('kiln:agent-refresh')); void perform(refresh, 'Tune changes saved as a new draft revision'); }} />}
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
     {deployRevision && <DeployDialog detail={detail} snapshot={snapshot} revision={deployRevision} onClose={() => setDeployRevision(null)} onDone={() => { setDeployRevision(null); void perform(refresh, 'Installed. Start a new agent session to use it.'); }} />}
   </article>;
@@ -235,7 +265,7 @@ function plainProperty(key: string, value: string): [string, string] | null {
   return null;
 }
 /** The content as a document: front-matter as a property table, the body formatted (or raw), images inline. Clicking the text edits it. */
-function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; raw: boolean; onRaw: (raw: boolean) => void; onEdit?: () => void; onZoom: (image: { name: string; src: string }) => void }) {
+function Document({ detail, raw, onRaw, onEdit, onZoom, extra }: { detail: ItemDetail; raw: boolean; onRaw: (raw: boolean) => void; onEdit?: () => void; onZoom: (image: { name: string; src: string }) => void; /** Another action for the document bar, beside Edit. */ extra?: ReactNode }) {
   const { item, revision } = detail;
   const { properties, body } = splitFrontMatter(revision.content);
   const variables = variablesIn(revision.content);
@@ -251,6 +281,7 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
     <div className="item-doc-bar">
       <span className="item-doc-name">{mainFile(detail)}</span>
       {markdown && <span className="item-seg" role="group" aria-label="Show as"><button type="button" aria-pressed={formatted} className={formatted ? 'on' : ''} onClick={() => onRaw(false)}>Formatted</button><button type="button" aria-pressed={!formatted} className={formatted ? '' : 'on'} onClick={() => onRaw(true)}>Raw</button></span>}
+      {extra}
       {onEdit && <button type="button" className="text-button" aria-label="Edit text" onClick={onEdit}><Pencil size={13} />Edit</button>}
     </div>
     {formatted && (properties.length > 0 || variables.length > 0) && <table className="item-props"><tbody>
@@ -258,7 +289,7 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
       {variables.length > 0 && <tr><th>variables</th><td>{variables.map(v => <span key={v} className="variable-token" title="Filled in when you copy or test it">{v}</span>)}</td></tr>}
     </tbody></table>}
     {images.length > 0 && <div className="asset-gallery">{images.map(([name, content]) => <button key={name} type="button" className="asset-button" title={`Enlarge ${name}`} onClick={() => onZoom({ name, src: imageSource(name, content) })}><img className="asset-preview" alt={name} src={imageSource(name, content)} /><span><ZoomIn size={13} />{name}</span></button>)}</div>}
-    {formatted ? <div className="item-doc-body"><Markdown variables>{body}</Markdown></div> : <pre className="item-raw">{revision.content}</pre>}
+    {formatted ? item.kind === 'mcp' ? <McpDefinition content={revision.content} title={item.title} description={item.description} /> : <div className="item-doc-body"><Markdown variables>{body}</Markdown></div> : <pre className="item-raw">{revision.content}</pre>}
     {onEdit && <span className="item-edit-hint" aria-hidden="true"><Pencil size={12} />Click to edit</span>}
   </section>;
 }

@@ -352,6 +352,8 @@ button.collection-toggle:hover { color: var(--text); background: var(--subtle-2)
 .settings-card .wrap-actions { margin-top: 12px; }
 .settings-card .wrap-actions + p, .settings-card .wrap-actions + .muted { margin-top: 12px; }
 .settings-card .badge { flex-shrink: 0; }
+.distill-types .check-row { margin: 4px 0; }
+.distill-types .check-row b { color: var(--text); font-weight: 600; }
 .github-card { grid-column: 1 / -1; }
 .github-identity, .connected-repo { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
 .github-identity > div, .connected-repo > div { flex: 1; min-width: 0; }

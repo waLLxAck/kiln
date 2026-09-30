@@ -12,9 +12,10 @@ Electron owns native windows, the tray, shortcuts, clipboard, file pickers, and 
 | `packages/protocol/` | Runtime-validated records and request types |
 | `packages/domain/` | Revisions, approval, trials, provenance, import/export and organization |
 | `packages/storage/` | Atomic writes, cross-process lock, path guards, bundle files, rebuildable search |
-| `packages/deployment/` | Approved snapshots, target ownership, plans, receipts, rollback, uninstall, recovery |
+| `packages/deployment/` | Approved snapshots, target ownership, plans, receipts, rollback, uninstall, recovery; MCP server entries merged into client configs (`mcp.ts`) |
 | `packages/git/` | Checkpoints, synchronization, conflicts, GitHub, standard infrastructure and legacy migration |
 | `packages/providers/` | Official-client detection and explicit manual handoff support |
+| `packages/usage/` | Usage view: incremental, capped reads of Claude Code and Codex session logs into a machine-private cache (skill uses, tokens per model and day), mapping to library items, and the estimate price table |
 | `packages/home/` | Home-folder instruction files (`~/.claude/CLAUDE.md`, `~/AGENTS.md`, `~/.codex/AGENTS.md`) and PowerShell profiles: list, edit in place with a stale-hash guard, kept versions, user-added files |
 
 Electron was chosen to keep desktop and CLI invariants in one TypeScript implementation and make real Windows UI tests repeatable. The two foundation prototypes proposed by Gate A were not completed. No code was copied from Skills Manager or T3 Code; their pinned inspection references are recorded in the implementation report.
@@ -32,3 +33,5 @@ A library is usable only when it is a standard Kiln repository with a GitHub rem
 Agent consent is checked in Electron before calls reach the worker. Chat remains a flexible CLI integration with broad permissions; the warning records an optional machine-private opt-out. Each conversation has its own ID and folder. Raw sessions remain private; explicit transcript export is separate from authored-library export. Legacy private revisions are archived outside the canonical repository and remain readable locally.
 
 Managed experiments can select a local project as the provider working directory. Private job folders still hold attachments, provider traces and results; private trial environments record the requested workspace. Canonical experiment records keep only a machine-private placeholder. Both runners retain read-only permissions. Failed-run retries reuse the selected project, context, provider and immutable item revision.
+
+Score is another read-only run with a strict JSON schema; its result is a shareable record per revision (`workbench/scores/`). Tune has its own permission profile (`workspaceWrite` in `packages/agent/codex.ts`): the working folder is a private copy of the skill inside the job folder, with the bundled tune-skill and writing-for-agents beside it (`packages/agent/tune.ts`). Claude Code gets Bash, Write, Edit and Agent with no extra directories; Codex gets workspace-write limited to that folder (no sandbox on Windows). The run never touches the library: Kiln reads the folder back, skipping links and caches, and a new draft revision is made only when the user accepts the diff, and only on the revision the run started from.

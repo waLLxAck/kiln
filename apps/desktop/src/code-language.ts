@@ -23,7 +23,7 @@ export function languageFor(name: string, options: { comments?: boolean } = {}):
 
 /** The language of an item's main content: Codex agents are TOML, links and references are plain text, the rest Markdown. */
 export const itemLanguage = (item: { kind: string; agent?: { provider: string } | null }): CodeLanguage =>
-  item.kind === 'agent' && item.agent?.provider === 'codex' ? 'toml' : ['link', 'reference'].includes(item.kind) ? 'plain' : 'markdown';
+  item.kind === 'agent' && item.agent?.provider === 'codex' ? 'toml' : item.kind === 'mcp' ? 'json' : ['link', 'reference'].includes(item.kind) ? 'plain' : 'markdown';
 
 /**
  * The line break the editor must keep so an untouched file reads back byte for byte: none when the text has no carriage

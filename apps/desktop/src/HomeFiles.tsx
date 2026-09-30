@@ -11,8 +11,10 @@ import { agentLabel, countSettingsChanges, isClaudeSettings, parseSettings, purp
 import './config.css';
 import { CodeEditor as CodeMirrorEditor } from './CodeEditor';
 import { languageFor, type CodeLanguage } from './code-language';
+import { insertInstruction } from '../../../packages/agent/distill';
+import type { InstructionAppend } from './AddToInstructions';
 
-type Props = { perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; /** Re-reads the library after a copy is saved into it. */ refresh: () => Promise<void>; onOpenLibrary: (id: string) => void };
+type Props = { perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; /** Set when an instruction item's “Add to …” opened this view: the file to open and the snippet to add to its draft. */ append?: InstructionAppend | null; /** Re-reads the library after a copy is saved into it. */ refresh: () => Promise<void>; onOpenLibrary: (id: string) => void };
 type Tab = 'permissions' | 'hooks' | 'raw';
 const templates: Record<HomeFileKind, string> = {
   claude: '# Instructions for Claude Code\n\nThese apply in every project.\n\n<!-- A line starting with @ imports another file, for example: -->\n<!-- @~/AGENTS.md -->\n',
@@ -45,10 +47,11 @@ const plainError = (error: unknown) => (error instanceof Error ? error.message :
 const formatName = (file: string) => /\.md$/i.test(file) ? 'Markdown' : /\.jsonc?$/i.test(file) ? 'JSON · checked on save' : /\.toml$/i.test(file) ? 'TOML · checked on save' : /\.ps1$/i.test(file) ? 'PowerShell' : 'Text';
 
 /** The Config files tab: instructions, settings, hooks and shell profiles agents read, edited in place with private backups. */
-export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
+export function HomeFilesView({ perform, refresh, onOpenLibrary, append }: Props) {
   const list = usePanelWidth('kiln-home-list-width', 340, 260, 520);
   const [files, setFiles] = useState<HomeList | null>(null);
-  const [selected, setSelected] = useState(localStorage.getItem('kiln-home-selected') ?? 'claude-global');
+  const [selected, setSelected] = useState(append?.key ?? localStorage.getItem('kiln-home-selected') ?? 'claude-global');
+  const pendingAppend = useRef<InstructionAppend | null>(null);
   const [loaded, setLoaded] = useState<HomeFileContent | null>(null);
   const [editingEmpty, setEditingEmpty] = useState(false);
   const loadSequence = useRef(0);
@@ -71,10 +74,19 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary }: Props) {
     setLoaded(content); setBackups(null); setCompare(null);
     const saved = savedDraft(key);
     // A private draft survives restarts; it is dropped only when it matches what is on disk.
-    if (saved && saved.content !== content.content) { setDraft(saved.content); setBase(saved.base); } else { localStorage.removeItem(draftKey(key)); setDraft(content.content); setBase(content.hash); }
+    const start = saved && saved.content !== content.content ? saved : { content: content.content, base: content.hash };
+    if (start.content === content.content) localStorage.removeItem(draftKey(key));
+    // An instruction item's snippet joins the draft, never the file: the user reviews it and saves (or discards) here.
+    const add = pendingAppend.current?.key === key ? pendingAppend.current : null;
+    if (add) pendingAppend.current = null;
+    const added = add ? insertInstruction(start.content, add.text, add.section) : null;
+    setDraft(added?.text ?? start.content); setBase(start.base);
+    if (add && added) void perform(async () => undefined, `${added.heading ? `Added under “${added.heading}”` : 'Added at the end'} as an unsaved edit. Review it, then save.`);
     void loadBackups(key).catch(() => undefined);
   }, [loadBackups]);
   useEffect(() => { void perform(reloadList); }, []);
+  // Declared before the load below, so the snippet is waiting when the chosen file is read.
+  useEffect(() => { if (!append) return; pendingAppend.current = append; if (selectedRef.current === append.key) void load(append.key).catch(() => undefined); else setSelected(append.key); }, [append?.at]);
   useEffect(() => { localStorage.setItem('kiln-home-selected', selected); void load(selected).catch(() => setLoaded(null)); }, [selected, load]);
   useEffect(() => { const onFocus = () => void reloadList().catch(() => undefined); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [reloadList]);
   const current = files?.files.find(f => f.key === selected);

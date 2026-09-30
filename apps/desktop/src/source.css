@@ -1,11 +1,11 @@
 /* The source page (SourcePage.tsx): a video as a timeline of what was made from it. */
 .source-page { container-type: inline-size; min-width: 0;
   /* Kind colours, the same as the library's kind icons (.item-kind.*). */
-  --k-prompt: var(--accent-text); --k-technique: #1f7a4c; --k-insight: #9a6b06; --k-tool: #3f5f88; --k-resource: #a03a6a; --k-skill: #6d4fd1; --k-link: #a4650a; }
-:root[data-theme=dark] .source-page { --k-technique: #6fd39d; --k-insight: #f0c75a; --k-tool: #9fbbe0; --k-resource: #ea8fb8; --k-skill: #b7a3f5; --k-link: #f0b660; }
+  --k-prompt: var(--accent-text); --k-technique: #1f7a4c; --k-insight: #9a6b06; --k-tool: #3f5f88; --k-resource: #a03a6a; --k-skill: #6d4fd1; --k-link: #a4650a; --k-instruction: #0f766e; }
+:root[data-theme=dark] .source-page { --k-technique: #6fd39d; --k-insight: #f0c75a; --k-tool: #9fbbe0; --k-resource: #ea8fb8; --k-skill: #b7a3f5; --k-link: #f0b660; --k-instruction: #5fd4c4; }
 .source-page [class*='k-'] { --k: var(--muted); }
 .source-page .k-prompt { --k: var(--k-prompt); } .source-page .k-technique { --k: var(--k-technique); } .source-page .k-insight { --k: var(--k-insight); }
-.source-page .k-tool { --k: var(--k-tool); } .source-page .k-resource { --k: var(--k-resource); } .source-page .k-skill { --k: var(--k-skill); } .source-page .k-link { --k: var(--k-link); }
+.source-page .k-tool { --k: var(--k-tool); } .source-page .k-resource { --k: var(--k-resource); } .source-page .k-skill { --k: var(--k-skill); } .source-page .k-link { --k: var(--k-link); } .source-page .k-instruction { --k: var(--k-instruction); }
 .source-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: 'head' 'main'; column-gap: 24px; align-items: start; }
 .source-layout.with-transcript { grid-template-columns: minmax(0, 1fr) 340px; grid-template-areas: 'head side' 'main side'; }
 .source-head { grid-area: head; min-width: 0; }

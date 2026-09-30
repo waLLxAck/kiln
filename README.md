@@ -6,7 +6,7 @@
 
 Kiln is a free, open-source desktop app and CLI for keeping, testing and installing coding-agent prompts, skills and agents for Claude Code, Codex and GitHub Copilot. Test an exact revision on your own project, approve it, and install that approved copy wherever your agents look. It runs on Windows; the macOS and Linux builds are new and untested.
 
-**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-Setup-0.24.0.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
+**[Website](https://wallxack.github.io/kiln/)** · **Download: [Windows](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-Setup-0.25.0.exe) · [macOS](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-arm64.dmg) · [Linux](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-x86_64.AppImage)** · [All releases](https://github.com/waLLxAck/kiln/releases) · [Report an issue](https://github.com/waLLxAck/kiln/issues) · **[❤️ Sponsor](https://ko-fi.com/wallxack)**
 
 ## Screenshots
 
@@ -32,27 +32,27 @@ Screenshots of Kiln on Windows with a made-up library; the agent's replies in th
 - **Approval** pins an exact revision and publishes it to your own Kiln repository on GitHub. Only approved revisions are installed; new edits become drafts.
 - **Config files**: agent instructions, permissions, MCP settings, hooks and shell profiles in one editor, with syntax checks and previous versions.
 - **A CLI** (`kiln`, from a source build) with JSON results, using the same library and approval rules as the desktop app.
-- **New in 0.24.0**: a one-click switch for whether the model may invoke each skill, a **Session start** meter showing what each harness loads into context when a session starts, resizable library columns, and clickable filters on Machines. 0.23.0 brought the lifecycle redesign and duplicate consolidation.
+- **New in 0.25.0**: **MCP servers** as library items installed into every client's config, a **Usage** page (how often each skill is used, and estimated token spend) read from your own session logs, **GitHub repository import** with an agent that can dig deeper and write new skills, **Score** and **Tune** for skills, and a new **agent instructions** entry type with a choice of which entry types a distillation produces. 0.24.0 brought the model-invocation switch and the Session start meter.
 - **No API key**: agent runs use your existing, signed-in Codex or Claude Code CLI and its account usage. Editing, approval and installation do not call a model.
 
 The [user guide](docs/GUIDE.md) covers every feature in detail, along with limits and product boundaries.
 
 ## Download
 
-Kiln 0.24.0 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`. See [what changed in 0.24.0](docs/releases/0.24.0.md).
+Kiln 0.25.0 is on the [releases page](https://github.com/waLLxAck/kiln/releases), with earlier versions, release notes and `SHA256SUMS.txt`. See [what changed in 0.25.0](docs/releases/0.25.0.md).
 
 | Platform | File | Status |
 | --- | --- | --- |
-| Windows (x64) | [`Kiln-Setup-0.24.0.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-Setup-0.24.0.exe) | Supported |
-| macOS, Apple silicon | [`Kiln-0.24.0-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-arm64.zip)) | New, untested |
-| macOS, Intel | [`Kiln-0.24.0-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-x64.zip)) | New, untested |
-| Linux (x64) | [`Kiln-0.24.0-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-x86_64.AppImage), [`kiln_0.24.0_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/kiln_0.24.0_amd64.deb) or [`Kiln-0.24.0-x64.tar.gz`](https://github.com/waLLxAck/kiln/releases/download/v0.24.0/Kiln-0.24.0-x64.tar.gz) | New, tried on one Arch desktop |
+| Windows (x64) | [`Kiln-Setup-0.25.0.exe`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-Setup-0.25.0.exe) | Supported |
+| macOS, Apple silicon | [`Kiln-0.25.0-arm64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-arm64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-arm64.zip)) | New, untested |
+| macOS, Intel | [`Kiln-0.25.0-x64.dmg`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-x64.dmg) (or [`.zip`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-x64.zip)) | New, untested |
+| Linux (x64) | [`Kiln-0.25.0-x86_64.AppImage`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-x86_64.AppImage), [`kiln_0.25.0_amd64.deb`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/kiln_0.25.0_amd64.deb) or [`Kiln-0.25.0-x64.tar.gz`](https://github.com/waLLxAck/kiln/releases/download/v0.25.0/Kiln-0.25.0-x64.tar.gz) | New, tried on one Arch desktop |
 
 The macOS builds have only been started on CI runners; the Linux build has been tried on one Arch Linux desktop. Please [report what breaks](https://github.com/waLLxAck/kiln/issues), or [build from source](#build-from-source).
 
 - **Windows:** the installer is unsigned. If SmartScreen warns you, choose **More info**, then **Run anyway**.
 - **macOS:** drag Kiln to Applications. It is not notarized, so Gatekeeper blocks the first launch: right-click it and choose **Open** (on macOS 15 and later, **Open Anyway** in System Settings → Privacy & Security), or run `xattr -dr com.apple.quarantine /Applications/Kiln.app`.
-- **Linux:** `chmod +x Kiln-0.24.0-x86_64.AppImage` and run it. It needs FUSE 2: `sudo pacman -S fuse2` (Arch), `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with `--appimage-extract-and-run`. The tar.gz needs no FUSE: unpack it and run `kiln-workbench`. Or install the package with `sudo apt install ./kiln_0.24.0_amd64.deb`. If it exits with a sandbox error, start it with `--no-sandbox`.
+- **Linux:** `chmod +x Kiln-0.25.0-x86_64.AppImage` and run it. It needs FUSE 2: `sudo pacman -S fuse2` (Arch), `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with `--appimage-extract-and-run`. The tar.gz needs no FUSE: unpack it and run `kiln-workbench`. Or install the package with `sudo apt install ./kiln_0.25.0_amd64.deb`. If it exits with a sandbox error, start it with `--no-sandbox`.
 
 You also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in; first launch creates or opens your Kiln repository on GitHub. Agent runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH. [Install notes in full](docs/GUIDE.md#installing).
 

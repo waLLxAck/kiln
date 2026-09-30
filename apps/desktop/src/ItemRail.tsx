@@ -15,6 +15,7 @@ import { clientSpecific, SkillToggles, toggleTargets } from './Skills';
 import './installs.css';
 import { canKeep, keepExplanation } from './KeepChanges';
 import { InvocationToggle } from './Invocation';
+import { McpInstalls } from './Mcp';
 
 const closedKey = 'kiln-rail-closed';
 const closedSections = (): string[] => { try { const value = JSON.parse(localStorage.getItem(closedKey) ?? '[]'); return Array.isArray(value) ? value : []; } catch { return []; } };
@@ -150,6 +151,8 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
         ? <button className="rail-mini" disabled={!approvals.length} title={approvals.length ? 'Install an approved revision, including an earlier one, into a folder Kiln manages.' : 'Approve a revision first; only approved revisions are installed.'} onClick={() => onAction('deploy')}><Rocket size={12} />Install an approved revision…</button>
         : !item.deletedAt && <button className="rail-mini" title="Install into a project folder on this machine: one you used before, or any folder." onClick={() => onAction('install-project')}><FolderPlus size={12} />Install into project…</button>}
     </Section>}
+
+    {item.kind === 'mcp' && <McpInstalls item={item} valid={!detail.validation.length} approved={currentApproved} perform={perform} refresh={refresh}>{(count, tone, body) => <Section id="installs" title="Installs" count={count} tone={tone}>{body}</Section>}</McpInstalls>}
 
     {!isSource && <Section id="tests" title="Tests" count={trials.length} action={<button type="button" className="text-button" onClick={onOpenTests}><FlaskConical size={13} />Open tests</button>}>
       {trials.slice(0, 2).map(trialRow)}

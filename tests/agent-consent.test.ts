@@ -34,7 +34,7 @@ test('the consent text describes the Codex sandbox of the platform it runs on', 
     assert.match(text, /Codex chat runs in Codex’s workspace-write sandbox/, platform);
     assert.match(text, /Claude chat can use Bash, Write and Edit, and its access is not confined/, platform);
   }
-  for (const text of [windows, agentConsentDetail('linux')]) assert.match(text, /Capture, distillation and tests request read-only access/);
+  for (const text of [windows, agentConsentDetail('linux')]) assert.match(text, /Capture, distillation, tests and scores request read-only access/);
   // The wording follows what codexArguments asks Codex for on this platform.
   const args = codexArguments({ folder: '/tmp/job', workdir: '/tmp/session', prompt: '', images: [], writable: ['/library', '/tmp/session'], signal: new AbortController().signal, onEvent: () => {} } as Parameters<typeof codexArguments>[0], { schema: 's', result: 'r' }).join(' ');
   if (process.platform === 'win32') assert.match(args, /danger-full-access/); else assert.match(args, /workspace-write/);

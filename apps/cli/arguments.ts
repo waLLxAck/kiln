@@ -1,7 +1,7 @@
 import { WorkbenchError } from '../../packages/domain/errors';
 import { kindSchema } from '../../packages/protocol/schema';
 
-const switches = new Set(['full', 'json', 'human-reviewed', 'recursive', 'unfiled', 'keep-items', 'trash-items', 'unmark']);
+const switches = new Set(['full', 'json', 'human-reviewed', 'recursive', 'unfiled', 'keep-items', 'trash-items', 'unmark', 'all', 'replace', 'force']);
 const commandOptions: Record<string, string[]> = {
   'items list': ['query', 'collection', 'recursive', 'unfiled', 'status', 'kind', 'from', 'limit', 'offset', 'full'],
   'items read': ['revision', 'full'],
@@ -28,6 +28,21 @@ const commandOptions: Record<string, string[]> = {
   'machines mark': ['item', 'location', 'unmark'],
   'skills invocation': ['model', 'expect'],
   'context start': ['project'],
+  'repos scan': [],
+  'repos import': ['select', 'collection'],
+  'repos list': [],
+  'mcp scan': [],
+  'mcp import': ['all', 'collection'],
+  'mcp status': [],
+  'mcp install': ['client', 'project', 'replace'],
+  'mcp remove': ['client', 'project', 'name', 'force'],
+  'mcp rollback': ['receipt'],
+  'usage scan': [],
+  'usage report': ['days'],
+  'usage skills': ['days'],
+  'usage spend': ['days'],
+  'usage item': ['days'],
+  'usage prices': ['input'],
 };
 const globalOptions = ['library', 'local', 'json'];
 const knownOptions = new Set([...globalOptions, ...Object.values(commandOptions).flat(), 'input']);
@@ -50,8 +65,8 @@ export function parseArguments(args: string[]) {
   const command = `${resource} ${action}`;
   const allowed = new Set([...globalOptions, ...(commandOptions[command] ?? ['input'])]);
   for (const name of options.keys()) if (!allowed.has(name)) throw new WorkbenchError('INVALID_INPUT', `Option --${name} is not supported by ${command}.`);
-  const needsId = ['items read', 'items move', 'items update', 'items restore', 'approvals request', 'skills invocation', 'home read', 'home backups', 'home save', 'home backup', 'home restore', 'home remove'].includes(command);
-  const maximum = command === 'items read' ? 100 : command === 'items move' ? 500 : needsId ? 1 : 0;
+  const needsId = ['items read', 'items move', 'items update', 'items restore', 'approvals request', 'skills invocation', 'repos scan', 'repos import', 'home read', 'home backups', 'home save', 'home backup', 'home restore', 'home remove', 'usage item', 'mcp status', 'mcp install', 'mcp remove'].includes(command);
+  const maximum = command === 'items read' ? 100 : command === 'items move' ? 500 : command === 'mcp import' ? 1000 : needsId ? 1 : 0;
   if ((needsId && ids.length === 0) || ids.length > maximum) throw new WorkbenchError('INVALID_INPUT', command === 'items read' ? 'Provide 1–100 item IDs.' : command === 'items move' ? 'Provide 1–500 item IDs.' : `${command} expects ${needsId ? 'one ID' : 'no positional IDs'}.`);
   // Where items go is never a default: name a collection or say they leave every collection; likewise keep or trash on delete.
   const oneOf = (a: string, b: string, why: string) => { if (options.has(a) === options.has(b)) throw new WorkbenchError('INVALID_INPUT', `${command} needs exactly one of --${a} or --${b}: ${why}.`); };
@@ -59,10 +74,14 @@ export function parseArguments(args: string[]) {
   if (command === 'collections delete') oneOf('keep-items', 'trash-items', '--keep-items moves them up one level, --trash-items moves them to the trash');
   if (command === 'items list' && options.has('unfiled') && options.has('collection')) throw new WorkbenchError('INVALID_INPUT', '--unfiled lists items outside every collection; drop --collection.');
   if (command === 'skills invocation' && !['on', 'off'].includes(options.get('model') ?? '')) throw new WorkbenchError('INVALID_INPUT', 'skills invocation needs --model on (the model may invoke it) or --model off (only you can).');
+  if (command === 'mcp import' && options.has('all') === ids.length > 0) throw new WorkbenchError('INVALID_INPUT', 'mcp import needs --all or the keys mcp scan listed, not both.');
+  if (['mcp install', 'mcp remove'].includes(command) && !['claude', 'codex', 'copilot', 'vscode', 'cursor'].includes(options.get('client') ?? '')) throw new WorkbenchError('INVALID_INPUT', `${command} needs --client claude, codex, copilot, vscode or cursor.`);
+  if (command === 'mcp rollback' && !options.has('receipt')) throw new WorkbenchError('INVALID_INPUT', 'mcp rollback needs --receipt <id> (from mcp install or mcp status).');
   if (command === 'items list' && options.has('recursive') && !options.has('collection')) throw new WorkbenchError('INVALID_INPUT', '--recursive needs --collection.');
   if (resource === 'collections') for (const name of ['name', 'from', 'to']) if (commandOptions[command]?.includes(name) && !options.has(name)) throw new WorkbenchError('INVALID_INPUT', `${command} needs --${name}.`);
   if (ids.length > 1 && options.has('revision')) throw new WorkbenchError('INVALID_INPUT', '--revision requires exactly one item ID.');
   if (options.has('kind') && !kindSchema.safeParse(options.get('kind')).success) throw new WorkbenchError('INVALID_INPUT', `--kind must be one of: ${kindSchema.options.join(', ')}.`);
+  if (options.has('days') && !(Number.isSafeInteger(Number(options.get('days'))) && Number(options.get('days')) >= 0 && Number(options.get('days')) <= 3650)) throw new WorkbenchError('INVALID_INPUT', '--days must be a whole number of days from 0 (all time) to 3650.');
   for (const name of ['limit', 'offset']) {
     if (!options.has(name)) continue;
     const value = Number(options.get(name));

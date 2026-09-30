@@ -4,7 +4,7 @@ import { inStage, matchesQuery, narrowest, parseTyped, sameToken, stages, status
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { SkillLocationSettings } from './Skills';
 import { useCallback, useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
-import { Activity, ArrowRight, ChevronRight, Copy, Download, ExternalLink, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, Loader2, MessageSquare, Pencil, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
+import { Activity, ArrowRight, ChevronRight, Copy, Download, ExternalLink, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, Loader2, MessageSquare, Pencil, Plug, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
 import { Setup, type PreviousLibrary } from './Setup';
 import { ChatPopover } from './Chat';
 import { useKilnCommands } from './commands';
@@ -12,9 +12,12 @@ import { trialPlace, trialPlaces } from './trial-place';
 import { CollectionsDialog, DeleteCollectionDialog, itemsWithin, MoveItemsDialog, useCollectionDrag } from './Collections';
 import { isWithin, relocate, untitledName } from '../../../packages/domain/collections';
 import { LocalSkillsDialog, RepositorySkillsDialog } from './Import';
+import { RepositoriesDialog } from './Repositories';
+import { repoSourceOf } from '../../../packages/domain/github-url';
 import { sharedTitleIds, titleCollisions } from './item-source';
 import { multiMachine } from './features';
 import { MachinesView } from './Machines';
+import { UsageView } from './Usage';
 import { arrangeItems, defaultSort, groupItems, ItemBar, locationName, locationsFor, moveInOrder, nextSort, type Location } from './Library';
 import { BulkBar, LibraryTable } from './LibraryTable';
 import { QueryBar } from './QueryBar';
@@ -41,6 +44,7 @@ import { RepositoryPanel } from './RepositoryPanel';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
 import { AgentTrialDialog, CreateSkillDialog } from './AgentPanel';
 import { personalTarget, ScanDialog, SkillInstallDialog, skillState } from './Skills';
+import { McpImportDialog } from './Mcp';
 import { CompareDialog } from './Compare';
 import { ConsolidateDialog } from './Consolidate';
 import { duplicateIds, groupOf } from './consolidate-model';
@@ -55,8 +59,11 @@ import { SessionStartStatus } from './SessionStart';
 import type { InvocationResult } from '../../../packages/domain/router';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
+import { selectedEntryTypes } from '../../../packages/agent/distill';
+import type { InstructionAppend } from './AddToInstructions';
+import { DistillTypesSettings } from './DistillTypes';
 
-type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation } | null;
+type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation; /** A GitHub repository link for `repo-scan`. */ url?: string } | null;
 const hidden = ['archived', 'rejected'];
 /** Whether an item shows under a collection filter: everything for none, the collection with its subfolders, or only unfiled items. */
 const inCollection = (item: Item, collection: string) => !collection || (collection === UNFILED ? !item.collection : isWithin(item.collection, collection));
@@ -67,6 +74,8 @@ export default function App() {
   // Paste, drop, the Capture button, Ctrl+N and the palette all open the capture dialog with their material.
   const [capture, setCapture] = useState<CaptureRequest>(); const captureCount = useRef(0);
   const [jobs,setJobs] = useState<AgentJob[]>([]);
+  /** An instruction item's snippet on its way to Config files, added there as an unsaved edit. */
+  const [homeAppend, setHomeAppend] = useState<InstructionAppend | null>(null);
   const [agentSyncError, setAgentSyncError] = useState('');
   const knownJobs = useRef<Map<string,string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -105,6 +114,8 @@ export default function App() {
   useEffect(() => { if (!chatOpen) setChatSeed(null); }, [chatOpen]);
   /** The item whose experiments grid was asked for from outside its page (the list's Test, quick search). */
   const [testRequest, setTestRequest] = useState<{ id: string; at: number }>();
+  /** An item quick search asked to score or tune; its page starts the score or opens Tune. */
+  const [itemRequest, setItemRequest] = useState<{ id: string; action: 'score' | 'tune'; at: number }>();
   // Duplicates: the group being consolidated (held here, since consolidating removes it from the snapshot), and every id in a group.
   const [consolidating, setConsolidating] = useState<DuplicateGroup | null>(null);
   const duplicateSet = useMemo(() => duplicateIds(snapshot?.duplicates ?? []), [snapshot?.duplicates]);
@@ -241,6 +252,8 @@ export default function App() {
     'new-collection': () => { setSection('library'); newCollection(); },
     'toggle-theme': toggleTheme,
     'ask-item': id => { if (id) revealFresh(id, () => setChatOpen(true)); },
+    'score-item': id => { if (id) revealFresh(id, () => setItemRequest({ id, action: 'score', at: Date.now() })); },
+    'tune-item': id => { if (id) revealFresh(id, () => setItemRequest({ id, action: 'tune', at: Date.now() })); },
     'check-updates': () => { navigate('settings'); void perform(() => checkUpdate(true), 'Checked for updates'); },
   });
   /**
@@ -467,7 +480,7 @@ export default function App() {
       {rescue && rescue.count > 0 && <p className="muted small">The narrowest is <span className="q-inline">{rescue.token ? `${rescue.token.facet}: ${tokenLabel(rescue.token, sourceTitle)}` : `“${searchText}”`}</span>. Without it you would see {rescue.count} item{rescue.count === 1 ? '' : 's'}.</p>}
       <div className="wrap-actions center">{rescue && rescue.count > 0 && <button className="button" onClick={() => rescue.token ? setTokens(tokens.filter(t => !sameToken(t, rescue.token!))) : setQuery('')}>Remove it</button>}<button className="text-button" onClick={clearQuery}>Clear search and filters <X size={13} /></button></div></>
       : <><p>{section === 'trash' ? 'The trash is empty.' : section === 'archive' ? 'Nothing archived or rejected.' : stage ? `Nothing in ${stageName} right now.` : collection ? 'Nothing in this collection yet.' : 'Nothing here yet.'}</p>{section === 'library' && <button className="text-button" onClick={() => startCapture()}>Capture your first item <Plus size={13} /></button>}</>}
-    {!live.length && section === 'library' && <div className="welcome-import"><h2>Already have skills?</h2><p>Bring them in as drafts, then approve the ones you want in your Kiln repository. Nothing is moved where it lives now.</p><div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'import-local' })}><Download size={15} />Import my installed skills</button><button className="button" onClick={() => setDialog({ name: 'import-repo' })}><Upload size={15} />Import from a skills repository…</button></div></div>}
+    {!live.length && section === 'library' && <div className="welcome-import"><h2>Already have skills?</h2><p>Bring them in as drafts, then approve the ones you want in your Kiln repository. Nothing is moved where it lives now.</p><div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'import-local' })}><Download size={15} />Import my installed skills</button><button className="button" onClick={() => setDialog({ name: 'import-repo' })}><Upload size={15} />Import from a skills repository…</button><button className="button" onClick={() => setDialog({ name: 'repos-browse' })}><Github size={15} />Browse skill repositories…</button></div></div>}
   </div>;
   /** What a single-key shortcut does on a focused row: the matching entry of its menu, or of the selection's. */
   const rowShortcut = (event: globalThis.KeyboardEvent, id: string) => { const target = bulkItems.length > 1 ? bulkItems : shown.filter(i => i.id === id); const hit = target.length > 0 && !menu ? shortcutEntry(menuEntries(target), event) : null; return hit ? () => { if (id !== selected && bulkItems.length < 2) select(id); hit.onSelect?.(); } : null; };
@@ -500,7 +513,7 @@ export default function App() {
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
     <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
-      locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
+      locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} scores={snapshot.scores} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
       scroll={listScroll} empty={emptyState}
@@ -508,7 +521,7 @@ export default function App() {
   </section>;
   const itemPage = itemView && <div className="item-view">
     <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onAddToInstructions={append => { setHomeAppend(append); setSection('home'); }} onMachines={() => navigate('machines')} onUsage={() => navigate('usage')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} request={itemRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
@@ -524,10 +537,11 @@ export default function App() {
         {error && <div className="global-error" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={17} /></button></div>}
         {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
         <div className="workspace-row"><div className="workspace-content">
-        {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
+        {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} append={homeAppend} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
         <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
         {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
         {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />}
+        {section === 'usage' && <UsageView perform={perform} refresh={refresh} onOpenItem={id => revealItem(id)} />}
         {section === 'activity' && <><div className="coverage-banner"><Activity size={19} /><span>{snapshot.coverage}</span></div>{snapshot.activity.length ? <div className="timeline">{snapshot.activity.map(a => <div className="timeline-row" key={a.id}><span className={`timeline-dot ${a.kind}`} /><div><span className="eyebrow">{a.kind.replaceAll('_', ' ')}</span><p>{a.message}</p><small>{date(a.at)} {a.revision && `· ${shortHash(a.revision)}`}</small></div>{a.itemId && snapshot.items.some(i => i.id === a.itemId) && <button className="text-button" onClick={() => openTrialItem(a.itemId!)}>Open <ArrowRight size={12} /></button>}</div>)}</div> : <Empty icon={<Activity size={30} />} title="Your story starts with a capture.">Edits, experiments, approvals, and install receipts will appear here.</Empty>}</>}
         {section === 'settings' && <div className="settings-grid"><RepositoryPanel root={snapshot.root} perform={perform} refresh={refresh} onSetup={() => setSetupOpen(true)} onMessage={setMessage} />
           <section className="settings-card"><div className="section-heading"><h3><Download size={18} />Skill &amp; agent locations</h3><Badge status={configured.length ? 'ready' : 'not set up'} /></div><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={setLocation} onScan={(provider, target) => setDialog({ name: 'scan', provider, targetId: target.id })} />
@@ -535,6 +549,8 @@ export default function App() {
             <p className="muted small">The library records which skills you installed (workbench/installs.json). After cloning it on another machine, turn on the locations above and press the button, or run <code>workbench skills sync</code>.</p>
             {syncReport && <details open><summary>Sync result</summary><div className="file-preview-list">{syncReport.map((r, i) => <div key={i}><span>{snapshot.items.find(it => it.id === r.itemId)?.title ?? r.itemId} · {r.provider === 'codex-native' ? 'Codex-specific' : primarySkillLabel(r.provider)}</span><span className="muted">{r.result}</span></div>)}{!syncReport.length && <div><span className="muted">Nothing marked for install.</span></div>}</div></details>}
           </section>
+          <section className="settings-card"><div className="section-heading"><h3><Plug size={18} />MCP servers</h3></div><p>Keep MCP server definitions in the library and install each one into Claude Code, Codex, Copilot CLI, VS Code or Cursor from its page. Kiln writes only that server’s entry in each config.</p>
+            <div className="wrap-actions"><button className="button" onClick={() => setDialog({ name: 'mcp-import' })}><FolderOpen size={15} />Find MCP servers not in the library</button></div></section>
           <section className="settings-card"><div className="section-heading"><h3><FolderGit2 size={18} />Kiln repository</h3><Badge status={snapshot.git.ahead || snapshot.git.behind ? 'review' : 'connected'} /></div><p>Everything you approve is committed here and pushed to GitHub straight away. Drafts stay in this folder on this machine until you approve them. Search indexes, private trial inputs and install ownership live outside it.</p><code className="path-text">{snapshot.root}</code>
             <div className="connected-repo"><Github size={18} /><div><b>{repoName(snapshot.git.remote)}</b><small>{snapshot.git.branch} · {shortHash(snapshot.git.commit)} · <SyncSummary git={snapshot.git} /></small></div>{snapshot.git.ahead > 0 && <button className="button primary" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button>}</div>
             {snapshot.publish.some(j => j.status === 'failed') && <div className="notice warning"><b>Some approvals did not reach GitHub</b>{snapshot.publish.filter(j => j.status === 'failed').slice(0, 5).map(j => <p key={j.id}>{j.title}: {j.error} <button className="text-button" onClick={() => void perform(async () => { await api('publish.retry', { id: j.id }); await refresh(); })}>Retry</button></p>)}</div>}
@@ -549,6 +565,7 @@ export default function App() {
               <Field label="CLI commit messages" hint="Used for generated notes when running Kiln’s CLI directly. Desktop saves, approvals and installs use plain notes without invoking a model."><select aria-label="Commit message model" value={snapshot.settings.commitModel} disabled={!models?.length} onChange={e => save({ commitModel: e.target.value, commitEffort: '' })}>{snapshot.settings.commitModel && !commitChosen && <option value={snapshot.settings.commitModel}>{snapshot.settings.commitModel}</option>}{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
               <Field label="Commit message effort"><select aria-label="Commit message effort" value={snapshot.settings.commitEffort} disabled={!commitChosen} onChange={e => save({ commitEffort: e.target.value })}><option value="">Model default{commitChosen?.defaultEffort ? ` (${commitChosen.defaultEffort})` : ''}</option>{commitChosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>
             </form>; })()}</section>
+          <DistillTypesSettings settings={snapshot.settings} perform={perform} refresh={refresh} />
           <section className="settings-card"><h3>Performance logs</h3><p>Local logs record operation timings, slow requests, window freezes, crashes, CPU and memory. Logs rotate automatically at 5 MB; one previous file is kept. No skill content or request inputs are recorded.</p><button className="button" onClick={() => void perform(() => api('desktop.openLogs'))}>Open performance logs</button></section>
           <UpdatesPanel update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} onCheck={() => void perform(async () => { await checkUpdate(true); }, 'Checked for updates')} onSource={value => void perform(async () => setUpdate(await api('desktop.updateSource', value)))} />
           <section className="settings-card"><h3>Export & recovery</h3><button className="button" onClick={() => void perform(() => api('desktop.resetAgentConsent'), 'Agent access warning will appear before the next interaction')}>Show agent access warnings again</button><p>Export content, bundled assets, revisions, and trial summaries to a readable JSON file. Private inputs, local paths, and credentials are excluded.</p><div className="wrap-actions"><button className="button" onClick={() => void perform(async () => { const result = await api<{ destination: string } | null>('desktop.export'); if (result) setMessage(`Exported to ${result.destination}`); })}><Download size={15} />Export library</button><button className="button" onClick={() => void perform(async () => { const result = await api<{ imported: number; conflicts: string[] } | null>('desktop.importBundle'); if (result) { await refresh(); setMessage(`Imported ${result.imported}; ${result.conflicts.length} diverging items retained in History.`); } })}><Upload size={15} />Restore export</button></div><p className="muted small">Imports are repeatable. Diverging revisions are retained. Imported approvals require a fresh human review.</p></section></div>}
@@ -560,7 +577,7 @@ export default function App() {
     </div>
     <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection}
       context={<SessionStartStatus snapshot={snapshot} installations={installations} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />} />
-    <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />
+    <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} entryTypes={selectedEntryTypes(snapshot.settings)} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} onRepository={url => setDialog({ name: 'repo-scan', url })} />
     {undoStack.toasts(message)}
     {sheet && <ShortcutSheet quickSearch={snapshot.settings.shortcut} onClose={() => setSheet(false)} />}
     {menu && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries(menu.items)} onClose={() => setMenu(null)} />}
@@ -588,7 +605,10 @@ export default function App() {
     {consolidating && <ConsolidateDialog group={consolidating} snapshot={snapshot} installations={installations} where={copyName} perform={perform} refresh={refresh} onMessage={setMessage} onClose={() => setConsolidating(null)} onDone={consolidated} />}
     {dialog?.name.startsWith('uninstall:') && (() => { const receipt = snapshot.receipts.find(r => r.id === dialog.name.split(':')[1]); return receipt ? <Modal title="Remove this skill?" subtitle="Only the matching Kiln-owned folder will be removed." onClose={() => setDialog(null)}><code className="path-text">{receipt.destination}</code><p>The skill stays in your library, with its approvals and history. You can install it again later.</p><div className="modal-actions"><button className="button" onClick={() => setDialog(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('deploy.uninstall', { receiptId: receipt.id, expectState: receipt.hash, confirm: true }); await completed(); }, 'Skill removed; library retained')}>Confirm removal</button></div></Modal> : null; })()}
     {inventory && <Modal title="Repository inventory" subtitle="Read-only inspection complete. No history or existing files changed." onClose={() => setInventory(null)} wide><code className="path-text">{inventory.root}</code><p>{inventory.totalFiles} tracked files · {inventory.resources.length} candidate resources · branch {inventory.branch}</p><div className="inventory-list">{inventory.resources.map(relative => <div key={relative}><code>{relative}</code><button className="text-button" onClick={() => void perform(async () => { const item = await api<Item>('desktop.importResource', { root: inventory.root, relative }); await refresh(); setSelected(item.id); }, 'Imported as an unapproved resource')}>Import copy</button></div>)}</div><p>Attaching creates a separate workbench folder. Existing dotfile installers and agent files keep their current ownership. Import selected resources deliberately.</p><div className="modal-actions"><button className="button" onClick={() => setInventory(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('desktop.attach', { root: inventory.root }); setInventory(null); setSelected(''); await refresh(); }, 'Repository attached')}>Attach this repository</button></div></Modal>}
+    {dialog?.name === 'mcp-import' && <McpImportDialog onClose={() => setDialog(null)} onDone={(summary, id) => { setDialog(null); setMessage(summary); void refresh().then(() => { if (id) revealItem(id); }); }} />}
     {dialog?.name === 'import-local' && <LocalSkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}
+    {/* GitHub repositories: a link from capture, Scan again on a repository source, or the public and personal lists. */}
+    {dialog && ['repo-scan', 'repos-browse', 'repos-mine'].includes(dialog.name) && (() => { const origin = detail ? repoSourceOf(detail.item) : null, url = dialog.url ?? (origin ? `${origin.link.url}${origin.scope ? `/tree/HEAD/${origin.scope}` : ''}` : ''); return <RepositoriesDialog start={dialog.name === 'repos-browse' ? { view: 'browse' } : dialog.name === 'repos-mine' || !url ? { view: 'mine' } : { view: 'review', url }} provider={snapshot.settings.agentProvider} onClose={() => setDialog(null)} onDone={async (summary, sourceId) => { setDialog(null); setMessage(summary); await refresh(); if (sourceId) revealItem(sourceId); }} />; })()}
     {dialog?.name === 'import-repo' && <RepositorySkillsDialog onClose={() => setDialog(null)} onDone={summary => { setDialog(null); setMessage(summary); void refresh(); }} />}
     {dialog?.name === 'git-diff' && <Modal title="Draft changes on this machine" subtitle="Not on GitHub yet. Approving an item commits and pushes its files." onClose={() => setDialog(null)} wide><pre className="prompt-preview">{gitPreview || 'No changes to tracked files. Brand-new drafts are listed under “Draft paths on this machine”.'}</pre></Modal>}
     {dialog?.name === 'conflicts' && conflicts && <Modal title="Resolve library differences" subtitle="Both sides stay in history. Select deliberately, then finish the merge." onClose={() => setDialog(null)} wide>
