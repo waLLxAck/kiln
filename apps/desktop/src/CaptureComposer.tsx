@@ -6,6 +6,7 @@ import { api, variablesIn } from './api';
 import { agentStarted } from './AgentPanel';
 import { youtubeId } from '../../../packages/agent/video-link';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
+import { entryTypeList, type EntryType } from '../../../packages/agent/distill';
 import { ContextMenu, KindIcon, Lightbox, providerName } from './components';
 import type { Item, Provider, RunProviderId } from '../../../packages/protocol/schema';
 import { elapsed } from './StatusBar';
@@ -35,7 +36,7 @@ const detect = (text: string, files: File[]): Detected => files.length ? 'files'
 const detectedLabel: Record<Detected, string> = { empty: '', video: 'YouTube video', link: 'Web page', text: 'Text', files: 'Files' };
 const detectedIcon: Record<Detected, ReactNode> = { empty: <Plus size={16} />, video: <Clapperboard size={16} />, link: <Globe size={16} />, text: <Type size={16} />, files: <Paperclip size={16} /> };
 
-type Props = { request?: CaptureRequest; provider: RunProviderId; providers: Provider[]; jobs: AgentJob[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void };
+type Props = { request?: CaptureRequest; provider: RunProviderId; /** Entry types Settings asks distillation for, named in the analyze buttons' tooltips. */ entryTypes: EntryType[]; providers: Provider[]; jobs: AgentJob[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void };
 
 /**
  * Capture as a dialog over whatever is on screen. It opens from the Capture button, Ctrl+N, the palette, or a paste or drop on
@@ -43,7 +44,7 @@ type Props = { request?: CaptureRequest; provider: RunProviderId; providers: Pro
  * action; Save only keeps the material without running an agent. Recent and running analyses show under the input.
  * The dialog stays mounted while closed, so a half-written capture or a save in flight survives closing it.
  */
-export function CaptureDialog({ request, provider, providers, jobs, items, onSaved, onOpenItem, onOpenCollection }: Props) {
+export function CaptureDialog({ request, provider, entryTypes, providers, jobs, items, onSaved, onOpenItem, onOpenCollection }: Props) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(''), [attachments, setAttachments] = useState<File[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState(''), [preview, setPreview] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false), [agent, setAgent] = useState<RunProviderId>(provider), [saveOnly, setSaveOnly] = useState(false);
@@ -122,7 +123,8 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
     : kind === 'video' ? { label: 'Save link only', analyze: false } : kind === 'link' ? { label: 'Save link', analyze: false }
     : kind === 'text' || kind === 'files' ? { label: `Analyze with ${agentName}`, analyze: true } : null;
   const variables = kind === 'text' ? variablesIn(text) : [];
-  const note = kind === 'video' ? (saveOnly ? 'Keeps the link as a source without fetching captions. Distill it later from the item.' : `${agentName} reads the captions and turns the video into a source plus the prompts, tools, techniques and resources in it.`)
+  const produces = `Produces ${entryTypeList(entryTypes)}. Choose the types in Settings → Distillation.`;
+  const note = kind === 'video' ? (saveOnly ? 'Keeps the link as a source without fetching captions. Distill it later from the item.' : `${agentName} reads the captions and turns the video into a source plus the ${entryTypeList(entryTypes)} in it.`)
     : kind === 'link' ? (saveOnly ? 'Keeps the link. Analyze it later from the item.' : `Analyze page keeps the link as a source and asks ${agentName} for what is reusable in it.`)
     : kind === 'files' ? `Files: 25 MB in total. Images, PDFs and any other type.` : '';
 
@@ -157,8 +159,8 @@ export function CaptureDialog({ request, provider, providers, jobs, items, onSav
         <button type="button" className={`capture-chip toggle ${saveOnly ? 'on' : ''}`} role="switch" aria-checked={saveOnly} disabled={Boolean(savedId)} onClick={() => setSaveOnly(value => !value)} title="Keep the material without running an agent or fetching captions"><span className="capture-switch" />Save only</button>
         <span className="capture-grow" />
         {empty && !savedId ? <span className="faint small">Ctrl V pastes · drop files anywhere</span> : <>
-          {secondary && <button type="button" className="button" disabled={busy} onClick={() => void submit(secondary.analyze)}>{secondary.label}</button>}
-          {primary && <button type="button" className="button primary" disabled={busy} onClick={() => void submit(primary.analyze)}>{busy ? <><Loader2 className="spin" size={15} />Saving…</> : <>{primary.icon}{primary.label}<kbd>Ctrl ↵</kbd></>}</button>}
+          {secondary && <button type="button" className="button" disabled={busy} title={secondary.analyze ? produces : undefined} onClick={() => void submit(secondary.analyze)}>{secondary.label}</button>}
+          {primary && <button type="button" className="button primary" disabled={busy} title={primary.analyze ? produces : undefined} onClick={() => void submit(primary.analyze)}>{busy ? <><Loader2 className="spin" size={15} />Saving…</> : <>{primary.icon}{primary.label}<kbd>Ctrl ↵</kbd></>}</button>}
         </>}
       </div>
       {agentMenu && <ContextMenu x={agentMenu.x} y={agentMenu.y} onClose={() => setAgentMenu(null)} entries={providers.filter(p => p.id !== 'copilot').map(p => ({ label: `${p.label}${p.available ? '' : ' · not detected'}`, checked: agent === p.id, onSelect: () => setAgent(p.id as RunProviderId) }))} />}

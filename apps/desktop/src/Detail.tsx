@@ -5,7 +5,7 @@ import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
 import type { AgentJob, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, Files, FlaskConical, Folder, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, X, ZoomIn } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, FilePlus2, Files, FlaskConical, Folder, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, X, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
 import { api, date, variablesIn } from './api';
@@ -24,12 +24,15 @@ import { languageFor } from './code-language';
 import { ItemEditor, useItemDraft, type ItemDraftState } from './item-editing';
 import { EDITABLE_TEXT_LIMIT } from './bundled-text';
 import { OPEN_RESULT_TAB_EVENT } from './Runs';
+import { AddToInstructions, addToLabel, type InstructionAppend } from './AddToInstructions';
+import { entryTypeList, selectedEntryTypes } from '../../../packages/agent/distill';
 import './item.css';
 import './consolidate.css';
 
 type Props = {
   jobs: AgentJob[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
   /** Opens the agent chat about this item. */ onAsk?: () => void;
+  /** Instruction items: opens Config files on the chosen file with the snippet added as an unsaved edit. */ onAddToInstructions?: (append: InstructionAppend) => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;
   /** The model-invocation switch in the rail's Installs section (Invocation.tsx). */ onInvocation?: (item: Item, model: boolean) => void;
   /** Duplicates: opens the consolidate dialog for this item's group, marks it as not a duplicate of the others, and names a copy briefly. */
@@ -59,7 +62,7 @@ let shownTests = 0;
  * place), and a rail with status, installs, tests, history, provenance and organisation. Tests and History swap into the
  * main column; sources show their SourcePage there instead of the content.
  */
-export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onMachines, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
+export function Detail({ jobs, detail, snapshot, providers, sameTitle, installations, onAction, onToggleInstall, refresh, perform, onSelect, onSetup, onCollection, onMadeFrom, onAsk, onAddToInstructions, onMachines, onInvocation, onConsolidate, onNotDuplicates, where = i => i.title, onMeta, showTests }: Props) {
   const { item, revision } = detail;
   const [view, setView] = useState<View>('content');
   const [raw, setRaw] = useState(() => localStorage.getItem('kiln-detail-raw') === '1');
@@ -69,6 +72,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const [zoom, setZoom] = useState<{ name: string; src: string } | null>(null);
   const [deployRevision, setDeployRevision] = useState<string | null>(null);
   const [addingFile, setAddingFile] = useState(false);
+  const [addingTo, setAddingTo] = useState(false);
   useEffect(() => { setFilePreview(null); setAddingFile(false); setView('content'); }, [item.id]);
   // After the reset above, which runs when the page mounts; each request opens the tests once, not again when the item is reopened later.
   useEffect(() => { if (showTests?.id === item.id && showTests.at !== shownTests) { shownTests = showTests.at; setView('tests'); } }, [showTests, item.id]);
@@ -78,6 +82,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const installable = ['skill', 'agent', 'instruction'].includes(item.kind);
   // Save-only captures (a pasted note, a link, files) can still be analysed; doing so makes them a source.
   const analysable = isSource || (['prompt', 'link', 'file', 'image'].includes(item.kind) && !item.origin);
+  const produces = entryTypeList(selectedEntryTypes(snapshot.settings));
   const analyse = () => void perform(async () => { await api('agent.start', { id: item.id, kind: 'distill' }); agentStarted('distill'); await refresh(); });
   const recorded = detail.analyses.filter(a => !jobs.some(j => j.id === a.id));
   const scroll = useScrollMemory(`detail:${item.id}:${view}`, true);
@@ -106,7 +111,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
   const run: Record<PrimaryAction, { label: string; icon: ReactNode; onClick: () => void; title?: string }> = {
     restore: { label: 'Restore', icon: <RotateCcw size={15} />, onClick: () => onMeta({ deleted: false }) },
     'open-original': { label: 'Open original', icon: <ExternalLink size={15} />, onClick: openItem },
-    analyze: { label: 'Analyze again', icon: <ScanSearch size={15} />, onClick: analyse, title: 'Run the analysis again; new entries are added beside the earlier ones' },
+    analyze: { label: 'Analyze again', icon: <ScanSearch size={15} />, onClick: analyse, title: `Run the analysis again; new entries are added beside the earlier ones. Produces ${produces} (Settings → Distillation).` },
     resolve: { label: changedCopiesLabel(drifted.length), icon: <TriangleAlert size={15} />, onClick: () => drifted[0] && onToggleInstall(drifted[0].provider, drifted[0].targetId), title: 'A copy was edited outside Kiln. Compare it, then reinstall the approved version or remove it.' },
     test: { label: 'Test', icon: <FlaskConical size={15} />, onClick: test, title: 'Run this revision on a real task' },
     approve: { label: 'Approve', icon: <ShieldCheck size={15} />, onClick: () => onAction('approve'), title: 'Approve this revision and publish it to GitHub.' },
@@ -138,7 +143,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
     ...(primary !== 'copy' ? [{ label: 'Copy', icon: <Copy />, onSelect: () => onAction('copy') }] : []),
     ...(['skill', 'agent'].includes(item.kind) && locations.length > 0 && !['approve-install', 'install'].includes(primary) ? [{ label: currentApproved ? 'Install in every location' : 'Approve & install', icon: <Download />, hint: 'Install the approved revision in every configured location.', onSelect: () => onAction('approve-install') }] : []),
     ...(installable ? [] : [{ label: 'Create skill', icon: <Sparkles />, onSelect: () => onAction('derive') }]),
-    ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: 'Ask your agent to distill it into prompts, techniques, tools and insights. It becomes a source that links to them.', onSelect: analyse }] : []),
+    ...(analysable ? [{ label: 'Analyze as a source', icon: <ScanSearch />, hint: `Ask your agent to distill it into ${produces} (Settings → Distillation). It becomes a source that links to them.`, onSelect: analyse }] : []),
     ...(onAsk ? [{ label: 'Ask the agent about it', icon: <MessageSquare />, onSelect: onAsk }] : []),
     ...openStored, addFile, copyId, 'separator',
     ...statusEntries(['captured', 'testing', 'rejected', 'archived']), trash,
@@ -191,13 +196,15 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
             {!item.deletedAt && <Duplicates detail={detail} snapshot={snapshot} where={where} onSelect={onSelect} onConsolidate={onConsolidate} onNotDuplicates={onNotDuplicates} />}
             {item.deletedAt && item.mergedInto && <MergedNote item={item} snapshot={snapshot} onSelect={onSelect} />}
             {editing ? <ItemEditor detail={detail} draft={draft} collections={snapshot.collections} name={mainFile(detail)} />
-            : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom} />}
+            : <Document detail={detail} raw={raw} onRaw={toggleRaw} onEdit={item.deletedAt ? undefined : startEdit} onZoom={setZoom}
+              extra={item.kind === 'instruction' && !item.deletedAt && onAddToInstructions ? <button type="button" className="text-button" title="Open an instruction file in Config files with this text added. Nothing is saved until you save it there." onClick={() => setAddingTo(true)}><FilePlus2 size={13} />{addToLabel(revision.content)}</button> : undefined} />}
             <BundledFiles detail={detail} draft={draft} perform={perform} refresh={refresh} preview={filePreview} onPreview={setFilePreview} adding={addingFile} onAdding={setAddingFile} />
           </div>}
         </div>
         <ItemRail places={places} detail={detail} snapshot={snapshot} providers={providers} installations={installations} events={events} sameTitle={sameTitle} editing={editing} perform={perform} refresh={refresh} onAction={onAction} onToggleInstall={onToggleInstall} onSetup={onSetup} onMachines={onMachines} onInvocation={onInvocation} onOpenTests={() => setView('tests')} onOpenHistory={() => setView('history')} approveInHeader={showPrimary && primary === 'approve'} sourceInHeader={['open-original', 'open-link'].includes(primary)} />
       </div>
     </div>
+    {addingTo && onAddToInstructions && <AddToInstructions content={revision.content} onClose={() => setAddingTo(false)} onChoose={append => { setAddingTo(false); onAddToInstructions(append); }} />}
     {zoom && <Lightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
     {deployRevision && <DeployDialog detail={detail} snapshot={snapshot} revision={deployRevision} onClose={() => setDeployRevision(null)} onDone={() => { setDeployRevision(null); void perform(refresh, 'Installed. Start a new agent session to use it.'); }} />}
   </article>;
@@ -235,7 +242,7 @@ function plainProperty(key: string, value: string): [string, string] | null {
   return null;
 }
 /** The content as a document: front-matter as a property table, the body formatted (or raw), images inline. Clicking the text edits it. */
-function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; raw: boolean; onRaw: (raw: boolean) => void; onEdit?: () => void; onZoom: (image: { name: string; src: string }) => void }) {
+function Document({ detail, raw, onRaw, onEdit, onZoom, extra }: { detail: ItemDetail; raw: boolean; onRaw: (raw: boolean) => void; onEdit?: () => void; onZoom: (image: { name: string; src: string }) => void; /** Another action for the document bar, beside Edit. */ extra?: ReactNode }) {
   const { item, revision } = detail;
   const { properties, body } = splitFrontMatter(revision.content);
   const variables = variablesIn(revision.content);
@@ -251,6 +258,7 @@ function Document({ detail, raw, onRaw, onEdit, onZoom }: { detail: ItemDetail; 
     <div className="item-doc-bar">
       <span className="item-doc-name">{mainFile(detail)}</span>
       {markdown && <span className="item-seg" role="group" aria-label="Show as"><button type="button" aria-pressed={formatted} className={formatted ? 'on' : ''} onClick={() => onRaw(false)}>Formatted</button><button type="button" aria-pressed={!formatted} className={formatted ? '' : 'on'} onClick={() => onRaw(true)}>Raw</button></span>}
+      {extra}
       {onEdit && <button type="button" className="text-button" aria-label="Edit text" onClick={onEdit}><Pencil size={13} />Edit</button>}
     </div>
     {formatted && (properties.length > 0 || variables.length > 0) && <table className="item-props"><tbody>

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowRight, ChevronDown, ChevronRight, CircleSlash, Folder, Layers3, Loader2, MessageSquare, Pencil, RotateCcw, ScanSearch, ScrollText, Sparkles, Star, X, ZoomIn } from 'lucide-react';
 import type { AgentJob } from '../../../packages/agent/service';
 import { timestamp, youtubeId } from '../../../packages/agent/video-link';
+import { entryTypeList, selectedEntryTypes } from '../../../packages/agent/distill';
 import type { Analysis, Item, ItemDetail, Provider, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { AgentPanel, AnalysisRecord } from './AgentPanel';
 import { api, date } from './api';
@@ -26,8 +27,8 @@ export type SourcePageProps = {
 
 const decode = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
 const kindPlural: Record<string, string> = { prompt: 'Prompts', skill: 'Skills', agent: 'Agents', instruction: 'Instructions', link: 'Links', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', image: 'Images', file: 'Files', reference: 'References', source: 'Sources' };
-const kindName: Record<string, string> = { prompt: 'Prompt', insight: 'Insight', technique: 'Technique', tool: 'Tool', resource: 'Resource', skill: 'Skill', link: 'Link' };
-const kindOrder = ['prompt', 'technique', 'insight', 'tool', 'resource', 'skill', 'link'];
+const kindName: Record<string, string> = { instruction: 'Instruction', prompt: 'Prompt', insight: 'Insight', technique: 'Technique', tool: 'Tool', resource: 'Resource', skill: 'Skill', link: 'Link' };
+const kindOrder = ['prompt', 'instruction', 'technique', 'insight', 'tool', 'resource', 'skill', 'link'];
 const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
 const took = (a: Analysis) => { const s = Math.max(0, Math.round((Date.parse(a.finishedAt) - Date.parse(a.startedAt)) / 1000)); return Number.isFinite(s) ? s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s` : ''; };
 const gone = (i: Item) => ['archived', 'rejected'].includes(i.status);
@@ -149,7 +150,7 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
         </div>}
 
         {!deleted && <div className="source-actions">
-          <button className="button" onClick={() => onAction('analyze')} disabled={Boolean(running)} title="Run the analysis again; new entries are added beside the earlier ones">{running ? <Loader2 size={15} className="spin" /> : <ScanSearch size={15} />}{running ? 'Analyzing…' : latest ? 'Analyze again' : 'Analyze'}</button>
+          <button className="button" onClick={() => onAction('analyze')} disabled={Boolean(running)} title={`${latest ? 'Run the analysis again; new entries are added beside the earlier ones. ' : ''}Produces ${entryTypeList(selectedEntryTypes(snapshot.settings))} (Settings → Distillation).`}>{running ? <Loader2 size={15} className="spin" /> : <ScanSearch size={15} />}{running ? 'Analyzing…' : latest ? 'Analyze again' : 'Analyze'}</button>
           <button className="button" onClick={() => onAction('ask')}><MessageSquare size={15} />{videoId ? 'Ask about this video' : 'Ask about this source'}</button>
           {video && <button className={`button ${transcriptOpen ? 'on' : ''}`} aria-pressed={transcriptOpen} onClick={() => setTranscriptOpen(open => !open)}><ScrollText size={15} />{transcriptOpen ? 'Hide transcript' : 'Show transcript'}</button>}
         </div>}
@@ -205,7 +206,7 @@ export function SourcePage({ detail, snapshot, jobs, perform, refresh, onSelect,
             <span className="muted small">{made.length ? `${active.length} entr${active.length === 1 ? 'y' : 'ies'}${kept ? ` · ${kept} kept` : ''}${archived.length ? ` · ${archived.length} archived` : ''}` : ''}</span>
             <button className="button small" disabled={!made.length} onClick={() => onMadeFrom(item.id)} title="The library filtered to items made from this source, wherever they are filed"><Layers3 size={13} />Show in library</button>
           </div>
-          {!made.length && <p className="muted">Nothing made from it yet. Analyze it to distill prompts, techniques, tools and insights.</p>}
+          {!made.length && <p className="muted">Nothing made from it yet. Analyze it to distill {entryTypeList(selectedEntryTypes(snapshot.settings))}.</p>}
           <ol className={`source-groups ${byMinute ? 'timed' : ''}`}>
             {groups.map(group => <li key={group.key} className={`source-group ${group.entries.some(e => e.item.id === hot) ? 'hot' : ''}`}>
               {byMinute && <div className="source-time">{group.at !== null && videoId ? <button type="button" title={`Open the video at ${timestamp(group.at)}`} onClick={() => openUrl(at(group.at!))}>{timestamp(group.at)}</button> : <span>–</span>}</div>}

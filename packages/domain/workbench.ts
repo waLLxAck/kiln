@@ -16,6 +16,7 @@ import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
 import { defaultTags, distinctKeys, duplicateGroups, signature, type Signature } from './duplicates';
 import { flagOnlyChange, listingChars, readInvocation } from './invocation';
+import { entryTypes } from '../agent/distill';
 
 /** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
 function workingFingerprint(dir: string, revision: string) {
@@ -783,7 +784,10 @@ export class Workbench {
   }
   settings(): Settings {
     const file = path.join(this.local, 'settings.json');
-    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(fs.existsSync(file) ? readJson(file) : {});
+    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.string()).catch([]).default([]) }).parse(fs.existsSync(file) ? readJson(file) : {});
+    // Unknown types (from a newer or older build) are ignored; turning every type off is read as the default, all on.
+    const off = entryTypes.filter(type => stored.distillOff.includes(type));
+    stored.distillOff = off.length < entryTypes.length ? off : [];
     // Settings files from 0.22.0 may still hold an `experiments` map; those features are permanent now, so the key is ignored and dropped on the next save.
     return stored;
   }
@@ -939,8 +943,15 @@ export class Workbench {
     });
   }
   saveSettings(input: unknown) {
-    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default('') }).parse(input);
+    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.enum(entryTypes)).default([]).refine(off => new Set(off).size < entryTypes.length, 'Keep at least one entry type for distillation.') }).parse(input);
     writeJson(path.join(this.local, 'settings.json'), value); return this.settings();
+  }
+  /** Which entry types distillation produces, from the Settings checkboxes. Stored as the types turned off; at least one stays on. */
+  saveDistillTypes(input: unknown) {
+    const { types } = z.object({ types: z.array(z.string()).max(50) }).parse(input);
+    const on = entryTypes.filter(type => types.includes(type));
+    invariant(on.length > 0, 'INVALID_SETTINGS', 'Keep at least one entry type for distillation.');
+    return this.saveSettings({ ...this.settings(), distillOff: entryTypes.filter(type => !on.includes(type)) });
   }
   invalidateGit() { this.gitCache = undefined; }
   /** A library can publish approvals only when it has the standard layout, is a Git repository, and has a GitHub remote. */

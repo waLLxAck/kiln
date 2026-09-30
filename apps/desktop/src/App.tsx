@@ -55,6 +55,9 @@ import { SessionStartStatus } from './SessionStart';
 import type { InvocationResult } from '../../../packages/domain/router';
 import type { AgentJob } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
+import { selectedEntryTypes } from '../../../packages/agent/distill';
+import type { InstructionAppend } from './AddToInstructions';
+import { DistillTypesSettings } from './DistillTypes';
 
 type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation } | null;
 const hidden = ['archived', 'rejected'];
@@ -67,6 +70,8 @@ export default function App() {
   // Paste, drop, the Capture button, Ctrl+N and the palette all open the capture dialog with their material.
   const [capture, setCapture] = useState<CaptureRequest>(); const captureCount = useRef(0);
   const [jobs,setJobs] = useState<AgentJob[]>([]);
+  /** An instruction item's snippet on its way to Config files, added there as an unsaved edit. */
+  const [homeAppend, setHomeAppend] = useState<InstructionAppend | null>(null);
   const [agentSyncError, setAgentSyncError] = useState('');
   const knownJobs = useRef<Map<string,string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -508,7 +513,7 @@ export default function App() {
   </section>;
   const itemPage = itemView && <div className="item-view">
     <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onMachines={() => navigate('machines')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
+    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onAddToInstructions={append => { setHomeAppend(append); setSection('home'); }} onMachines={() => navigate('machines')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} />
       : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
@@ -524,7 +529,7 @@ export default function App() {
         {error && <div className="global-error" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={17} /></button></div>}
         {snapshot.warnings.length > 0 && <details className="warning-bar"><summary>{snapshot.warnings.length} library warning(s) need attention</summary>{snapshot.warnings.map(w => <p key={w}>{w}</p>)}</details>}
         <div className="workspace-row"><div className="workspace-content">
-        {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
+        {section === 'home' ? <HomeFilesView perform={perform} refresh={refresh} append={homeAppend} onOpenLibrary={id => { revealItem(id); }} /> : libraryView ? (itemPage || libraryPage) : <div className="page-scroll">
         <div className="page-heading"><div><h1>{sectionName}</h1></div>{section === 'machines' && <button className="button primary" onClick={() => setDialog({ name: 'add-project' })}><Plus size={16} />Add project…</button>}</div>
         {section === 'experiments' && <ExperimentsPage snapshot={snapshot} jobs={jobs} busy={busy} onOpen={itemId => { openTrialItem(itemId); setTestRequest({ id: itemId, at: Date.now() }); }} onResult={trial => setDialog({ name: 'result', trial })} onDelete={trial => action('delete-trial', trial)} onLibrary={() => navigate('library')} />}
         {section === 'machines' && <MachinesView snapshot={snapshot} installations={installations} providers={providers} perform={perform} refresh={refresh} onMessage={setMessage} onSettings={() => navigate('settings')} onAddProject={() => setDialog({ name: 'add-project' })} onCompare={(itemId, targetId) => setDialog({ name: `compare:${itemId}:${targetId}` })} onKeep={keeper.keep} onUninstall={receiptId => setDialog({ name: 'uninstall:' + receiptId })} onInstall={toggleInstall} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />}
@@ -549,6 +554,7 @@ export default function App() {
               <Field label="CLI commit messages" hint="Used for generated notes when running Kiln’s CLI directly. Desktop saves, approvals and installs use plain notes without invoking a model."><select aria-label="Commit message model" value={snapshot.settings.commitModel} disabled={!models?.length} onChange={e => save({ commitModel: e.target.value, commitEffort: '' })}>{snapshot.settings.commitModel && !commitChosen && <option value={snapshot.settings.commitModel}>{snapshot.settings.commitModel}</option>}{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
               <Field label="Commit message effort"><select aria-label="Commit message effort" value={snapshot.settings.commitEffort} disabled={!commitChosen} onChange={e => save({ commitEffort: e.target.value })}><option value="">Model default{commitChosen?.defaultEffort ? ` (${commitChosen.defaultEffort})` : ''}</option>{commitChosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>
             </form>; })()}</section>
+          <DistillTypesSettings settings={snapshot.settings} perform={perform} refresh={refresh} />
           <section className="settings-card"><h3>Performance logs</h3><p>Local logs record operation timings, slow requests, window freezes, crashes, CPU and memory. Logs rotate automatically at 5 MB; one previous file is kept. No skill content or request inputs are recorded.</p><button className="button" onClick={() => void perform(() => api('desktop.openLogs'))}>Open performance logs</button></section>
           <UpdatesPanel update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} onCheck={() => void perform(async () => { await checkUpdate(true); }, 'Checked for updates')} onSource={value => void perform(async () => setUpdate(await api('desktop.updateSource', value)))} />
           <section className="settings-card"><h3>Export & recovery</h3><button className="button" onClick={() => void perform(() => api('desktop.resetAgentConsent'), 'Agent access warning will appear before the next interaction')}>Show agent access warnings again</button><p>Export content, bundled assets, revisions, and trial summaries to a readable JSON file. Private inputs, local paths, and credentials are excluded.</p><div className="wrap-actions"><button className="button" onClick={() => void perform(async () => { const result = await api<{ destination: string } | null>('desktop.export'); if (result) setMessage(`Exported to ${result.destination}`); })}><Download size={15} />Export library</button><button className="button" onClick={() => void perform(async () => { const result = await api<{ imported: number; conflicts: string[] } | null>('desktop.importBundle'); if (result) { await refresh(); setMessage(`Imported ${result.imported}; ${result.conflicts.length} diverging items retained in History.`); } })}><Upload size={15} />Restore export</button></div><p className="muted small">Imports are repeatable. Diverging revisions are retained. Imported approvals require a fresh human review.</p></section></div>}
@@ -560,7 +566,7 @@ export default function App() {
     </div>
     <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection}
       context={<SessionStartStatus snapshot={snapshot} installations={installations} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />} />
-    <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />
+    <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} entryTypes={selectedEntryTypes(snapshot.settings)} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} />
     {undoStack.toasts(message)}
     {sheet && <ShortcutSheet quickSearch={snapshot.settings.shortcut} onClose={() => setSheet(false)} />}
     {menu && <ContextMenu x={menu.x} y={menu.y} entries={menuEntries(menu.items)} onClose={() => setMenu(null)} />}

@@ -127,6 +127,7 @@ export class Router {
       case 'snapshot': return { ...this.wb.snapshot(), publish: this.publisher.list() };
       case 'publish.jobs': return this.publisher.list();
       case 'publish.retry': return this.publisher.retry(z.object({ id: idSchema }).parse(args).id);
+      case 'settings.distill': return this.wb.saveDistillTypes(args);
       case 'home.list': return this.home.list();
       case 'home.read': return this.home.read(z.object({ key: z.string() }).parse(args).key);
       case 'home.save': return this.home.save(args);
