@@ -143,7 +143,8 @@ test('a symlink in a skill folder arrives as the text of its target, never the f
   try {
     const result = await new RepoImports(wb).import({ url: 'https://github.com/acme/links', confirm: true });
     const files = wb.getRevision(result.imported[0].id).files;
-    assert.equal(Buffer.from(files['key.txt'], 'base64').toString('utf8'), secret);
+    // Git for Windows records the link target with forward slashes.
+    assert.equal(Buffer.from(files['key.txt'], 'base64').toString('utf8').replaceAll('\\', '/'), secret.replaceAll('\\', '/'));
   } finally { wb.close(); }
 });
 

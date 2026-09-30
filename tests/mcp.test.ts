@@ -85,7 +85,8 @@ test('installing writes only the server’s entry: other JSON keys, comments and
     assert.deepEqual({ ...parsed, mcpServers: { other: parsed.mcpServers.other } }, JSON.parse(state), 'every other key is unchanged');
     assert.ok(after.startsWith('{\n  "numStartups": 12,\n  "oauthAccount": { "emailAddress": "me@example.com" },\n  "mcpServers": {\n    "other": { "type": "stdio", "command": "other-server" },'), 'text before the entry is untouched');
     assert.ok(after.endsWith('  },\n  "projects": { "/x": { "allowedTools": [] } }\n}\n'));
-    assert.equal(fs.statSync(claudeFile).mode & 0o777, 0o600, 'a private file stays private');
+    // Windows has no POSIX permission bits; there the mode check says nothing.
+    if (process.platform !== 'win32') assert.equal(fs.statSync(claudeFile).mode & 0o777, 0o600, 'a private file stays private');
     f.call('mcp.install', { itemId: item.id, client: 'vscode', project: f.project, confirm: true });
     const vsAfter = fs.readFileSync(vscodeFile, 'utf8');
     assert.ok(vsAfter.startsWith('// Workspace servers\n{\n\t"inputs": [],\n\t"servers": {\n\t\t// keep me\n\t\t"local": { "type": "stdio", "command": "local" },'), 'comments and tabs are kept');
