@@ -17,6 +17,7 @@ This guide covers everything the [README](../README.md) summarises. Together the
 - [Model invocation and session start](#model-invocation-and-session-start)
 - [Bulk Library management](#bulk-library-management)
 - [Custom agents](#custom-agents)
+- [MCP servers](#mcp-servers)
 - [Config files](#config-files)
 - [Standard repositories](#standard-repositories)
 - [Command-line interface](#command-line-interface)
@@ -43,6 +44,7 @@ What ships today:
 | Item conversations | Ask an agent about an item and its attachments, including source-video context; continue a private session or explicitly export its transcript. |
 | Skill authoring | Ask an agent to turn a prompt, image or note into a new SKILL.md draft using bundled writing guidance, with a link back to the source revision. |
 | Custom agents | Import and manage native Codex, Claude Code and Copilot agent definitions; install approved definitions into compatible client locations. |
+| MCP servers | Keep MCP server definitions in the library, import the ones already configured in Claude Code, Codex, Copilot CLI, VS Code and Cursor, and install an approved server into any of them, personal or per project. Kiln writes only that server's entry in each config, with drift checks, receipts, rollback and backups. |
 | Review and approval | Approve an exact revision. Publish that reviewed snapshot to your Kiln GitHub repository, with visible progress and retry for failed publishing. New edits become drafts. |
 | Installation | Install approved skills and agent definitions into personal locations or any project folder. Inspect copies, drift and receipts; update copies behind the approved revision, remove copies, roll back supported deployments, and sync desired installs on another machine. |
 | Imports and portability | Import existing installed skills or skills repositories as drafts. Export/import authored library data and attachments, including empty custom collections. Imported approvals require local review. |
@@ -358,6 +360,41 @@ Agents are Library items alongside skills. In **Settings → Skill & agent locat
 
 Agent formats: [Claude subagents](https://code.claude.com/docs/en/sub-agents), [Copilot custom agents](https://docs.github.com/en/copilot/reference/custom-agents-configuration), and [Codex standalone agents](https://learn.chatgpt.com/docs/agent-configuration/subagents). Older Codex role files without name and description can be imported as drafts and repaired before installation.
 
+## MCP servers
+
+An MCP server is a library item of kind `mcp`. Its content is one client-neutral definition in JSON:
+
+```json
+{
+  "name": "github",
+  "description": "GitHub issues and pull requests",
+  "transport": "stdio",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+}
+```
+
+`transport` is `stdio` (a local `command` with `args` and `env`), `http` (streamable HTTP) or `sse`, both with a `url` and optional `headers`. `name` is the key clients list the server's tools under. Values refer to environment variables as `${NAME}`; secrets never belong in the definition, because the library is shared through Git. The content checks flag anything that looks like a literal token, key or password (for example `ghp_…`, `sk-…`, or a long value under a key such as `API_KEY` or `Authorization`), and the server can't be installed until it is a reference. The item page shows the definition as a table (how it runs, its environment and headers, with references marked); **Raw** shows the JSON and **Edit** changes it.
+
+**Find MCP servers not in the library** (Settings → MCP servers) reads every client's MCP config on this machine: Claude Code (`~/.claude.json`, including the per-project entries it keeps there, and each project's `.mcp.json`), Codex (`config.toml` under `CODEX_HOME`, or `~/.codex`, and a project's `.codex/config.toml`), Copilot CLI (`mcp-config.json` under `COPILOT_HOME`, or `~/.copilot`, and a project's `.github/mcp.json`), VS Code (the user `mcp.json` and a project's `.vscode/mcp.json`) and Cursor (`~/.cursor/mcp.json` and a project's `.cursor/mcp.json`). Projects are the ones Kiln knows plus those `~/.claude.json` lists. The same definition found in several places is listed once with each place (click it for the paths); the same name with a different definition is listed separately. Literal secrets are replaced by `${NAME}` references before anything is imported, and fields a definition has no place for (timeouts, tool filters) are named. Ticked servers arrive as drafts in **MCP servers**; the configs are not touched. **New server by hand…** starts a draft for a server that is in no config yet.
+
+The item's **Installs** section is a matrix: one column per client, a row for your personal configs and one per project that holds the server (**Add a project…** adds another). Each cell is one switch and opens what it would do, with the entry in the file beside the entry Kiln writes, in that client's own format:
+
+| Client | Personal config | Project config | Entry Kiln writes |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set) | `.mcp.json` | `mcpServers.<name>` with `type` |
+| Codex | `$CODEX_HOME/config.toml` | `.codex/config.toml` | `[mcp_servers.<name>]`; `${KEY}` in `env` becomes `env_vars`, `Bearer ${VAR}` becomes `bearer_token_env_var` |
+| Copilot CLI | `$COPILOT_HOME/mcp-config.json` | `.github/mcp.json` | `mcpServers.<name>` with `type` and `tools: ["*"]` |
+| VS Code | `Code/User/mcp.json` | `.vscode/mcp.json` | `servers.<name>`; references become `${env:NAME}` |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.<name>`; references become `${env:NAME}` |
+
+A cell is empty (install), installed (Kiln wrote it and it is unchanged), an update (Kiln's entry is behind the approved revision), found (the same server is there but Kiln did not write it; **Let Kiln manage it** records ownership without writing), different (another server with that name) or changed (Kiln wrote it and it was edited since). A different or changed entry is only overwritten with **Replace**; the old entry is kept in the receipt. A dash means the client can't run the definition: Codex has no `sse` transport, and passes environment variables through only under their own name. Installing a draft approves exactly that revision first, as for skills.
+
+Installing changes only that server's entry. JSON files keep their comments, indentation, key order and line endings, and the entry is spliced in beside its neighbours without reformatting them; in `~/.claude.json` nothing but `mcpServers.<name>` is touched. Codex's TOML is changed by replacing only that server's table lines; a server written inline instead of as a `[mcp_servers.<name>]` table is refused rather than rewritten. Every write re-reads the file under the library lock and refuses when it changed since you looked, checks afterwards that nothing but the entry differs, keeps the file's permissions, and keeps the previous file among the file's 30 private versions (shown in [Config files](#config-files) for the files it lists). Each install, update or removal writes a machine-private receipt holding the entry before and after, so **Undo last install** puts back what the latest install replaced (or removes the entry it added) while the entry is unchanged. **Remove** deletes only that entry; an edited or foreign entry needs **Remove anyway**. Start a new client session to pick up a change.
+
+From the CLI: `mcp scan` lists what the import would offer, `mcp import --all` (or the keys `mcp scan` returned) imports it, `mcp status <id>` returns every location's state, and `mcp install <id> --client claude|codex|copilot|vscode|cursor [--project <folder>] [--replace]`, `mcp remove <id> --client <client> [--project <folder>] [--force]` and `mcp rollback --receipt <id>` change one entry. Results are JSON.
+
 ## Config files
 
 **Config files** manages personal and project instructions, permissions, hooks, MCP settings and shell profiles. Built-in entries cover Claude settings and CLAUDE.md, Codex config.toml / hooks.json / AGENTS.md / AGENTS.override.md, Copilot CLI settings / saved permissions / MCP / instructions, and VS Code settings. `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `COPILOT_HOME` are respected for config discovery. Enrolled project folders appear automatically; **Add project folder** discovers project settings, rules, agents and hooks. **Add another file** handles other locations, editor profiles, hook scripts and organization-specific files. Both buttons sit at the bottom of the file tree.
@@ -398,6 +435,8 @@ npm run cli -- --library "C:\path\to\library" deploy installations
 npm run cli -- --library "C:\path\to\library" skills sync
 npm run cli -- --library "C:\path\to\library" skills invocation <id> --model off
 npm run cli -- --library "C:\path\to\library" context start --project "C:\code\my-game"
+npm run cli -- --library "C:\path\to\library" mcp scan
+npm run cli -- --library "C:\path\to\library" mcp install <id> --client codex --project "C:\code\my-game"
 npm run cli -- --library "C:\path\to\library" library export --file "C:\backups\kiln.json"
 ```
 
@@ -490,6 +529,7 @@ Nothing about this machine is shared: Kiln doesn't write machine reports to your
 - Automated capture and experiments request read-only access. Item chat has broader file and command access. Agent interactions use the official clients and show a consent notice; normal editing, approval and installation do not invoke a model.
 - Local run folders hold private inputs and transcripts. Normal export/publishing excludes reserved session data and machine-specific paths; authored text and arbitrary attachments are not automatically secret-redacted.
 - External client hooks can be edited in Config files; Kiln does not execute them itself.
+- MCP servers are installed into client configs, never started or tested by Kiln. Which servers are installed is recorded on this machine only (receipts), not in the library, so another machine installs them from its own item pages. Secrets stay in each machine's environment.
 - SSH execution and remote deployment are not implemented, and Machines manages this machine only; each computer installs from its own clone of the library. Windows installers are unsigned and the full Windows release matrix is not certified. macOS builds are ad-hoc signed and not notarized; the macOS and Linux builds are new in 0.18.1; the macOS builds have not been tested on a real Mac, and the Linux build has been tried on one Arch Linux desktop.
 
 This is the local workflow release, with GitHub onboarding and standardized migration. See [implementation and verification](IMPLEMENTATION.md) for what has been checked and what remains.

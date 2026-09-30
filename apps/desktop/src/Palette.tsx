@@ -32,7 +32,7 @@ const sections = [
 /** What Enter does: sources are read in Kiln, links open in the browser, everything else is pasted. */
 const defaultAction = (item: Item) => item.kind === 'source' ? 'kiln' : item.kind === 'link' ? 'link' : 'copy';
 const defaultVerb = (item: Item) => ({ kiln: 'Open in Kiln', link: 'Open link', copy: 'Copy' })[defaultAction(item)];
-const kindLabel = (kind: Item['kind']) => kind[0].toUpperCase() + kind.slice(1);
+const kindLabel = (kind: Item['kind']) => kind === 'mcp' ? 'MCP server' : kind[0].toUpperCase() + kind.slice(1);
 const openLabel = (item: Item) => item.kind === 'source' ? 'Open original' : item.kind === 'link' ? 'Open link in browser' : ['file', 'image', 'reference'].includes(item.kind) ? 'Reveal stored file' : 'Open stored file';
 /** The main window's rule: a saved choice, else the library setting, with "system" following the OS. */
 const applyTheme = (setting?: string) => { const chosen = localStorage.getItem('kiln-theme') ?? setting; document.documentElement.dataset.theme = chosen === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : chosen ?? 'light'; };

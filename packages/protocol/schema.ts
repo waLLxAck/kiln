@@ -3,8 +3,11 @@ import { z } from 'zod';
 
 export const idSchema = z.string().uuid();
 export const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
-/** `source` is material an agent analysed into entries (a pasted chat, a page, a video); those entries point back to it through `origin`. */
-export const kindSchema = z.enum(['prompt', 'skill', 'agent', 'instruction', 'link', 'insight', 'technique', 'tool', 'resource', 'image', 'file', 'reference', 'source']);
+/**
+ * `source` is material an agent analysed into entries (a pasted chat, a page, a video); those entries point back to it through `origin`.
+ * `mcp` is an MCP server definition (packages/domain/mcp-format.ts), installed as one entry in each client's MCP config.
+ */
+export const kindSchema = z.enum(['prompt', 'skill', 'agent', 'instruction', 'link', 'insight', 'technique', 'tool', 'resource', 'image', 'file', 'reference', 'source', 'mcp']);
 export const statusSchema = z.enum(['captured', 'testing', 'approved', 'rejected', 'archived']);
 /** Libraries written before v0.2 stored `inbox`; read it as `captured`. Files are rewritten on their next save. */
 const legacyStatuses: Record<string, string> = { inbox: 'captured' };

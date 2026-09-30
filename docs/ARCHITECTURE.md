@@ -12,7 +12,7 @@ Electron owns native windows, the tray, shortcuts, clipboard, file pickers, and 
 | `packages/protocol/` | Runtime-validated records and request types |
 | `packages/domain/` | Revisions, approval, trials, provenance, import/export and organization |
 | `packages/storage/` | Atomic writes, cross-process lock, path guards, bundle files, rebuildable search |
-| `packages/deployment/` | Approved snapshots, target ownership, plans, receipts, rollback, uninstall, recovery |
+| `packages/deployment/` | Approved snapshots, target ownership, plans, receipts, rollback, uninstall, recovery; MCP server entries merged into client configs (`mcp.ts`) |
 | `packages/git/` | Checkpoints, synchronization, conflicts, GitHub, standard infrastructure and legacy migration |
 | `packages/providers/` | Official-client detection and explicit manual handoff support |
 | `packages/home/` | Home-folder instruction files (`~/.claude/CLAUDE.md`, `~/AGENTS.md`, `~/.codex/AGENTS.md`) and PowerShell profiles: list, edit in place with a stale-hash guard, kept versions, user-added files |

@@ -26,7 +26,7 @@ workbench/
 
 `kiln.json` declares `format: kiln-library`, `schemaVersion: 1`, a stable `repositoryId`, `library: workbench`, and `infrastructureVersion`. Kiln rejects unsupported schema versions and does not downgrade newer infrastructure.
 
-Item kind `source` marks material an agent analysed (a pasted chat, a page, files, a video). Items made from it name it in `origin`. `analyses/<job id>.json` records each completed analysis: provider, model, effort, token usage, times, summary, takeaway, skipped notes, counts by kind, the created item IDs and the collection. It never holds run steps, commands, paths or the CLI session, which stay machine-private. Records are written once, exported with the library and removed when their source is purged.
+Item kind `mcp` holds one MCP server definition as JSON (`name`, `transport`, `command`/`args`/`env` or `url`/`headers`, `description`); values refer to environment variables as `${NAME}` and never hold secrets. Item kind `source` marks material an agent analysed (a pasted chat, a page, files, a video). Items made from it name it in `origin`. `analyses/<job id>.json` records each completed analysis: provider, model, effort, token usage, times, summary, takeaway, skipped notes, counts by kind, the created item IDs and the collection. It never holds run steps, commands, paths or the CLI session, which stay machine-private. Records are written once, exported with the library and removed when their source is purged.
 
 Item status is one of `captured`, `testing`, `approved`, `rejected`, or `archived`. Libraries written before v0.2 stored `inbox` for newly captured items; Kiln reads that as `captured` and rewrites the file on its next save.
 

@@ -45,6 +45,7 @@ export function configCatalog(home: string, projects: string[], env: NodeJS.Proc
   add('copilot-lsp', 'copilot', copilot, 'lsp-config.json', 'Personal language-server configuration for Copilot CLI.');
   const editorRoot = editorConfigRoot(home, env, platform);
   if (editorRoot) add('vscode-settings', 'vscode', editorRoot, 'Code/User/settings.json', 'VS Code user settings, including Copilot access and tool settings. Named profiles and other editors can be added separately.');
+  if (editorRoot) add('vscode-mcp', 'vscode', editorRoot, 'Code/User/mcp.json', 'VS Code personal MCP servers (the default profile).');
   discover('codex', codex, '.', /\.config\.toml$/, 'Named Codex configuration profile.', 'Personal');
   discover('codex', codex, 'rules', /\.rules$/, 'Codex command execution rules.', 'Personal');
   discover('claude', claude, 'rules', /\.md$/, 'Claude instruction rules.', 'Personal');

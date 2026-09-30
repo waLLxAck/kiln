@@ -21,6 +21,7 @@ import { HomeFiles } from '../home/service';
 import { SessionStartMeter } from '../home/session-start';
 import { FleetService, type FleetOptions } from '../fleet/service';
 import { ProjectInstalls } from '../deployment/projects';
+import { McpServers } from '../deployment/mcp';
 
 import { BackgroundFetch, pullFetched } from '../git/sync';
 import { GitQueue } from '../git/queue';
@@ -56,6 +57,8 @@ export class Router {
   readonly fleet: FleetService;
   /** Install into any project folder, enrolling it on first use. */
   readonly projects: ProjectInstalls;
+  /** MCP servers: import from client configs, install one entry per client config (deployment/mcp.ts). */
+  readonly mcp: McpServers;
   private readonly describer: Describer | null;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
@@ -67,6 +70,7 @@ export class Router {
     this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
     this.projects = new ProjectInstalls(wb, this.deployments, () => this.home.savedProjects(), args => this.installSkill(args));
+    this.mcp = new McpServers(wb, this.home);
     this.sessionStart = new SessionStartMeter({ home: this.home.home, env: this.home.env, projects: () => [...wb.targets().filter(t => t.scope === 'project').map(t => t.root), ...this.home.savedProjects()] });
   }
   /** Saves the revision at once, then fills in a generated note in the background when the user left "What changed?" empty. */
@@ -197,6 +201,14 @@ export class Router {
       case 'projects.preview': return this.projects.preview(args);
       case 'projects.install': return this.projects.apply(args);
       case 'projects.forget': return this.projects.forget(args);
+      case 'mcp.scan': return this.mcp.scan();
+      case 'mcp.import': return this.mcp.importServers(args);
+      case 'mcp.status': return this.mcp.status(args);
+      case 'mcp.preview': return this.mcp.preview(args);
+      case 'mcp.install': return this.published(this.mcp.install(args));
+      case 'mcp.remove': return this.mcp.remove(args);
+      case 'mcp.rollback': return this.mcp.rollback(args);
+      case 'mcp.receipts': return this.mcp.receipts(z.object({ itemId: idSchema.optional() }).parse(args).itemId);
       case 'targets.list': return this.wb.targets();
       case 'targets.remove': return this.wb.removeTarget(args);
       case 'items.reorder': return this.wb.reorderItems(args);
