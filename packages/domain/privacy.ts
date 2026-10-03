@@ -3,7 +3,7 @@ import type { Authoring, Trial } from '../protocol/schema';
 
 export const privateAttachment = (name: string) => /(^|\/)session\.jsonl$/i.test(name);
 export function portableSource(source: string) {
-  if (/^(?:local|home):/i.test(source) || /^(?:[A-Za-z]:[\\/]|\/|\\\\|file:\/\/)/.test(source)) {
+  if (/^(?:local|home):/i.test(source) || /^(?:[A-Za-z]:[\\/]|[\\/]|~[\\/]|file:)/i.test(source)) {
     return `local-import:${path.posix.basename(source.replaceAll('\\', '/'))}`;
   }
   return source;

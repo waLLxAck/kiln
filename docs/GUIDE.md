@@ -627,6 +627,7 @@ The marketing site is based on these facts. Its interactive skills panel, captur
 ## Notes for older libraries and releases
 
 - When an older library opens, legacy session-bearing revisions are archived in machine-private storage and the current item becomes a cleaned, unapproved draft. Local History can still read the original. Existing remote Git history is not rewritten; material published by an older release remains in that history.
+- Cleaning an older item's machine-specific source path preserves its approval when the content and attachments are unchanged. Kiln replaces the path with a portable name and updates revision references, including approval evidence, so another machine can use the same approved snapshot. An earlier cleanup draft regains its approval only when it exactly matches the approved original after provenance cleanup. Original paths stay in machine-private history; removing a session attachment still requires reviewing and approving the cleaned draft.
 - Libraries distilled before the per-kind tabs (Insights, Techniques, Tools, Resources) are re-filed the first time they open.
 - `items list` returned detailed metadata by default before 0.16.0; `--full` restores that shape.
 - Updates started from an older Kiln release still follow that release's update flow; the two-step Windows update flow starts after installing 0.8.1.
