@@ -80,16 +80,35 @@ export class Workbench {
     invariant(config.schemaVersion === 1, 'SCHEMA_UNSUPPORTED', 'This library was created by a newer version of Kiln.');
     this.index = new SearchIndex(path.join(this.local, 'search.sqlite'));
     this.refresh();
-    this.cleanPrivateContent();
-    this.fileEntriesByKind();
-    this.fileSources();
-    this.watcher = fs.watch(this.canonical, { recursive: true }, (_event, filename) => {
-      const name = filename?.toString().replaceAll('\\', '/') ?? '';
-      if (!filename) { this.dirty = true; this.changedItems = null; return; } // Unknown path: reconcile everything next time.
-      if (name.startsWith('items/') && !name.endsWith('.tmp')) { this.dirty = true; const id = name.split('/')[1]; if (id) this.changedItems?.add(id); }
-    });
+    // One-time tidy-ups retry on the next start; a library they cannot finish (held by another process, a damaged file) still opens.
+    for (const tidy of [() => this.cleanPrivateContent(), () => this.fileEntriesByKind(), () => this.fileSources()]) {
+      try { tidy(); } catch (error) { this.warnings.push(`A start-up tidy-up was skipped and runs next time: ${error instanceof Error ? error.message : error}`); }
+    }
+    this.watch();
   }
-  close() { this.watcher?.close(); this.index.close(); }
+  /** Where the desktop worker logs what the library cannot report through a call (the folder watcher failing). */
+  diagnostics?: (event: string, fields?: Record<string, unknown>) => void;
+  private closed = false;
+  private watchFailures = 0;
+  private watch() {
+    try {
+      this.watcher = fs.watch(this.canonical, { recursive: true }, (_event, filename) => {
+        const name = filename?.toString().replaceAll('\\', '/') ?? '';
+        if (!filename) { this.dirty = true; this.changedItems = null; return; } // Unknown path: reconcile everything next time.
+        if (name.startsWith('items/') && !name.endsWith('.tmp')) { this.dirty = true; const id = name.split('/')[1]; if (id) this.changedItems?.add(id); }
+      });
+      this.watchFailures = 0;
+      // Windows reports EPERM when the watched folder goes away; without a listener that would end the worker.
+      this.watcher.on('error', error => { this.diagnostics?.('workbench.watcherFailed', { code: (error as NodeJS.ErrnoException).code, message: error.message }); this.watcher?.close(); this.rewatch(); });
+    } catch (error) { this.diagnostics?.('workbench.watcherFailed', { code: (error as NodeJS.ErrnoException).code, message: error instanceof Error ? error.message : String(error) }); this.rewatch(); }
+  }
+  /** Changes made while nothing watched are unknown, so everything is reconciled next time. Retries back off to a minute. */
+  private rewatch() {
+    this.watcher = undefined; this.dirty = true; this.changedItems = null;
+    const delay = Math.min(2000 * 2 ** this.watchFailures++, 60_000);
+    if (!this.closed) setTimeout(() => { if (!this.closed && !this.watcher) this.watch(); }, delay).unref();
+  }
+  close() { this.closed = true; this.watcher?.close(); this.index.close(); }
   /**
    * One-time tidy-up for libraries distilled before entry types became item kinds: an entry derived from a video that still carries
    * its type as a tag (tool, technique, resource, insight) is re-filed under that kind, tag dropped. Skipped when another process
