@@ -5,14 +5,14 @@ import type { Workbench } from '../domain/workbench';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { now, readJson, readRecords, writeJson } from '../storage/files';
 import { runCodex } from '../agent/codex';
-import { commitSnapshot, committedJson, gitStatus, push } from './service';
+import { commitSnapshot, committedJson, gitStatus } from './service';
 import { privateAttachment, portableSource, shareableAuthoring, shareableTrial } from '../domain/privacy';
 import { provenanceOnly } from '../domain/provenance';
 import { revisionHash } from '../domain/content';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
 import type { PublishAction, PublishJob } from '../protocol/schema';
 import { organisationPlan } from './organise';
-import { mergeInProgress } from './sync';
+import { BackgroundFetch, changedOnGitHub, mergeInProgress, onGitHub, pullFetched, pushToGitHub } from './sync';
 import { GitQueue } from './queue';
 export type { PublishAction, PublishJob, PublishStatus } from '../protocol/schema';
 export type ComposeInput = { action: PublishAction; title: string; kind: string; summary: string; diff: string; revision: string; model: string; effort: string; folder: string; signal: AbortSignal };
@@ -59,8 +59,11 @@ export class Publisher {
   private active = 0;
   private controllers = new Map<string, AbortController>();
   private readonly folder: string;
-  /** `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there. */
-  constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer, private queue = new GitQueue()) {
+  /**
+   * `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there.
+   * `fetcher` fetches again when GitHub refuses a push because another machine pushed first.
+   */
+  constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer, private queue = new GitQueue(), private fetcher = new BackgroundFetch(wb, queue)) {
     this.folder = path.join(wb.local, 'publish'); fs.mkdirSync(path.join(this.folder, 'jobs'), { recursive: true });
     for (const job of readRecords(path.join(this.folder, 'jobs'), value => value as PublishJob)) {
       if (!['done', 'failed'].includes(job.status)) { job.status = 'failed'; job.error = 'Kiln closed before this reached GitHub. Retry to push it.'; job.finishedAt = now(); this.save(job); }
@@ -95,9 +98,31 @@ export class Publisher {
   private pendingInstalls(): string[] {
     try { const value = readJson(path.join(this.folder, 'organise-installs.json')); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []; } catch { return []; }
   }
-  private publishOrganisation(job: PublishJob) {
+  /** Failed jobs whose commit GitHub now has, carried by a later push, pull or merge, are done. */
+  settle() {
+    for (const job of this.jobs.values()) if (job.status === 'failed' && job.commit && onGitHub(this.wb.root, job.commit)) { job.status = 'done'; job.error = undefined; this.save(job); }
+  }
+  /**
+   * When the last fetch found GitHub ahead and this machine has nothing of its own waiting, the commit is built on GitHub's
+   * commits, so history stays a line. Anything in the way is left for the push, which merges when it has to.
+   * Not when GitHub changed the job's own item: the snapshot was taken before, and committing it on top would replace GitHub's
+   * version unseen. Built on the older commit instead, the push is refused and the merge stops on that item for the user.
+   */
+  private catchUp(itemId = '') {
+    const state = gitStatus(this.wb.root);
+    if (!state.behind || state.ahead || mergeInProgress(this.wb.root)) return;
+    if (itemId && changedOnGitHub(this.wb, itemId)) { this.log('publish.catchUp', { status: 'skipped', itemId }); return; }
+    try { const result = pullFetched(this.wb); this.log('publish.catchUp', { status: result.status }); }
+    catch (error) { this.log('publish.catchUp.failed', { message: error instanceof Error ? error.message : String(error) }); }
+  }
+  private async push() {
+    await pushToGitHub(this.wb, this.fetcher); this.wb.invalidateGit();
+    this.settle();
+  }
+  private async publishOrganisation(job: PublishJob) {
     job.status = 'committing'; this.save(job);
     invariant(!mergeInProgress(this.wb.root), 'GIT_CONFLICT', 'Finish the merge from GitHub first, then retry.');
+    this.catchUp();
     const installIds = this.pendingInstalls(), plan = organisationPlan(this.wb, installIds);
     job.message = plan.message; job.composer = 'fallback';
     // Changed back before the job ran, and nothing else waits to be pushed: no commit and no network needed.
@@ -108,7 +133,7 @@ export class Publisher {
     writeJson(path.join(this.folder, 'organise-installs.json'), later);
     this.wb.invalidateGit();
     job.status = 'pushing'; this.save(job);
-    push(this.wb.root); this.wb.invalidateGit();
+    await this.push();
     job.status = 'done';
     // Pushing sends every commit, so earlier organisation jobs that failed have now reached GitHub too.
     for (const old of this.jobs.values()) if (old.action === 'organise' && old.status === 'failed' && old.id !== job.id) { old.status = 'done'; old.error = undefined; this.save(old); }
@@ -201,9 +226,10 @@ export class Publisher {
     }
   }
   /** The approval's commit and push, run in the job's turn in the Git queue. */
-  private commitAndPush(job: PublishJob) {
+  private async commitAndPush(job: PublishJob) {
     const snapshotFile = path.join(this.folder, 'snapshots', `${job.id}.json`);
     if (!fs.existsSync(snapshotFile)) this.snapshot(job);
+    this.catchUp(job.itemId);
     if (job.action === 'approve') invariant(this.wb.approvals().some(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approval was withdrawn before publishing.');
     const snapshot = readJson(snapshotFile) as { files: Record<string, string>; replace: string[]; install?: { path: string; providers: string[] } };
     // Merge this item's captured intent into the latest published manifest, so queued items cannot erase each other.
@@ -220,7 +246,7 @@ export class Publisher {
     }
     this.wb.invalidateGit();
     job.status = 'pushing'; this.save(job);
-    push(this.wb.root); this.wb.invalidateGit();
+    await this.push();
     job.status = 'done';
   }
 }

@@ -8,7 +8,7 @@ import type { Workbench } from '../domain/workbench';
 import { revisionHash } from '../domain/content';
 import { atomicWrite, noLinks, safeRelative, withLock, writeJson } from '../storage/files';
 import { writeWorkingFiles } from '../storage/bundles';
-import { assertMergeable, itemPaths, localPaths } from './sync';
+import { assertMergeable, itemPaths, localPaths, mergeJsonFiles, setAside } from './sync';
 
 function git(root: string, args: string[]) {
   return execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0', '-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 5_000_000, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -31,10 +31,19 @@ export function mergeFetched(wb: Workbench, ref = '@{upstream}') {
     let drivers = ''; try { drivers = git(wb.root, ['config', '--get-regexp', '^merge\..*\.driver$']); } catch { /* No custom merge drivers configured. */ }
     invariant(!drivers.trim(), 'CUSTOM_MERGE_DRIVER', 'This repository configures executable merge drivers. Merge it in your normal Git tool, then review the result in Kiln.');
     git(wb.root, ['rev-parse', '--verify', ref]);
+    // Manifests and organisation changed here and on GitHub are merged by Kiln, not left in Git's way.
+    const aside = setAside(wb, ref);
     // Drafts may stay while merging as long as GitHub changed none of the same items.
-    assertMergeable(wb, ref);
+    try { assertMergeable(wb, ref); } catch (error) { aside.restore(); throw error; }
+    // Manifests, and items where only organisation differs, need no choice: Kiln merges them key by key and stages the result.
+    const json = mergeJsonFiles(wb, ref).files;
     try { git(wb.root, ['merge', '--no-commit', '--no-ff', '--no-edit', ref]); }
-    catch (error) { if (!unresolved(wb.root).length) throw error; }
+    catch (error) { if (!unresolved(wb.root).length) { aside.restore(); throw error; } }
+    for (const [file, text] of Object.entries(json)) {
+      safeRelative(file); noLinks(path.join(wb.root, file));
+      atomicWrite(path.join(wb.root, file), text); git(wb.root, ['add', '--', file]);
+    }
+    aside.reapply();
     return conflicts(wb);
   });
 }

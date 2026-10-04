@@ -281,7 +281,7 @@ export class FleetService {
     if (!Object.keys(files).length) return done(previous.commit);
     const message = (files[this.file(self.id)] ? `Report installs on ${self.name}${names.length ? `; update marks for ${names.join(', ')}` : ''}` : `Update what is marked for ${names.join(', ')}`).slice(0, 200);
     const reason = (error: unknown) => String((error as { stderr?: string }).stderr || (error instanceof Error ? error.message : error)).trim().slice(0, 600);
-    const rejected = (error: unknown) => /rejected|fetch first|non-fast-forward|stale info/i.test(reason(error));
+    const rejected = (error: unknown) => (error instanceof WorkbenchError && error.code === 'GIT_PUSH_REJECTED') || /rejected|fetch first|non-fast-forward|stale info/i.test(reason(error));
     if (onUpstream && tracking && upstream) {
       let commit: string | null;
       try { commit = this.commitOn(upstream, files, message); } catch (error) { return { state: 'failed', sharedAt, commit: previous.commit, error: reason(error) }; }
