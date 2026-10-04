@@ -141,7 +141,7 @@ test('the item chat starts fresh on a plain item, writes context.md with the ite
     const context = fs.readFileSync(path.join(workdir, 'context.md'), 'utf8');
     assert.match(context, /## Open item: Plain prompt/); assert.match(context, /Summarise \{\{text\}\} in three bullets\./); assert.doesNotMatch(context, /## Video/);
     assert.match(calls[0].prompt, /Kiln CLI, the only way to change the library/); assert.match(calls[0].prompt, /reserve placeholders for what only the user can supply or decide/); assert.doesNotMatch(calls[0].prompt, /transcript\.md/);
-    assert.deepEqual((service.list().find(j => j.id === first.id)!.result as ChatResult), { reply: 'Reply to: Make it stricter.' });
+    assert.deepEqual((service.job({ id: first.id }).result as ChatResult), { reply: 'Reply to: Make it stricter.' });
     const second = service.chat({ message: 'Shorter.', itemId: plain.id }); await wait(service);
     assert.equal(second.threadId, freshThread, 'the second turn continues the first'); assert.equal(second.parentJobId, undefined); assert.equal(calls[1].resume, freshThread);
 

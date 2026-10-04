@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Check, FlaskConical, Trash2 } from 'lucide-react';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import type { Snapshot, Trial } from '../../../packages/protocol/schema';
 import { date, shortHash } from './api';
 import { Empty, providerName } from './components';
@@ -17,7 +17,7 @@ const tally = (runs: Run[]) => tallyWords.map(([v, word]) => [runs.filter(r => c
 const firstLine = (text: string) => text.split('\n')[0];
 
 type Props = {
-  snapshot: Snapshot; jobs: AgentJob[]; busy: boolean;
+  snapshot: Snapshot; jobs: AgentJobSummary[]; busy: boolean;
   /** Opens the item on its experiments grid. */ onOpen: (itemId: string) => void;
   onResult: (trial: Trial) => void; onDelete: (trial: Trial) => void; onLibrary: () => void;
 };

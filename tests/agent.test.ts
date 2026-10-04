@@ -134,13 +134,13 @@ test('runs record the resolved model and effort, and map CLI events to visible s
       return { output: 'Summary', judgement: 'pass', note: 'Worked' };
     }, async () => [{ slug: 'gpt-test', name: 'GPT Test', description: '', defaultEffort: 'high', efforts: ['low', 'high'] }]);
     service.start({ id: item.id, kind: 'trial' }); await wait(service);
-    const job = service.list()[0];
+    const job = service.job({ id: service.list()[0].id });
     assert.deepEqual(received, { model: 'gpt-test', effort: 'high' });
     assert.equal(job.model, 'gpt-test'); assert.equal(job.effort, 'high'); assert.equal(job.threadId, 'thread-1');
     assert.deepEqual(job.usage, { input: 1200, cached: 400, output: 90, reasoning: 30 });
     assert.deepEqual(job.steps.filter(s => s.kind !== 'status').map(s => [s.kind, s.text, s.status]), [['command', 'cat attachments.md', 'exit 0'], ['reasoning', 'Checking the example', 'done'], ['message', 'Done.', 'done']]);
     const reloaded = new AgentService(wb, () => {}, async () => ({}), async () => []);
-    assert.deepEqual(reloaded.list()[0].steps, job.steps);
+    assert.deepEqual(reloaded.job({ id: job.id }).steps, job.steps);
   } finally { wb.close(); }
 });
 

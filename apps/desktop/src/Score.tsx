@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, FileDiff, Gauge, Loader2, RotateCcw, Sparkles, Wand2, X } from 'lucide-react';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import type { TuneFile } from '../../../packages/agent/tune';
 import { activeRun } from '../../../packages/agent/run-notice';
 import type { Item, ItemDetail, Provider, RunProviderId, Score, ScoreSummary } from '../../../packages/protocol/schema';
@@ -27,7 +27,7 @@ export function ScoreBadge({ score, item, onClick }: { score: ScoreSummary; item
  * The latest score and its improvements, under the header. Each improvement opens to its reason and suggestion; its line link
  * opens the editor on that line. Apply improvements types the chosen ones into the item chat, which saves a new draft revision.
  */
-export function ScorePanel({ detail, jobs, onScore, onLine, onClose }: { detail: ItemDetail; jobs: AgentJob[]; onScore: () => void; onLine: (line: number) => void; onClose: () => void }) {
+export function ScorePanel({ detail, jobs, onScore, onLine, onClose }: { detail: ItemDetail; jobs: AgentJobSummary[]; onScore: () => void; onLine: (line: number) => void; onClose: () => void }) {
   const { item } = detail;
   const latest: Score | undefined = detail.scores?.[0];
   const running = jobs.find(j => j.itemId === item.id && j.kind === 'score' && activeRun(j));

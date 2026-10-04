@@ -92,7 +92,7 @@ test('a chat turn queues too, and a queued turn blocks another message about the
     assert.match(calls[2].input.prompt, /What does this do\?/);
     calls[1].finish(verdict); calls[2].finish('It summarises things.');
     await until(() => service.running === 0);
-    assert.deepEqual((service.list().find(j => j.id === turn.id)!.result as { reply: string }).reply, 'It summarises things.');
+    assert.deepEqual((service.job({ id: turn.id }).result as { reply: string }).reply, 'It summarises things.');
   } finally { wb.close(); }
 });
 

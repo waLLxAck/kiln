@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { capture } from './process';
 
 /** Everything Kiln keeps from a video before asking an agent to distill it. */
 export type VideoTranscript = { id: string; url: string; title: string; channel: string; durationSeconds: number; uploadDate: string; description: string; chapters: { title: string; start: number }[]; transcript: string; language: string };
@@ -31,14 +31,12 @@ export function cleanVtt(vtt: string, markerEverySeconds = 30): string {
   }
   return out.join('\n');
 }
-function run(executable: string, args: string[], cwd: string, signal: AbortSignal, timeoutMs: number) {
-  return new Promise<{ code: number | null; output: string }>((resolve, reject) => {
-    const child = spawn(executable, args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); let output = '';
-    const stop = () => child.kill(); const timer = setTimeout(stop, timeoutMs); signal.addEventListener('abort', stop, { once: true });
-    child.stdout.on('data', data => { output = (output + data).slice(-8000); }); child.stderr.on('data', data => { output = (output + data).slice(-8000); });
-    child.on('error', error => { clearTimeout(timer); reject((error as NodeJS.ErrnoException).code === 'ENOENT' ? new Error('yt-dlp was not found on PATH. Install it (pip install yt-dlp) so Kiln can read video transcripts.') : error); });
-    child.on('close', code => { clearTimeout(timer); signal.removeEventListener('abort', stop); if (signal.aborted) reject(new Error('Cancelled')); else resolve({ code, output }); });
-  });
+/** Runs yt-dlp. Cancelling or timing out stops its whole tree, and the run settles even if something it started keeps the pipes open. */
+async function run(executable: string, args: string[], cwd: string, signal: AbortSignal, timeoutMs: number) {
+  const result = await capture(executable, args, { cwd, signal, timeoutMs, limit: 8000 }).catch(error => { throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new Error('yt-dlp was not found on PATH. Install it (pip install yt-dlp) so Kiln can read video transcripts.') : error; });
+  if (result.cancelled || signal.aborted) throw new Error('Cancelled');
+  if (result.timedOut) throw new Error(`yt-dlp did not finish within ${Math.round(timeoutMs / 60000)} minutes.`);
+  return { code: result.code, output: result.output };
 }
 /** Fetches captions and metadata with yt-dlp, the same way the shell `yt` helper does (auto-subs, English first, cookies.txt in the home folder when present). Nothing but subtitles and the info JSON is downloaded. */
 export const fetchTranscript: TranscriptFetcher = async ({ url, folder, signal, onPhase }) => {
