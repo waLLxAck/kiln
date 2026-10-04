@@ -27,7 +27,7 @@
     "start": "npm run build && electron .",
     "build": "tsc --noEmit && node scripts/build.mjs && vite build",
     "check": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test --test-timeout=300000 tests/*.test.ts",
     "test:desktop": "npm run build && playwright test",
     "cli": "tsx apps/cli/main.ts",
     "package": "npm run build && electron-builder --dir",

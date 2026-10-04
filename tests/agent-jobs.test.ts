@@ -49,7 +49,7 @@ test('a CLI whose helper keeps the output pipes open still settles on cancel and
     killHelper(pidFile);
     const timed = Date.now(), late = await capture(process.execPath, [script], { timeoutMs: 300 });
     assert.equal(late.timedOut, true); assert.ok(Date.now() - timed < 8000, `timeout settled after ${Date.now() - timed} ms`);
-  } finally { killHelper(pidFile); fs.rmSync(bin, { recursive: true, force: true }); }
+  } finally { killHelper(pidFile); fs.rmSync(bin, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
 });
 
 test('a Claude Code run is found by a PATH lookup alone and settles when cancelled although its helper holds stdout', async () => {
@@ -57,7 +57,8 @@ test('a Claude Code run is found by a PATH lookup alone and settles when cancell
   const marker = path.join(bin, 'spawned.log'), pidFile = path.join(bin, 'helper.pid'), saved = process.env.PATH;
   // Codex and Copilot note every start: a Claude run must not start them, not even for --version.
   for (const name of ['codex', 'copilot']) command(bin, name, `require('node:fs').appendFileSync(${JSON.stringify(marker)}, ${JSON.stringify(name)} + ' ' + process.argv.slice(2).join(' ') + '\\n'); console.log('${name} 1.0.0');`);
-  command(bin, 'claude', "if (process.argv.includes('--version')) { console.log('claude 2.0.0'); process.exit(0); }\n" + lingering(pidFile, "process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', model: 'fake', session_id: 's-1' }) + '\\n');"));
+  // The fake CLI notes its own pid too, so the test can stop it even where a tree kill is slow to land (Windows).
+  command(bin, 'claude', "if (process.argv.includes('--version')) { console.log('claude 2.0.0'); process.exit(0); }\n" + lingering(pidFile, `fs.writeFileSync(${JSON.stringify(pidFile + '.cli')}, String(process.pid)); process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', model: 'fake', session_id: 's-1' }) + '\\n');`));
   process.env.PATH = bin;
   try {
     assert.equal(path.basename(findExecutable('claude') ?? '', windows ? '.cmd' : ''), 'claude');
@@ -72,7 +73,11 @@ test('a Claude Code run is found by a PATH lookup alone and settles when cancell
       assert.equal(first.find(p => p.id === 'codex')?.version, 'codex 1.0.0'); assert.equal(second.find(p => p.id === 'codex')?.version, 'codex 1.0.0');
       assert.deepEqual(fs.readFileSync(marker, 'utf8').trim().split('\n').sort(), ['codex --version', 'copilot --version']);
     }
-  } finally { process.env.PATH = saved; killHelper(pidFile); fs.rmSync(bin, { recursive: true, force: true }); fs.rmSync(folder, { recursive: true, force: true }); }
+  } finally {
+    process.env.PATH = saved; killHelper(pidFile); killHelper(`${pidFile}.cli`);
+    // Windows frees a killed process's working folder a moment after it ends.
+    for (const dir of [bin, folder]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  }
 });
 
 test('agent.jobs lists summaries without steps or bulky results; agent.job returns the full record', async () => {

@@ -159,8 +159,8 @@ export class Workbench {
   private watchFailures = 0;
   private watch() {
     try {
-      this.watcher = fs.watch(this.canonical, { recursive: true }, (_event, filename) => {
-        this.noticed(filename?.toString().replaceAll('\\', '/') ?? '');
+      this.watcher = fs.watch(this.canonical, { recursive: true }, (event, filename) => {
+        this.noticed(filename?.toString().replaceAll('\\', '/') ?? '', event);
       });
       this.watchFailures = 0;
       // Windows reports EPERM when the watched folder goes away; without a listener that would end the worker.
@@ -180,11 +180,13 @@ export class Workbench {
    * is decided there, from item.json and the working-file fingerprint, so the echo of Kiln's own save costs a few stats. A record
    * file is re-checked in its folder's cache. An event without a path re-checks everything.
    */
-  private noticed(name: string) {
+  private noticed(name: string, event: string = 'rename') {
     if (!name) { this.changedItems = null; for (const folder of this.folders.values()) folder.forget(); return; }
     if (name.endsWith('.tmp')) return;
     const [top, entry] = name.split('/');
-    if (top === 'items') { if (!entry) this.changedItems = null; else this.changedItems?.add(entry); return; }
+    // Windows also reports a 'change' of the items folder itself whenever something inside it changes; the entry that changed is
+    // reported on its own, so only a rename of the folder (recreated, moved) means everything must be listed again.
+    if (top === 'items') { if (!entry) { if (event !== 'change') this.changedItems = null; } else this.changedItems?.add(entry); return; }
     this.folders.get(top)?.forget(entry);
   }
   /**
