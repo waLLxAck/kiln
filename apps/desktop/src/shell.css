@@ -8,6 +8,11 @@
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* Rail */
+.sidebar { overflow: hidden; }
+.sidebar .rail-nav { flex-shrink: 1; overflow-y: auto; overflow-x: hidden; }
+.sidebar-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; margin-top: 8px; padding: 8px 8px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.sidebar-foot .button { height: 26px; padding: 0 8px; font-size: 12px; }
+.sidebar-foot .icon-button { width: 26px; height: 26px; }
 .rail-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; }
 .rail-nav > * { flex-shrink: 0; }
 .rail-nav .sidebar-label { margin-top: 16px; }
@@ -54,7 +59,6 @@ button.status-item:hover { background: var(--subtle-2); }
 .status-item.runs { color: var(--muted); }
 .status-item.runs.active { color: var(--accent-text); font-weight: 500; }
 .status-item.runs.on, .status-item.runs.active:hover { background: var(--accent-tint); }
-.status-item.version { color: var(--muted); }
 .status-bar .button { height: 22px; padding: 0 8px; font-size: 12px; }
 .status-bar .icon-button { width: 22px; height: 22px; }
 /* Popovers open upwards from their segment. */

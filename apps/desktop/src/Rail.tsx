@@ -14,6 +14,7 @@ export const tools = [{ id: 'experiments', label: 'Experiments', icon: FlaskConi
 
 type Props = {
   style: CSSProperties; theme: string; onTheme: () => void;
+  /** Version and update action stay visible below the scrolling navigation. */ footer: ReactNode;
   /** Where the library points now. */
   section: string; collection: string; stage: Stage | '';
   collections: string[]; counts: RailCounts;
@@ -29,7 +30,7 @@ type Props = {
  * trash, then the tools. Collections keep their tree: nest and reorder by dragging, rename in place with F2, right-click for more.
  * Library rows dropped on a collection or on Unfiled move there; Unfiled shows up while rows are dragged even when it is empty.
  */
-export function Rail({ style, theme, onTheme, section, collection, stage, collections, counts, collapsed, onToggle, drag, itemDrag, renaming, onRename, onRenaming, onError, onNavigate, onStage, onCollection, onNewCollection, onCollectionMenu }: Props) {
+export function Rail({ style, theme, onTheme, footer, section, collection, stage, collections, counts, collapsed, onToggle, drag, itemDrag, renaming, onRename, onRenaming, onError, onNavigate, onStage, onCollection, onNewCollection, onCollectionMenu }: Props) {
   const libraryView = ['library', 'archive', 'trash'].includes(section);
   const { library: inLibrary, unfiled } = counts;
   const nested = collections.some(c => c.includes('/'));
@@ -56,5 +57,6 @@ export function Rail({ style, theme, onTheme, section, collection, stage, collec
         <button className={`nav-item ${section === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('settings')}><Settings size={17} /><span>Settings & repository</span></button>
       </div>
     </nav>
+    <div className="sidebar-foot">{footer}</div>
   </aside>;
 }
