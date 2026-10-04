@@ -297,7 +297,7 @@ export class Router {
       case 'git.merge': return this.gitQueue.run(() => mergeFetched(this.wb));
       case 'git.resolve': return resolveItemConflict(this.wb, args);
       case 'git.finishMerge': return this.gitQueue.run(async () => {
-        const commit = finishMerge(this.wb); this.wb.invalidateGit();
+        const commit = finishMerge(this.wb); await this.wb.refreshGit();
         // The merge is what lets this machine's commits reach GitHub, so they go now; Push now remains if this fails.
         try { await this.pushWaiting(); } catch (error) { this.log('sync.push.failed', { message: error instanceof Error ? error.message : String(error) }); }
         return commit;

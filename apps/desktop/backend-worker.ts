@@ -71,7 +71,8 @@ parentPort!.on('message', request => {
         if (!allowed.includes(request.method)) throw new Error('Unsupported worker operation');
         data = await (wb as any)[request.method](...request.args);
       }
-      if (request.method === 'rpc' && ['git.sync','git.checkpoint','git.merge','git.finishMerge','sync.pull','sync.push'].includes(request.args[0])) wb.invalidateGit();
+      // Pull and Push now read the Git state again themselves, in the background (router.ts), so it is not thrown away here.
+      if (request.method === 'rpc' && ['git.sync','git.checkpoint','git.merge','git.finishMerge'].includes(request.args[0])) wb.invalidateGit();
       for (const id of ids) parentPort!.postMessage({ id, data });
     } catch (error) {
       for (const id of ids) parentPort!.postMessage({ id, error: failure(error) });
