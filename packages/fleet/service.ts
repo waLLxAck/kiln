@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { z } from 'zod';
 import type { Workbench } from '../domain/workbench';
 import type { DeploymentService } from '../deployment/service';
@@ -11,6 +10,7 @@ import { atomicWrite, now, readJson, writeJson } from '../storage/files';
 import { commitSnapshot, push } from '../git/service';
 import { GitQueue } from '../git/queue';
 import { BackgroundFetch } from '../git/sync';
+import { catFile, git, gitSync, mergeInProgress, networkTimeout, type RunOptions } from '../git/run';
 import { idSchema, locationKeySchema, machineIdentitySchema, machineReportSchema, type FleetPublish, type FleetView, type MachineIdentity, type MachineReport, type ProviderId, type WantedEdit } from '../protocol/schema';
 import { applyWanted, buildReport, latestApproval, locationClient, sameReport, targetLocations, type FleetInputs } from './model';
 
@@ -68,29 +68,49 @@ export class FleetService {
   private get appVersion() { return this.options.appVersion ?? process.env.KILN_APP_VERSION ?? ''; }
   private get relative() { return path.relative(this.wb.root, this.wb.canonical).split(path.sep).join('/') + '/machines'; }
   private file(id: string) { return `${this.relative}/${idSchema.parse(id)}.json`; }
-  private git(args: string[]) {
-    return execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-C', this.wb.root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 20_000_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  }
+  /**
+   * Git for the rare synchronous paths (marking, consolidating, the CLI's status). Publishing, Machines and Sync use `gitAsync`,
+   * so a report never holds the backend thread.
+   */
+  private git(args: string[]) { return gitSync(this.wb.root, args).trim(); }
+  private async gitAsync(args: string[], options: RunOptions = {}) { return (await git(this.wb.root, args, options)).trim(); }
   private resolve(ref: 'HEAD' | '@{u}' | 'MERGE_HEAD') { try { return this.git(['rev-parse', '--verify', '--quiet', ref]) || null; } catch { return null; } }
+  private async resolveAsync(ref: 'HEAD' | '@{u}' | 'MERGE_HEAD') { try { return await this.gitAsync(['rev-parse', '--verify', '--quiet', ref]) || null; } catch { return null; } }
+  private parseReport(text: string | undefined, id: string): MachineReport | null {
+    if (text === undefined || text.length > MAX_REPORT_BYTES) return null;
+    try { const report = machineReportSchema.parse(JSON.parse(text)); return report.id === id ? report : null; } catch { return null; }
+  }
   /** The report of one machine at a commit, validated; null when absent or unreadable. */
   private committed(commit: string | null, id: string): MachineReport | null {
     if (!commit) return null;
-    try {
-      const text = this.git(['show', `${commit}:${this.file(id)}`]);
-      if (text.length > MAX_REPORT_BYTES) return null;
-      const report = machineReportSchema.parse(JSON.parse(text));
-      return report.id === id ? report : null;
-    } catch { return null; }
+    let text: string; try { text = this.git(['show', `${commit}:${this.file(id)}`]); } catch { return null; }
+    return this.parseReport(text, id);
+  }
+  private async committedAsync(commit: string | null, id: string): Promise<MachineReport | null> {
+    if (!commit) return null;
+    const name = `${commit}:${this.file(id)}`;
+    try { return this.parseReport((await catFile(this.wb.root, [name])).get(name)?.toString('utf8').trim(), id); } catch { return null; }
+  }
+  private reportIds(listing: string) {
+    const pattern = new RegExp(`^${this.relative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.json$`);
+    return listing.split('\0').filter(Boolean).map(name => name.match(pattern)?.[1]).filter((id): id is string => Boolean(id)).slice(0, MAX_MACHINES);
   }
   private reports(commit: string) {
-    let names: string[] = [];
-    try { names = this.git(['ls-tree', '-z', '--name-only', commit, '--', `${this.relative}/`]).split('\0').filter(Boolean); } catch { return []; }
-    const pattern = new RegExp(`^${this.relative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.json$`);
-    return names.map(name => name.match(pattern)?.[1]).filter((id): id is string => Boolean(id)).slice(0, MAX_MACHINES)
-      .map(id => this.committed(commit, id)).filter((report): report is MachineReport => Boolean(report));
+    let listing: string;
+    try { listing = this.git(['ls-tree', '-z', '--name-only', commit, '--', `${this.relative}/`]); } catch { return []; }
+    return this.reportIds(listing).map(id => this.committed(commit, id)).filter((report): report is MachineReport => Boolean(report));
+  }
+  /** Every machine's report at a commit, read with two Git processes. */
+  private async reportsAsync(commit: string) {
+    let listing: string;
+    try { listing = await this.gitAsync(['ls-tree', '-z', '--name-only', commit, '--', `${this.relative}/`]); } catch { return []; }
+    const ids = this.reportIds(listing), names = ids.map(id => `${commit}:${this.file(id)}`);
+    let texts: Map<string, Buffer | null>; try { texts = await catFile(this.wb.root, names); } catch { return []; }
+    return ids.map((id, i) => this.parseReport(texts.get(names[i])?.toString('utf8').trim(), id)).filter((report): report is MachineReport => Boolean(report));
   }
   /** The fetched GitHub branch when there is one (it has what other machines pushed), else this checkout. */
   private readable() { const upstream = this.resolve('@{u}'); return upstream ? { commit: upstream, source: 'upstream' as const } : { commit: this.resolve('HEAD'), source: 'head' as const }; }
+  private async readableAsync() { const upstream = await this.resolveAsync('@{u}'); return upstream ? { commit: upstream, source: 'upstream' as const } : { commit: await this.resolveAsync('HEAD'), source: 'head' as const }; }
   private inputs(): FleetInputs {
     const snapshot = this.wb.snapshot();
     return { items: snapshot.items, approvals: snapshot.approvals, targets: snapshot.targets, receipts: this.deployments.receipts(), installations: this.deployments.installations(), home: os.homedir() };
@@ -104,6 +124,7 @@ export class FleetService {
   }
   /** What this machine was asked to install: the published list (from GitHub when fetched) with unsent local edits. */
   wanted() { const self = this.identity(); return this.withEdits(this.committed(this.readable().commit, self.id)?.wanted ?? {}, self.id); }
+  private async wantedAsync() { const self = this.identity(); return this.withEdits((await this.committedAsync((await this.readableAsync()).commit, self.id))?.wanted ?? {}, self.id); }
   /** This machine's report as it would be published now. */
   live() { const self = this.identity(); return buildReport(self, this.appVersion, this.inputs(), this.wanted(), now()); }
 
@@ -112,15 +133,15 @@ export class FleetService {
     const ready = this.wb.repositoryState().ready;
     // The background sync's fetch: one fetched a moment ago (by it or by a report) is not repeated.
     const fetched = fetch && ready ? await this.background.fetcher.fetch(this.fetchEveryMs) : this.background.fetcher.status();
-    const self = this.identity(), { commit, source } = this.readable();
-    const machines = commit ? this.reports(commit).filter(r => r.id !== self.id).sort((a, b) => a.name.localeCompare(b.name)) : [];
+    const self = this.identity(), { commit, source } = await this.readableAsync();
+    const machines = commit ? (await this.reportsAsync(commit)).filter(r => r.id !== self.id).sort((a, b) => a.name.localeCompare(b.name)) : [];
     const publish = this.publishState();
     // Merged outside Kiln since the report had to wait: try again now.
-    if (publish.state === 'behind' && !this.diverged()) this.schedule(0);
-    return { self, wanted: this.wanted(), publish, machines, source: commit ? source : 'none', fetchedAt: fetched.fetchedAt, ...(fetched.error ? { fetchError: fetched.error.slice(0, 300) } : {}), pending: this.pending(), appVersion: this.appVersion, ready };
+    if (publish.state === 'behind' && !await this.diverged()) this.schedule(0);
+    return { self, wanted: await this.wantedAsync(), publish, machines, source: commit ? source : 'none', fetchedAt: fetched.fetchedAt, ...(fetched.error ? { fetchError: fetched.error.slice(0, 300) } : {}), pending: this.pending(), appVersion: this.appVersion, ready };
   }
   /** Both this checkout and the fetched branch have commits the other lacks. */
-  private diverged() { const head = this.resolve('HEAD'), upstream = this.resolve('@{u}'); return Boolean(head && upstream && !this.ancestor(head, upstream) && !this.ancestor(upstream, head)); }
+  private async diverged() { const head = await this.resolveAsync('HEAD'), upstream = await this.resolveAsync('@{u}'); return Boolean(head && upstream && !await this.ancestor(head, upstream) && !await this.ancestor(upstream, head)); }
 
   /** Asks `machineId` to install (or stop wanting) an item at one of its locations. Published at once; applied there on its next sync. */
   mark(input: unknown) {
@@ -178,14 +199,15 @@ export class FleetService {
    * Offline, it installs what the last fetch saw.
    */
   async sync(): Promise<SyncEntry[]> {
-    if (this.tracking() && this.wb.repositoryState().ready) await this.background.fetcher.fetch();
+    if (await this.tracking() && this.wb.repositoryState().ready) await this.background.fetcher.fetch();
+    const wanted = await this.wantedAsync();
     // One read of the approvals for every entry below, instead of several per install (DeploymentService.batch).
-    return this.deployments.batch(() => this.syncWanted(this.deployments.syncInstalls()));
+    return this.deployments.batch(() => this.syncWanted(this.deployments.syncInstalls(), wanted));
   }
-  private syncWanted(entries: SyncEntry[]) {
+  private syncWanted(entries: SyncEntry[], wanted: Awaited<ReturnType<FleetService['wantedAsync']>>) {
     const locations = targetLocations(this.wb.targets(), os.homedir()), targets = this.wb.targets();
     const token = (key: string): ProviderId | 'codex-native' | undefined => key === 'agents' ? 'codex' : key === 'codex' ? 'codex-native' : key === 'claude' || key === 'copilot' ? key : undefined;
-    for (const [itemId, keys] of Object.entries(this.wanted())) for (const key of keys) {
+    for (const [itemId, keys] of Object.entries(wanted)) for (const key of keys) {
       const location = locations.find(l => l.key === key), target = targets.find(t => t.id === location?.targetId);
       const entry = { itemId, location: key, label: location?.label ?? key, provider: target?.provider === 'codex' && target.skillFolder ? 'codex-native' as const : target?.provider ?? token(key) };
       let item; try { item = this.wb.getItem(itemId); } catch { entries.push({ ...entry, result: 'skipped: not in this library yet; pull from GitHub first' }); continue; }
@@ -219,24 +241,28 @@ export class FleetService {
     this.chain = this.chain.then(() => this.background.queue.run(() => { this.queued = false; return this.publish(); })).catch(error => this.log('fleet.failed', { message: error instanceof Error ? error.message : String(error) }));
   }
   /** Remote, branch and remote-tracking ref this checkout pushes to; null before the first push. */
-  private tracking() {
+  private async tracking() {
     try {
-      const branch = this.git(['symbolic-ref', '--short', 'HEAD']), remote = this.git(['config', `branch.${branch}.remote`]), merge = this.git(['config', `branch.${branch}.merge`]);
+      const branch = await this.gitAsync(['symbolic-ref', '--short', 'HEAD']);
+      const [remote, merge] = await Promise.all([this.gitAsync(['config', `branch.${branch}.remote`]), this.gitAsync(['config', `branch.${branch}.merge`])]);
       if (!/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(merge) || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(remote)) return null;
       return { remote, merge, ref: `refs/remotes/${remote}/${merge.slice('refs/heads/'.length)}` };
     } catch { return null; }
   }
-  private ancestor(a: string, b: string) { try { this.git(['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } }
+  private async ancestor(a: string, b: string) { try { await this.gitAsync(['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } }
   /** A commit of `files` on top of `base` that leaves HEAD, the index and the checkout alone; null when nothing changes. */
-  private commitOn(base: string, files: Record<string, string>, message: string) {
+  private async commitOn(base: string, files: Record<string, string>, message: string) {
     fs.mkdirSync(this.folder, { recursive: true });
     const index = path.join(this.folder, `index-${process.pid}-${randomUUID()}`);
-    const run = (args: string[], input?: Buffer) => execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-C', this.wb.root, ...args], { encoding: 'utf8', input, windowsHide: true, timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GIT_INDEX_FILE: index } }).trim();
+    const run = (args: string[], input?: Buffer | string) => this.gitAsync(args, { input, env: { GIT_INDEX_FILE: index } });
     try {
-      run(['read-tree', base]);
-      for (const [file, content] of Object.entries(files)) run(['update-index', '--add', '--cacheinfo', `100644,${run(['hash-object', '-w', '--stdin'], Buffer.from(content, 'base64'))},${file}`]);
-      const tree = run(['write-tree']);
-      return tree === run(['rev-parse', `${base}^{tree}`]) ? null : run(['commit-tree', tree, '-p', base, '-m', message]);
+      await run(['read-tree', base]);
+      const shas: string[] = [];
+      // Machine reports are a handful of small files; one hash-object each, without blocking the thread.
+      for (const content of Object.values(files)) shas.push(await run(['hash-object', '-w', '--stdin'], Buffer.from(content, 'base64')));
+      await run(['update-index', '-z', '--index-info'], Object.keys(files).map((file, i) => `100644 ${shas[i]}\t${file}\0`).join(''));
+      const tree = await run(['write-tree']);
+      return tree === await run(['rev-parse', `${base}^{tree}`]) ? null : await run(['commit-tree', tree, '-p', base, '-m', message]);
     } finally { fs.rmSync(index, { force: true }); }
   }
   /**
@@ -259,13 +285,13 @@ export class FleetService {
     }
   }
   private async attempt(previous: FleetPublish, fetchAgeMs: number): Promise<FleetPublish | { state: 'retry'; sharedAt: string | null }> {
-    const self = this.identity(), tracking = this.tracking();
+    const self = this.identity(), tracking = await this.tracking();
     if (tracking) await this.background.fetcher.fetchHeld(fetchAgeMs);
-    const head = this.resolve('HEAD'), upstream = tracking ? this.resolve('@{u}') : null;
-    const onUpstream = Boolean(head && upstream && head !== upstream && this.ancestor(head, upstream));
+    const head = await this.resolveAsync('HEAD'), upstream = tracking ? await this.resolveAsync('@{u}') : null;
+    const onUpstream = Boolean(head && upstream && head !== upstream && await this.ancestor(head, upstream));
     const base = onUpstream ? upstream : head;
-    const committedOwn = this.committed(base, self.id), sharedAt = committedOwn?.reportedAt ?? null;
-    if (!base || this.resolve('MERGE_HEAD') || (upstream && !onUpstream && !this.ancestor(upstream, base))) return { state: 'behind', sharedAt, commit: previous.commit };
+    const committedOwn = await this.committedAsync(base, self.id), sharedAt = committedOwn?.reportedAt ?? null;
+    if (!base || mergeInProgress(this.wb.root) || (upstream && !onUpstream && !await this.ancestor(upstream, base))) return { state: 'behind', sharedAt, commit: previous.commit };
     const edits = this.pending(), files: Record<string, string> = {}, bytes = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n').toString('base64');
     const wanted = edits.filter(e => e.machineId === self.id).reduce((next, e) => applyWanted(next, e.itemId, e.location, e.wanted), committedOwn?.wanted ?? {});
     const report = buildReport(self, this.appVersion || committedOwn?.appVersion || '', this.inputs(), wanted, now());
@@ -273,7 +299,7 @@ export class FleetService {
     if (!sameReport(committedOwn, report) || stale) files[this.file(self.id)] = bytes(report);
     const others = [...new Set(edits.map(e => e.machineId).filter(id => id !== self.id))], names: string[] = [];
     for (const id of others) {
-      const current = this.committed(base, id);
+      const current = await this.committedAsync(base, id);
       if (!current) { this.log('fleet.mark.dropped', { machineId: id }); continue; } // That machine's report is gone; nothing to ask.
       const next = edits.filter(e => e.machineId === id).reduce((acc, e) => applyWanted(acc, e.itemId, e.location, e.wanted), current.wanted);
       const updated = { ...current, wanted: Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b))) };
@@ -287,29 +313,29 @@ export class FleetService {
     const rejected = (error: unknown) => /rejected|fetch first|non-fast-forward|stale info/i.test(reason(error));
     if (onUpstream && tracking && upstream) {
       let commit: string | null;
-      try { commit = this.commitOn(upstream, files, message); } catch (error) { return { state: 'failed', sharedAt, commit: previous.commit, error: reason(error) }; }
+      try { commit = await this.commitOn(upstream, files, message); } catch (error) { return { state: 'failed', sharedAt, commit: previous.commit, error: reason(error) }; }
       if (!commit) return done(previous.commit);
-      try { execFileSync('git', ['-c', 'core.hooksPath=', '-C', this.wb.root, 'push', '--quiet', tracking.remote, `${commit}:${tracking.merge}`], { encoding: 'utf8', windowsHide: true, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }); }
+      try { await this.gitAsync(['push', '--quiet', tracking.remote, `${commit}:${tracking.merge}`], { network: true, timeoutMs: networkTimeout(120_000) }); }
       catch (error) { return rejected(error) ? { state: 'retry', sharedAt } : { state: 'failed', sharedAt, commit: previous.commit, error: reason(error) }; }
-      try { this.git(['update-ref', tracking.ref, commit, upstream]); } catch { /* The next fetch brings it. */ }
-      this.wb.invalidateGit(); return done(commit);
+      try { await this.gitAsync(['update-ref', tracking.ref, commit, upstream]); } catch { /* The next fetch brings it. */ }
+      await this.wb.refreshGit(); return done(commit);
     }
     let commit = '';
-    try { commit = commitSnapshot(this.wb.root, this.wb.canonical, files, [], message).commit; }
+    try { commit = (await commitSnapshot(this.wb.root, this.wb.canonical, files, [], message)).commit; }
     catch (error) {
-      this.wb.invalidateGit();
+      await this.wb.refreshGit();
       if (error instanceof WorkbenchError && error.code === 'NOTHING_TO_COMMIT') return done(previous.commit);
       return { state: 'failed', sharedAt, commit: previous.commit, error: reason(error) };
     }
-    try { push(this.wb.root); }
+    try { await push(this.wb.root); }
     catch (error) {
       // Undo the unpublished commit so nothing is left for a merge; the next try rebuilds the change from current data.
-      if (head && this.resolve('HEAD') === commit) { this.git(['update-ref', 'HEAD', head, commit]); this.git(['reset', '-q', 'HEAD', '--', ...Object.keys(files)]); }
-      this.wb.invalidateGit();
+      if (head && await this.resolveAsync('HEAD') === commit) { await this.gitAsync(['update-ref', 'HEAD', head, commit]); await this.gitAsync(['reset', '-q', 'HEAD', '--', ...Object.keys(files)]); }
+      await this.wb.refreshGit();
       return rejected(error) ? { state: 'retry', sharedAt } : { state: 'failed', sharedAt, commit: previous.commit, error: reason(error) };
     }
     // Keep the checkout in step with the commit, so these files don't show as changed and pulls stay fast-forwards.
     for (const [file, content] of Object.entries(files)) atomicWrite(path.join(this.wb.root, ...file.split('/')), Buffer.from(content, 'base64'));
-    this.wb.invalidateGit(); return done(commit);
+    await this.wb.refreshGit(); return done(commit);
   }
 }

@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { NETWORK_ENV, run } from './run';
 import { z } from 'zod';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { noLinks } from '../storage/files';
 import { isDedicated } from './service';
 
-const exec = promisify(execFile);
 const repoSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/);
 export type GitHubState = { available: boolean; authenticated: boolean; login: string; repo: { nameWithOwner: string; url: string; isPrivate: boolean; defaultBranchRef: { name: string } | null } | null; error?: string };
+/** GitHub CLI without prompts. A timeout stops gh and the git it started (`gh repo clone`), so no call stays pending (run.ts). */
 async function gh(args: string[], cwd?: string, timeout = 45000) {
-  try { return (await exec('gh', args, { cwd, windowsHide: true, timeout, maxBuffer: 5_000_000, env: { ...process.env, GH_PROMPT_DISABLED: '1' } })).stdout.trim(); }
+  try { return (await run('gh', args, { cwd, timeoutMs: timeout, maxBuffer: 5_000_000, env: { GH_PROMPT_DISABLED: '1', ...NETWORK_ENV } })).trim(); }
   catch (error) { throw new WorkbenchError('GITHUB_FAILED', (error as { stderr?: string }).stderr?.trim() || 'GitHub CLI is unavailable or needs sign-in.'); }
 }
 export async function githubState(root: string): Promise<GitHubState> {
@@ -84,9 +84,9 @@ export async function cloneGitHub(input: unknown) {
   if (fs.existsSync(root)) {
     noLinks(root);
     let remote = '';
-    const top = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const top = (await run('git', ['-C', root, 'rev-parse', '--show-toplevel'], { timeoutMs: 15_000 })).trim();
     invariant(path.resolve(top).toLowerCase() === path.resolve(root).toLowerCase(), 'FOLDER_EXISTS', 'That folder is inside another repository. Choose a different parent folder.');
-    try { remote = execFileSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { /* A conflicting folder must never be overwritten. */ }
+    try { remote = (await run('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 15_000 })).trim(); } catch { /* A conflicting folder must never be overwritten. */ }
     const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)\/?$/.exec(remote.replace(/\.git$/, ''));
     invariant(match?.[1].toLowerCase() === data.repo.toLowerCase() && isDedicated(root), 'FOLDER_EXISTS', 'That folder already exists and is not a local copy of this Kiln repository. Choose a different parent folder.');
     return { root, standard: true, dedicated: true };
@@ -98,7 +98,7 @@ export async function cloneGitHub(input: unknown) {
 export async function publishGitHub(input: unknown) {
   const data = z.object({ root: z.string().min(1), name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/), description: z.string().max(300).default('A Kiln-managed prompt and skill library'), visibility: z.enum(['private', 'public']).default('private'), confirm: z.literal(true) }).parse(input);
   noLinks(data.root); invariant(fs.existsSync(path.join(data.root, 'kiln.json')), 'NOT_STANDARD_REPOSITORY', 'Create or migrate the standard Kiln repository before publishing.');
-  let remote = ''; try { remote = execFileSync('git', ['-C', data.root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { /* New local repository. */ }
+  let remote = ''; try { remote = (await run('git', ['-C', data.root, 'remote', 'get-url', 'origin'], { timeoutMs: 15_000 })).trim(); } catch { /* New local repository. */ }
   invariant(!remote, 'REMOTE_EXISTS', 'This repository already has an origin. Use Sync for the connected repository.');
   await gh(['repo', 'create', data.name, `--${data.visibility}`, '--description', data.description, '--source', data.root, '--remote', 'origin', '--push']);
   return githubState(data.root);

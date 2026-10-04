@@ -107,7 +107,7 @@ test('a pull that would touch an item with a draft here is refused and names it'
     assert.deepEqual(result.status === 'blocked' && result.items, [{ id: shared.id, title: 'Shared skill' }]);
     assert.deepEqual(folderState(w.a.wb.itemDir(shared.id)), before);
     assert.equal(w.a.git('rev-parse', 'HEAD'), head);
-    assert.throws(() => mergeFetched(w.a.wb), (error: Error & { code?: string }) => error.code === 'GIT_DIRTY' && /“Shared skill”/.test(error.message));
+    await assert.rejects(() => mergeFetched(w.a.wb), (error: Error & { code?: string }) => error.code === 'GIT_DIRTY' && /“Shared skill”/.test(error.message));
     assert.throws(() => w.a.git('rev-parse', '-q', '--verify', 'MERGE_HEAD'), 'no merge was started');
     assert.deepEqual(folderState(w.a.wb.itemDir(shared.id)), before);
   } finally { w.close(); }
@@ -138,7 +138,7 @@ test('Merge from GitHub runs beside drafts and commits neither the drafts nor th
     const draft = w.a.wb.create({ title: 'Secret draft', kind: 'prompt', content: 'Private working notes' });
     const before = folderState(w.a.wb.itemDir(draft.id));
     assert.equal((await catchUp(w.a)).status, 'diverged');
-    const result = mergeFetched(w.a.wb);
+    const result = await mergeFetched(w.a.wb);
     assert.deepEqual(result.paths, []);
     finishMerge(w.a.wb);
     assert.deepEqual(folderState(w.a.wb.itemDir(draft.id)), before);
@@ -248,7 +248,7 @@ async function divergedApprovals(w: ReturnType<typeof world>) {
   const theirs = await edit(w.b, w.b.wb.getItem(shared.id), '\nLaptop wording.');
   w.b.router.approve(approveArgs(theirs)); await w.b.router.publisher.idle();
   assert.equal((await catchUp(w.a)).status, 'diverged');
-  const result = mergeFetched(w.a.wb);
+  const result = await mergeFetched(w.a.wb);
   assert.ok(result.items.some(i => i.id === shared.id), 'the item conflicts');
   return { id: shared.id, ours, theirs };
 }

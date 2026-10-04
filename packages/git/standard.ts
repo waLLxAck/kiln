@@ -9,7 +9,7 @@ import { Workbench } from '../domain/workbench';
 import { invariant } from '../domain/errors';
 import { atomicWrite, digest, hash, noLinks, now, readJson, withLock, writeJson } from '../storage/files';
 import { privateRoot } from '../storage/config';
-import { gitStatus, isDedicated } from './service';
+import { gitStatusSync as gitStatus, isDedicated } from './service';
 
 export const FORMAT_VERSION = 1;
 export const INFRASTRUCTURE_VERSION = 2;
@@ -176,9 +176,9 @@ export function initialiseRepository(input: unknown) {
   try { applyInfrastructure(root, infrastructurePlan(root).hash); }
   finally { wb.close(); }
   const marker = path.join(root, 'kiln.json'); writeJson(marker, { ...repositorySchema.parse(readJson(marker)), dedicated: true });
-  execFileSync('git', ['-c', 'core.hooksPath=', 'init', '--initial-branch=main', root], { windowsHide: true, stdio: 'pipe' });
-  execFileSync('git', ['-C', root, 'add', '--', 'kiln.json', 'KILN.md', '.kiln', '.github/workflows/kiln.yml', 'workbench'], { windowsHide: true, stdio: 'pipe' });
-  try { execFileSync('git', ['-c', 'core.hooksPath=', '-C', root, 'commit', '-m', 'Create standard Kiln library'], { windowsHide: true, stdio: 'pipe' }); }
+  execFileSync('git', ['-c', 'core.hooksPath=', 'init', '--initial-branch=main', root], { windowsHide: true, stdio: 'pipe', timeout: 30_000 });
+  execFileSync('git', ['-C', root, 'add', '--', 'kiln.json', 'KILN.md', '.kiln', '.github/workflows/kiln.yml', 'workbench'], { windowsHide: true, stdio: 'pipe', timeout: 60_000 });
+  try { execFileSync('git', ['-c', 'core.hooksPath=', '-C', root, 'commit', '-m', 'Create standard Kiln library'], { windowsHide: true, stdio: 'pipe', timeout: 60_000 }); }
   catch { return { root, committed: false, message: 'Repository created. Configure your Git name/email, then create the initial checkpoint before publishing.' }; }
   return { root, committed: true, message: 'Standard Kiln repository created.' };
 }
