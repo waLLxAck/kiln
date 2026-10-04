@@ -37,7 +37,7 @@ function harness(root = 'library', options: BackendOptions = {}) {
   const events: { event: string; fields?: Record<string, unknown> }[] = [];
   const backend = new Backend(root, dir, (event, fields) => events.push({ event, fields }), { node: '', script: '' }, { workerFile, tickMs: 20, stallMs: 200, restartDelays: [20, 20, 20], ...options });
   const spawns = () => fs.readFileSync(path.join(dir, 'spawns'), 'utf8').length;
-  return { backend, events, spawns, close() { backend.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+  return { backend, events, spawns, async close() { await backend.close(); await fs.promises.rm(dir, { recursive: true, force: true }); } };
 }
 const until = async (check: () => boolean, ms = 5000) => { const end = Date.now() + ms; while (!check()) { assert.ok(Date.now() < end, 'timed out waiting'); await new Promise(resolve => setTimeout(resolve, 10)); } };
 const code = (expected: string) => (error: unknown) => (error as { code?: string }).code === expected;
@@ -61,7 +61,7 @@ test('a call past its deadline fails with TIMEOUT and frees its slot; a late ans
     await assert.rejects(h.backend.call('rpc', 'late', 300), code('TIMEOUT'));
     await until(() => h.events.some(e => e.event === 'backend.late'));
     assert.deepEqual(await h.backend.call('rpc', 'items.read'), { name: 'items.read', spawn: 1, root: 'library' });
-  } finally { h.close(); }
+  } finally { await h.close(); }
 });
 
 test('a worker crash fails the calls it had begun, resends the rest and restarts the worker', async () => {
@@ -81,7 +81,7 @@ test('a worker crash fails the calls it had begun, resends the rest and restarts
     assert.equal(h.spawns(), 2);
     assert.ok(h.events.some(e => e.event === 'backend.restarting' && e.fields?.rejected === 2 && e.fields?.resent === 1));
     assert.equal(h.backend.status().restarting, undefined);
-  } finally { h.close(); }
+  } finally { await h.close(); }
 });
 
 test('a restarted worker opens the library attached last', async () => {
@@ -91,7 +91,7 @@ test('a restarted worker opens the library attached last', async () => {
     await h.backend.call('attach', '/other/library');
     await assert.rejects(h.backend.call('rpc', 'crash'), code('BACKEND_RESTARTING'));
     assert.deepEqual(await h.backend.call('rpc', 'items.read'), { name: 'items.read', spawn: 2, root: '/other/library' });
-  } finally { h.close(); }
+  } finally { await h.close(); }
 });
 
 test('restarts are bounded: a library that cannot be opened stops with its own reason', async () => {
@@ -101,7 +101,7 @@ test('restarts are bounded: a library that cannot be opened stops with its own r
     assert.equal(h.spawns(), 4);
     await assert.rejects(h.backend.call('rpc', 'items.read'), code('LIBRARY_BUSY'));
     assert.ok(h.events.some(e => e.event === 'backend.stopped'));
-  } finally { h.close(); }
+  } finally { await h.close(); }
 });
 
 test('backend.status names the running call, and startup while the library opens', async () => {
@@ -118,7 +118,7 @@ test('backend.status names the running call, and startup while the library opens
     const status = h.backend.status();
     assert.equal(status.pending, 2); assert.ok(status.running!.ms >= 0); assert.equal(status.restarting, undefined);
     assert.ok(h.events.some(e => e.event === 'worker.ready'));
-  } finally { h.close(); }
+  } finally { await h.close(); }
 });
 
 test('a worker stuck in synchronous work is logged as a stall naming the call, then as recovered', async () => {
@@ -130,7 +130,7 @@ test('a worker stuck in synchronous work is logged as a stall naming the call, t
     assert.equal(stall?.fields?.method, 'block');
     assert.ok(Number(stall?.fields?.silentMs) >= 200);
     assert.ok(h.events.some(e => e.event === 'worker.recovered' && e.fields?.method === 'block' && Number(e.fields?.durationMs) >= 400));
-  } finally { h.close(); }
+  } finally { await h.close(); }
 });
 
 /** A remote that accepts connections and never answers, so a fetch hangs until its timeout. */
@@ -148,6 +148,7 @@ test('real worker: identical reads asked together are read once, and reads do no
   execFileSync('git', ['-C', created.root, 'remote', 'add', 'origin', remote.url], { windowsHide: true });
   const events: { event: string; fields?: Record<string, unknown> }[] = [];
   const backend = new Backend(created.root, path.join(root, 'private'), (event, fields) => events.push({ event, fields }), { node: process.execPath, script: '' }, { workerFile: path.resolve('apps/desktop/backend-worker.ts') });
+  let fetching: Promise<unknown> | undefined, pulling: Promise<unknown> | undefined;
   try {
     // Sent while the worker opens the library, so they arrive together.
     const snapshots = await Promise.all(Array.from({ length: 6 }, () => backend.call('rpc', 'snapshot')));
@@ -155,7 +156,7 @@ test('real worker: identical reads asked together are read once, and reads do no
     assert.ok(events.some(e => e.event === 'backend.coalesced' && e.fields?.method === 'snapshot' && e.fields?.count === 6), JSON.stringify(events.filter(e => e.event === 'backend.coalesced')));
     const item = await backend.call('rpc', 'items.create', { title: 'Example', kind: 'prompt', content: 'Text', files: {} });
     // The fetch holds the Git queue; the pull waits for it in the ordered queue.
-    const fetching = backend.call('rpc', 'sync.fetch', { maxAgeMs: 0 }), pulling = backend.call('rpc', 'sync.pull');
+    fetching = backend.call('rpc', 'sync.fetch', { maxAgeMs: 0 }); pulling = backend.call('rpc', 'sync.pull');
     fetching.catch(() => {}); pulling.catch(() => {});
     await until(() => events.some(e => e.event === 'backend.started' && e.fields?.method === 'sync.pull'));
     const started = Date.now();
@@ -165,5 +166,11 @@ test('real worker: identical reads asked together are read once, and reads do no
     assert.ok(elapsed < 3000, `reads waited ${elapsed} ms behind the pull`);
     const status = backend.status();
     assert.ok(status.pending >= 2); assert.ok(['sync.fetch', 'sync.pull'].includes(status.running?.method ?? ''), JSON.stringify(status));
-  } finally { backend.close(); remote.close(); fs.rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    // Let Git release the repository before terminating its owning worker.
+    remote.close();
+    await Promise.allSettled([fetching, pulling]);
+    await backend.close();
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
 });

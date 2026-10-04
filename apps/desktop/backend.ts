@@ -173,5 +173,5 @@ export class Backend {
     this.spawn();
     return true;
   }
-  close() { this.closing = true; clearInterval(this.timer); clearTimeout(this.restartTimer); this.stopAgents(); void this.worker.terminate(); }
+  close() { this.closing = true; clearInterval(this.timer); clearTimeout(this.restartTimer); this.stopAgents(); return this.worker.terminate(); }
 }
