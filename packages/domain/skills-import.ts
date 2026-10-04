@@ -109,7 +109,7 @@ export function importLocalSkills(wb: Workbench, input: unknown) {
       if (known.has(key)) { unchanged.push(folder); continue; }
       const item = wb.create(bundle, `local:${folder}:${key}`);
       known.set(key, item.id); imported.push(item.id);
-      wb.record('imported', `Imported “${bundle.title}” from ${folder}`, item.id, item.revision);
+      wb.record('imported', `Imported “${bundle.title}” from ${path.basename(folder)}`, item.id, item.revision);
     } catch (e) { failed.push({ path: folder, error: e instanceof Error ? e.message : String(e) }); }
   }
   return { imported, unchanged, failed };

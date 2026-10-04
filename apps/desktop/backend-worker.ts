@@ -10,6 +10,9 @@ const log = (event: string, fields?: Record<string, unknown>) => parentPort!.pos
 const routerOptions = { log, composer: null };
 let wb = new Workbench(workerData.root, workerData.local);
 let router = new Router(wb, routerOptions);
+// Approvals carried over while the library opened (machine paths made portable) go to GitHub like any other approval.
+const publishCarried = () => { try { router.publishCarriedApprovals(); } catch (error) { log('provenance.publish.failed', { message: error instanceof Error ? error.message : String(error) }); } };
+publishCarried();
 const newAgentService = (workbench: Workbench) => {
   const service = new AgentService(workbench, log, undefined, undefined, undefined, workerData.cli);
   // main.ts shows a desktop notification only while Kiln is not in front; the event is sent for every finished run.
@@ -28,7 +31,7 @@ parentPort!.on('message', request => {
         if (agent.running || agent.queued) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
         const next = new Workbench(request.args[0], workerData.local);
-        router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
+        router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb); publishCarried();
         data = { local: wb.local, canonical: wb.canonical };
       } else if (request.method === 'paths') data = { local: wb.local, canonical: wb.canonical };
       else if (request.method === 'rpc' && request.args[0] === 'agent.capture') data = agent.capture(request.args[1]);

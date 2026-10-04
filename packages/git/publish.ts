@@ -6,7 +6,7 @@ import { invariant, WorkbenchError } from '../domain/errors';
 import { now, readJson, readRecords, writeJson } from '../storage/files';
 import { runCodex } from '../agent/codex';
 import { commitSnapshot, committedJson, gitStatus, push } from './service';
-import { privateAttachment, portableSource, shareableTrial } from '../domain/privacy';
+import { shareable, shareableTrial } from '../domain/privacy';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
 import type { PublishAction, PublishJob } from '../protocol/schema';
 import { organisationPlan } from './organise';
@@ -136,7 +136,7 @@ export class Publisher {
     if (job.action === 'approve') {
       invariant(approvals.some(a => !a.revokedAt), 'APPROVAL_REQUIRED', 'This revision no longer has an approval.');
       const revision = this.wb.getRevision(job.itemId, job.revision), item = this.wb.getItem(job.itemId);
-      invariant(!Object.keys(revision.files).some(privateAttachment) && portableSource(revision.source) === revision.source, 'PRIVATE_CONTENT', 'This legacy revision contains private session data or a machine path. Save a cleaned draft and approve it before publishing.');
+      invariant(shareable(revision), 'PRIVATE_CONTENT', 'This legacy revision contains private session data or a machine path. Save a cleaned draft and approve it before publishing.');
       const folder = `${relative}/items/${item.id}`;
       replace.push(folder);
       const { content, files: assets, hash, parent: _parent, author: _author, createdAt: _created, summary: _summary, itemId: _id, schemaVersion: _schema, hashVersion: _version, ...metadata } = revision;
@@ -144,8 +144,9 @@ export class Publisher {
       json(`${folder}/item.json`, { ...item, ...metadata, collection: item.collection, revision: hash, status: 'approved', deletedAt: null, conflictHeads: [] });
       const published = new Map([[hash, revision]]);
       for (const approval of this.wb.approvals(true).filter(a => a.itemId === item.id && a.trust === 'local')) {
-        const old = this.wb.getRevision(item.id, approval.revision);
-        if (!Object.keys(old.files).some(privateAttachment) && portableSource(old.source) === old.source) published.set(old.hash, old);
+        // An approval can outlive its revision here: one with a machine path was archived privately on the machine that cleaned it.
+        let old; try { old = this.wb.getRevision(item.id, approval.revision); } catch { continue; }
+        if (shareable(old)) published.set(old.hash, old);
       }
       for (const old of published.values()) json(`${folder}/revisions/${old.hash}.json`, { ...old, parent: old.parent && published.has(old.parent) ? old.parent : null });
       files[`${folder}/content.md`] = Buffer.from(content).toString('base64');

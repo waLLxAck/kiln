@@ -1,11 +1,11 @@
-import { privateAttachment, shareableAuthoring, shareableTrial } from './privacy';
+import { carriedProvenanceApproval, portableImportKey, portableMessage, portableRevision, privateAttachment, provenanceOnlyChange, shareable, shareableAuthoring, shareableTrial, stableId } from './privacy';
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, scoreSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
+import { analysisSchema, scoreSchema, approvalSchema, type Approval, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
 import { gitStatus, isDedicated } from '../git/service';
@@ -255,22 +255,92 @@ export class Workbench {
     this.completeSave(journal, updated, record);
     return updated;
   }
-  /** Old snapshots remain available locally; current private attachments become a clean, unapproved draft. */
-  private cleanPrivateContent() {
+  /**
+   * Runs `cleanItem` over the whole library, when it opens and after a pull brings in work from other machines, and takes the
+   * machine paths older releases wrote elsewhere in the shared files: activity messages and `.kiln/migration.json` keys.
+   */
+  cleanPrivateContent() {
     this.mutate(() => {
+      const approvals = this.approvals(true);
       for (const item of this.listItems(true)) {
-        try {
-          const revision = this.getRevision(item.id), safe = shareableAuthoring(revision);
-          if (JSON.stringify(safe) !== JSON.stringify(revision)) this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection }), 'Moved private session data and machine provenance out of shared content');
-          for (const old of readRecords(path.join(this.itemDir(item.id), 'revisions'), value => revisionSchema.parse(value))) {
-            if (JSON.stringify(shareableAuthoring(old)) === JSON.stringify(old)) continue;
-            invariant(revisionHash(old) === old.hash, 'BUNDLE_TAMPERED', 'Cannot archive a modified revision.');
-            writeJson(path.join(this.local, 'private-revisions', item.id, `${old.hash}.json`), old);
-            fs.unlinkSync(path.join(this.itemDir(item.id), 'revisions', `${old.hash}.json`));
-          }
-        } catch (error) { this.warnings.push(`${item.title}: ${String(error)}`); }
+        try { this.cleanItem(item, approvals); } catch (error) { this.warnings.push(`${item.title}: ${String(error)}`); }
       }
+      try {
+        for (const event of this.activity()) {
+          const message = portableMessage(event.message);
+          if (message !== event.message) writeJson(path.join(this.canonical, 'activity', `${event.id}.json`), { ...event, message });
+        }
+        const manifest = path.join(this.root, '.kiln', 'migration.json');
+        if (fs.existsSync(manifest)) {
+          const value = readJson(manifest) as { entries?: { path: string }[] };
+          if (Array.isArray(value.entries) && value.entries.some(e => portableImportKey(e.path) !== e.path)) writeJson(manifest, { ...value, entries: value.entries.map(e => ({ ...e, path: portableImportKey(e.path) })) });
+        }
+      } catch (error) { this.warnings.push(`Machine paths in shared records: ${String(error)}`); }
     });
+  }
+  /**
+   * Keeps machine-private material out of the shared library; the caller holds the mutation lock.
+   * - A current revision whose only private part is a machine path (`local:/home/…`, `C:\Users\…`) is replaced by its portable
+   *   form (`portableRevision`): same content, `local-import:<name>` as the source, every field derived from the original so
+   *   every machine writes the same file. A session attachment still makes a clean, unapproved draft, as before.
+   * - Older revisions holding either are archived under machine-private `private-revisions/` and leave the shared folder.
+   * - When the current revision is the portable form of a revision approved here (the one just replaced, or one an earlier Kiln
+   *   cleaned into an unapproved draft), that approval is carried over as `Kiln` with `carriedFrom`, like a model-invocation change.
+   *   The router finds such approvals GitHub does not have yet and publishes them (`Router.publishCarriedApprovals`).
+   */
+  private cleanItem(item: Item, approvals: Approval[]) {
+    const revision = this.getRevision(item.id);
+    if (!shareable(revision)) {
+      if (Object.keys(revision.files).some(privateAttachment)) item = this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection }), 'Moved private session data and machine provenance out of shared content');
+      else item = this.savePortable(item, revision);
+    }
+    for (const old of readRecords(path.join(this.itemDir(item.id), 'revisions'), value => revisionSchema.parse(value))) {
+      if (shareable(old)) continue;
+      invariant(revisionHash(old) === old.hash, 'BUNDLE_TAMPERED', 'Cannot archive a modified revision.');
+      writeJson(path.join(this.local, 'private-revisions', item.id, `${old.hash}.json`), old);
+      fs.unlinkSync(path.join(this.itemDir(item.id), 'revisions', `${old.hash}.json`));
+    }
+    this.carryProvenanceApproval(item, approvals);
+  }
+  /** Saves the portable form of `original` as the item's current revision. The item keeps its `updatedAt`, so item.json is the same on every machine too. */
+  private savePortable(item: Item, original: Revision) {
+    this.dirty = true;
+    const record = portableRevision(original, item.collection);
+    const privateFile = path.join(this.local, 'private-sources', item.id, `${original.hash}.json`);
+    if (!fs.existsSync(privateFile)) writeJson(privateFile, { source: original.source, description: original.description, files: {} });
+    const { content: _content, files: _files, schemaVersion: _schema, hashVersion: _version, itemId: _id, hash: _hash, parent: _parent, author: _author, createdAt: _created, summary: _summary, ...metadata } = record;
+    const kept = item.status === 'archived' || item.status === 'rejected';
+    const updated: Item = { ...item, ...metadata, revision: record.hash, status: item.revision === record.hash || kept ? item.status : 'captured' };
+    const journal = path.join(this.canonical, '.transactions', `${item.id}.json`);
+    writeJson(journal, { item: updated, revision: record });
+    this.completeSave(journal, updated, record);
+    return updated;
+  }
+  /**
+   * Carries the newest live local approval of a revision whose portable form is the item's current revision. Nothing happens when
+   * the current revision has an approval record of its own, withdrawn ones included: a person decided about it. Imported
+   * approvals never carry, and neither does anything for an item in the trash.
+   */
+  private carryProvenanceApproval(item: Item, approvals: Approval[]) {
+    if (item.deletedAt || approvals.some(a => a.itemId === item.id && a.revision === item.revision)) return;
+    const candidates = approvals.filter(a => a.itemId === item.id && a.trust === 'local' && !a.revokedAt && a.revision !== item.revision)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+    if (!candidates.length) return;
+    const current = this.getRevision(item.id);
+    for (const previous of candidates) {
+      let from: Revision; try { from = this.getRevision(item.id, previous.revision); } catch { continue; }
+      if (!provenanceOnlyChange(from, current)) continue;
+      this.dirty = true;
+      const approval = approvalSchema.parse(carriedProvenanceApproval(previous, current.hash));
+      const file = path.join(this.canonical, 'approvals', `${approval.id}.json`);
+      if (!fs.existsSync(file)) writeJson(file, approval);
+      approvals.push(approval);
+      if (item.status === 'captured' || item.status === 'testing') { writeJson(this.itemFile(item.id), { ...item, status: 'approved' }); this.itemCache.delete(item.id); }
+      const event: Activity = { id: stableId('kiln-provenance-carry-activity', approval.id), at: approval.createdAt, itemId: item.id, kind: 'approved', message: 'Approval carried over: only the machine-local source path changed', revision: current.hash };
+      const activity = path.join(this.canonical, 'activity', `${event.id}.json`);
+      if (!fs.existsSync(activity)) writeJson(activity, event);
+      return;
+    }
   }
   private completeSave(journal: string, item: Item, revision: Revision) {
     invariant(item.id === revision.itemId && item.revision === revision.hash && revisionHash(revision) === revision.hash, 'INVALID_TRANSACTION', 'Invalid pending save.');
@@ -1053,6 +1123,9 @@ export class Workbench {
         // Imported approvals remain historical evidence; imported content enters quarantine.
         writeJson(this.itemFile(item.id), { ...item, status: 'captured' }); imported++;
       }
+      // An export written by hand or by an older Kiln may hold machine paths or sessions: those move to private storage here, as when a library opens.
+      const approvals = this.approvals(true);
+      for (const { item } of data.items) { this.itemCache.delete(item.id); try { this.cleanItem(this.getItem(item.id), approvals); } catch (error) { this.warnings.push(`${item.title}: ${String(error)}`); } }
       for (const trial of data.trials) {
         const file = path.join(this.canonical, 'experiments', `${trial.id}.json`);
         if (!fs.existsSync(file)) writeJson(file, trial);

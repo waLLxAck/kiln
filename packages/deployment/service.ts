@@ -329,7 +329,7 @@ export class DeploymentService {
             const backup = this.setAside(entry.destination, target);
             entry.result = `Removed; backup: ${backup}`;
           }
-          this.wb.record('uninstalled', `Bulk removal: ${entry.destination}`, copy.itemId);
+          this.wb.record('uninstalled', `Bulk removal: ${path.basename(entry.destination)}`, copy.itemId);
           if (copy.scope === 'personal') {
             const token = copy.location === 'codex' ? 'codex-native' : copy.location === 'agents' ? 'codex' : copy.provider;
             this.wb.setInstall(copy.itemId, token, false);
@@ -476,7 +476,7 @@ export class DeploymentService {
       invariant(stat.isDirectory() && fs.readdirSync(destination).length === 0, 'TARGET_CHANGED', 'This folder contains files. Nothing was removed.');
       fs.rmdirSync(destination);
     }
-    this.wb.record('uninstalled', `Removed an empty folder or broken link: ${destination}`);
+    this.wb.record('uninstalled', `Removed an empty folder or broken link: ${path.basename(destination)}`);
     return { destination };
   }
   /** Copies an unclaimed skill folder into the library as a captured item. The folder itself is left in place. */

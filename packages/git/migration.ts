@@ -6,6 +6,7 @@ import { Workbench } from '../domain/workbench';
 import { authoringSchema, type Authoring } from '../protocol/schema';
 import { revisionHash, validateContent } from '../domain/content';
 import { invariant } from '../domain/errors';
+import { importFolderKey, portableImportKey } from '../domain/privacy';
 import { readSkillFolder } from '../domain/skills-import';
 import { digest, hash, noLinks, now, readJson, safeRelative, writeJson } from '../storage/files';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
@@ -59,8 +60,14 @@ function skillFiles(source: string) {
   }
 }
 function sourceCommit(source: string) { try { return execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'working-tree'; } }
-/** Entries are keyed by source folder and relative path, so the same skill imported from two places stays two items. Paths inside the library itself keep their historical bare key. */
-const entryKey = (root: string, source: string, relative: string) => path.resolve(source) === path.resolve(root) ? relative : `${path.resolve(source)}::${relative}`;
+/**
+ * Entries are keyed by source folder and relative path, so the same skill imported from two places stays two items. Paths inside
+ * the library itself keep their historical bare key. The manifest is shared, so another folder is named by a hash of its path
+ * (`importFolderKey`), never the path itself. Kiln 0.25 and earlier wrote `<absolute folder>::<relative>`; the library rewrites
+ * those keys when it opens (`portableImportKey`), and a lookup still recognises them.
+ */
+const entryKey = (root: string, source: string, relative: string) => path.resolve(source) === path.resolve(root) ? relative : `${importFolderKey(path.resolve(source))}::${relative}`;
+const legacyKey = (source: string, relative: string) => `${path.resolve(source)}::${relative}`;
 /**
  * Previews importing every SKILL.md from `source` (another repository or plain folder; defaults to the library itself for
  * libraries that grew up around a legacy skills tree). Nothing is written.
@@ -80,7 +87,8 @@ export function migrationPlan(root: string, source = root) {
   const previous = fs.existsSync(manifestFile) ? readJson(manifestFile) as MigrationManifest : { entries: [] };
   let unchanged = 0, conflicts = 0;
   for (const entry of entries) {
-    const prior = previous.entries.find(p => p.path === entryKey(root, source, entry.path));
+    const key = entryKey(root, source, entry.path), legacy = legacyKey(source, entry.path);
+    const prior = previous.entries.find(p => p.path === key || p.path === legacy);
     if (prior?.sourceHash === entry.hash) unchanged++;
     else if (prior) { const itemFile = path.join(root, 'workbench', 'items', prior.itemId, 'item.json'); if (fs.existsSync(itemFile) && (readJson(itemFile) as { revision: string }).revision !== prior.revision) conflicts++; }
   }
@@ -92,7 +100,7 @@ export function applyMigration(wb: Workbench, expected: string, source = wb.root
   applyInfrastructure(wb.root, plan.infrastructure.hash);
   const manifestPath = path.join(wb.root, '.kiln', 'migration.json');
   const prior = fs.existsSync(manifestPath) ? readJson(manifestPath) as MigrationManifest : { entries: [] };
-  const entries: MigrationManifest['entries'] = [...prior.entries];
+  const entries: MigrationManifest['entries'] = prior.entries.map(e => ({ ...e, path: portableImportKey(e.path) }));
   let imported = 0, updated = 0, unchanged = 0; const conflicts: string[] = [];
   for (const entry of plan.entries) {
     const key = entryKey(wb.root, source, entry.path);

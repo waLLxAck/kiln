@@ -7,7 +7,7 @@ import { invariant } from './errors';
 import { Workbench } from './workbench';
 import { DeploymentService, type UpdateResult } from '../deployment/service';
 import { readInvocation, setModelInvocation } from './invocation';
-import { checkpoint, gitDiff, inventory, sync } from '../git/service';
+import { checkpoint, committedJson, gitDiff, inventory, sync } from '../git/service';
 import { Publisher, type Composer } from '../git/publish';
 import { codexDescriber, type Describer } from '../agent/summarise';
 import { detectProviders } from '../providers/service';
@@ -26,7 +26,7 @@ import { McpServers } from '../deployment/mcp';
 import { UsageService, type LibraryView } from '../usage/service';
 import { skillName } from './content';
 
-import { BackgroundFetch, pullFetched } from '../git/sync';
+import { BackgroundFetch, mergeInProgress, pullFetched } from '../git/sync';
 import { GitQueue } from '../git/queue';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
@@ -111,7 +111,7 @@ export class Router {
         this.organiseSoon();
       }
       if (reportTriggers.has(method)) this.fleet.changed();
-      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
+      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') { this.cleanAfterPull(); this.fleet.afterPull(); }
     };
     // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
     if (result instanceof Promise) return result.then(value => { settled(); return value; });
@@ -119,6 +119,32 @@ export class Router {
     return result;
   }
   private autoSyncReady() { return this.wb.repositoryState().ready; }
+  /**
+   * Pushes approvals Kiln carried over a provenance-only cleanup (Workbench.cleanItem) that GitHub does not have yet, once each,
+   * like any approval. Found from the files rather than remembered, so a cleanup done by the CLI, or one whose push failed or was
+   * cut short by closing Kiln, is published the next time the desktop app opens the library. A failed job is retried, not doubled.
+   */
+  publishCarriedApprovals() {
+    if (!this.autoSyncReady() || mergeInProgress(this.wb.root)) return [];
+    const relative = path.relative(this.wb.root, this.wb.canonical).split(path.sep).join('/');
+    const jobs = this.publisher.list(), queued = [];
+    for (const approval of this.wb.approvals().filter(a => a.carriedFrom && a.reviewer === 'Kiln' && a.trust === 'local')) {
+      let item; try { item = this.wb.getItem(approval.itemId); } catch { continue; }
+      if (item.deletedAt || item.revision !== approval.revision) continue;
+      if ((committedJson(this.wb.root, `${relative}/approvals/${approval.id}.json`) as { id?: string }).id === approval.id) continue;
+      const pending = jobs.find(j => j.action === 'approve' && j.itemId === item.id && j.revision === approval.revision && j.status !== 'done');
+      if (pending) { if (pending.status === 'failed') queued.push(this.publisher.retry(pending.id)); continue; }
+      queued.push(this.publisher.enqueue('approve', item.id, approval.revision));
+    }
+    return queued;
+  }
+  /** Revisions another machine pushed with a machine path (an older Kiln) are cleaned as when the library opens, and carried approvals pushed. */
+  private cleanAfterPull() {
+    try {
+      if (mergeInProgress(this.wb.root)) return;
+      this.wb.cleanPrivateContent(); this.publishCarriedApprovals();
+    } catch (error) { this.log('provenance.clean.failed', { message: error instanceof Error ? error.message : String(error) }); }
+  }
   /** Organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
   private organiseSoon() {
     clearTimeout(this.organiseTimer);
@@ -342,8 +368,8 @@ export class Router {
       if (item.kind !== 'skill' || item.deletedAt) continue;
       let names = this.usageNames.get(item.revision);
       if (!names) {
-        // Imported skills remember their folder (`local:<folder>`) or file (`…/<name>/SKILL.md`) as the source.
-        names = [item.title, item.source.match(/[\\/]([^\\/]+)[\\/]SKILL\.md$/)?.[1] ?? (item.source.startsWith('local:') ? path.basename(item.source.slice(6)) : '')];
+        // Imported skills remember their folder (`local:<folder>`, shared as `local-import:<folder>`) or file (`…/<name>/SKILL.md`) as the source.
+        names = [item.title, item.source.match(/[\\/]([^\\/]+)[\\/]SKILL\.md$/)?.[1] ?? (item.source.startsWith('local:') ? path.basename(item.source.slice(6)) : item.source.startsWith('local-import:') && item.source !== 'local-import:SKILL.md' ? item.source.slice(13) : '')];
         try { names.unshift(skillName(this.wb.getRevision(item.id))); } catch { /* A damaged revision still matches by title. */ }
         this.usageNames.set(item.revision, names = [...new Set(names.filter(Boolean))]);
       }
