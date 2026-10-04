@@ -6,7 +6,9 @@ import { invariant, WorkbenchError } from '../domain/errors';
 import { now, readJson, readRecords, writeJson } from '../storage/files';
 import { runCodex } from '../agent/codex';
 import { commitSnapshot, committedJson, gitStatus } from './service';
-import { privateAttachment, portableSource, shareableTrial } from '../domain/privacy';
+import { privateAttachment, portableSource, shareableAuthoring, shareableTrial } from '../domain/privacy';
+import { provenanceOnly } from '../domain/provenance';
+import { revisionHash } from '../domain/content';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
 import type { PublishAction, PublishJob } from '../protocol/schema';
 import { organisationPlan } from './organise';
@@ -155,31 +157,42 @@ export class Publisher {
       files[name] = fs.readFileSync(path.join(this.wb.root, name)).toString('base64');
     }
     const approvals = this.wb.approvals(true).filter(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local');
-    if (job.action === 'approve') {
-      invariant(approvals.some(a => !a.revokedAt), 'APPROVAL_REQUIRED', 'This revision no longer has an approval.');
+    const publishedItem = job.action === 'unapprove' ? committedJson(this.wb.root, `${relative}/items/${job.itemId}/item.json`) as { revision?: string } : null;
+    let withdrawingLegacy = false;
+    if (publishedItem?.revision && publishedItem.revision !== job.revision) {
+      try {
+        const old = this.wb.getRevision(job.itemId, publishedItem.revision);
+        withdrawingLegacy = provenanceOnly(old) && revisionHash(shareableAuthoring(old), 2) === job.revision;
+      } catch (error) { if (!(error instanceof WorkbenchError && error.code === 'REVISION_NOT_FOUND')) throw error; }
+    }
+    if (job.action === 'approve' || withdrawingLegacy) {
+      if (job.action === 'approve') invariant(approvals.some(a => !a.revokedAt), 'APPROVAL_REQUIRED', 'This revision no longer has an approval.');
       const revision = this.wb.getRevision(job.itemId, job.revision), item = this.wb.getItem(job.itemId);
       invariant(!Object.keys(revision.files).some(privateAttachment) && portableSource(revision.source) === revision.source, 'PRIVATE_CONTENT', 'This legacy revision contains private session data or a machine path. Save a cleaned draft and approve it before publishing.');
       const folder = `${relative}/items/${item.id}`;
       replace.push(folder);
       const { content, files: assets, hash, parent: _parent, author: _author, createdAt: _created, summary: _summary, itemId: _id, schemaVersion: _schema, hashVersion: _version, ...metadata } = revision;
       // The collection is organisation kept on the item; the revision may name the one it was saved in.
-      json(`${folder}/item.json`, { ...item, ...metadata, collection: item.collection, revision: hash, status: 'approved', deletedAt: null, conflictHeads: [] });
+      json(`${folder}/item.json`, { ...item, ...metadata, collection: item.collection, revision: hash, status: job.action === 'approve' ? 'approved' : 'captured', deletedAt: null, conflictHeads: [] });
       const published = new Map([[hash, revision]]);
+      const publishedApprovals = [];
       for (const approval of this.wb.approvals(true).filter(a => a.itemId === item.id && a.trust === 'local')) {
         const old = this.wb.getRevision(item.id, approval.revision);
-        if (!Object.keys(old.files).some(privateAttachment) && portableSource(old.source) === old.source) published.set(old.hash, old);
+        if (!Object.keys(old.files).some(privateAttachment) && portableSource(old.source) === old.source) {
+          published.set(old.hash, old); publishedApprovals.push(approval);
+          json(`${relative}/approvals/${approval.id}.json`, approval);
+        }
       }
       for (const old of published.values()) json(`${folder}/revisions/${old.hash}.json`, { ...old, parent: old.parent && published.has(old.parent) ? old.parent : null });
       files[`${folder}/content.md`] = Buffer.from(content).toString('base64');
       for (const [name, bytes] of Object.entries(assets)) files[`${folder}/files/${name}`] = bytes;
-      const evidence = new Set(approvals.flatMap(a => a.evidence));
-      for (const trial of this.wb.trials(true).filter(t => evidence.has(t.id) && t.revision === hash)) json(`${relative}/experiments/${trial.id}.json`, shareableTrial(trial));
+      const evidence = new Set(publishedApprovals.flatMap(a => a.evidence));
+      for (const trial of this.wb.trials(true).filter(t => evidence.has(t.id) && published.has(t.revision))) json(`${relative}/experiments/${trial.id}.json`, shareableTrial(trial));
     }
     for (const approval of approvals) json(`${relative}/approvals/${approval.id}.json`, approval);
-    if (job.action === 'unapprove') {
+    if (job.action === 'unapprove' && !withdrawingLegacy) {
       const name = `${relative}/items/${job.itemId}/item.json`;
-      const published = committedJson(this.wb.root, name) as { revision?: string };
-      if (published.revision === job.revision) json(name, { ...published, status: 'captured' });
+      if (publishedItem?.revision === job.revision) json(name, { ...publishedItem, status: 'captured' });
     }
     const desired = this.wb.installs()[job.itemId];
     writeJson(path.join(this.folder, 'snapshots', `${job.id}.json`), { files, replace, install: { path: `${relative}/installs.json`, providers: desired ?? [] } });
