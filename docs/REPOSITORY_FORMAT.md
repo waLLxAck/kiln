@@ -41,7 +41,7 @@ The infrastructure manifest records hashes of app-owned files. Update previews c
 
 Migration enumerates tracked `SKILL.md` files, preserving each source path as provenance. It imports the skill directory's regular files and records the nearest upstream licence as item metadata rather than as a bundled file. Malformed skills are preserved as captured items and flagged for review rather than silently repaired or omitted. Bundles over 25 MB or unsafe paths block import with an explicit error.
 
-`.kiln/migration.json` maps each legacy source path to its stable item and source hash. Repeating the import is idempotent. An upstream change creates a new draft if there are no intervening local adaptations; otherwise it reports a conflict. Legacy directories remain as historical sources and support existing junctions. The canonical authoring location is `workbench/`.
+`.kiln/migration.json` maps each legacy source path to its stable item and source hash. A path inside the library is stored as it is; a folder outside it is named `folder-<hash>::<relative path>`, where the hash is of the folder's absolute path, so the shared file never holds the path itself. Keys written by Kiln 0.25 and earlier (`<absolute folder>::<relative path>`) are rewritten that way when the library opens and are still recognised. Repeating the import is idempotent. An upstream change creates a new draft if there are no intervening local adaptations; otherwise it reports a conflict. Legacy directories remain as historical sources and support existing junctions. The canonical authoring location is `workbench/`.
 
 ## Machine state
 
@@ -49,9 +49,22 @@ The default machine-private root is `~/.kiln`. `library.json` selects the active
 
 An approval with `reviewer: "Kiln"` and `carriedFrom: <hash>` was recorded by Kiln for a revision that differs from the approved `carriedFrom` revision only in its model-invocation flags (`disable-model-invocation` in SKILL.md, `policy.allow_implicit_invocation` in `agents/openai.yaml`; see [Skill invocation](SKILL_INVOCATION.md)). It copies that approval's scope, evidence and waived checks. Older Kiln versions ignore the extra field.
 
+Kiln records the same kind of approval when it makes a revision's provenance portable (see [Portable provenance](#portable-provenance)): the new revision differs from the approved `carriedFrom` revision only in `source` (and in a description of the form `Copy of <path>`), with identical content, files, title, kind, tags, licence and agent metadata. Its note says so. Its `id` and `createdAt` derive from the approval it carries (`createdAt` is one millisecond later), so every machine that does the same cleanup writes the same file.
+
 Imported export approvals remain historical evidence with `trust: imported`; they cannot authorize installation automatically. Git repositories are user-selected trusted authoring stores, not a cryptographically signed approval system. Review incoming changes before deployment. A GitHub clone does not install anything.
 
-Approval publishing materializes the exact reviewed revision through a private Git index, with its approval and redacted evidence. It never stages the item's working directory or its unapproved history. Later local edits remain untouched. Imported absolute source paths become portable `local-import:<name>` labels; the original provenance is retained privately. Explicit CLI checkpoints remain an operation that commits all managed working files.
+Approval publishing materializes the exact reviewed revision through a private Git index, with its approval and redacted evidence. It never stages the item's working directory or its unapproved history. Later local edits remain untouched. Explicit CLI checkpoints remain an operation that commits all managed working files.
+
+## Portable provenance
+
+Shared files never hold machine-local paths. A `source` that is one (`local:` or `home:` labels, POSIX paths such as `/home/…`, `~`, Windows drive paths with either slash, UNC paths and `file:` URLs) is stored as `local-import:<last path segment>`, for example `local-import:research`. Detection and the label are plain string operations, so Linux, macOS and Windows compute the same label from the same text whichever system wrote it. Every revision save applies this, so imports from folders, repository folders, legacy migration, desktop capture and `items create --input` store the portable form from the start. The original source is kept in machine-private `private-sources/` on the machine that imported it. Activity messages name only a folder's last segment.
+
+Opening a library, pulling from GitHub and importing an export clean what an older Kiln wrote:
+
+- A current revision whose only machine-private part is its source is replaced by its portable form. Every field of the new revision derives from the original (`createdAt`, `author`; `parent` is empty, `summary` is "Moved machine provenance out of shared content"), so two machines doing this independently write byte-identical files and Git merges them cleanly. The item keeps its `updatedAt`.
+- If a person approved the original on this machine (a live approval with `trust: local`), the approval is carried over to the portable revision as described above, so the item stays approved and installed copies stay current. The same happens for an item an earlier Kiln already cleaned into an unapproved draft, as long as the original revision is still readable here and the draft is exactly its portable form. Nothing is carried over when the content or files differ in any way, when the portable revision already has an approval record of its own (a withdrawn one included), for imported approvals, or for items in the trash.
+- In the desktop app, a carried approval that GitHub does not have yet is committed and pushed like any approval, once, when the library opens or after a pull. The commit holds the portable revision, the carried approval and `item.json`, and removes the path-bearing revision from the item folder. Another machine that pulls it has nothing left to do; one that did the same cleanup first wrote the same files, so the merge is clean.
+- Path-bearing revisions leave the shared `revisions/` folder for machine-private `private-revisions/` and remain readable in this machine's history. The approvals that name them stay as history.
 
 ## Verification and recovery
 
@@ -63,4 +76,4 @@ JSON export includes authored items and revision history, approvals for unchange
 
 Skill installation locations and the optional `codex-native` desired-install token are documented in [Skill locations](SKILL_LOCATIONS.md). Existing `codex` entries retain their shared `.agents/skills` destination.
 
-Item save intents live under the ignored `workbench/.transactions/` directory until the complete revision is written. Recovery runs under the shared mutation lock before external file reconciliation. Legacy snapshots containing raw sessions or machine provenance are archived under machine-private `private-revisions/`; current content becomes an unapproved clean draft. Remote Git history is never rewritten automatically.
+Item save intents live under the ignored `workbench/.transactions/` directory until the complete revision is written. Recovery runs under the shared mutation lock before external file reconciliation. Legacy snapshots containing raw sessions or machine provenance are archived under machine-private `private-revisions/`. A current revision with a raw session becomes an unapproved clean draft; one with only a machine path keeps its approval ([Portable provenance](#portable-provenance)). Remote Git history is never rewritten automatically.

@@ -627,6 +627,7 @@ The marketing site is based on these facts. Its interactive skills panel, captur
 ## Notes for older libraries and releases
 
 - When an older library opens, legacy session-bearing revisions are archived in machine-private storage and the current item becomes a cleaned, unapproved draft. Local History can still read the original. Existing remote Git history is not rewritten; material published by an older release remains in that history.
+- Older releases could share an approved revision whose source was a path on one machine (`/home/…`, `C:\Users\…`). Kiln now replaces the path with the folder name (`local-import:research`) and, when nothing else changed, keeps the item approved: History shows the approval as carried over by Kiln. The desktop app pushes that to GitHub once; your other machines get the same result whether they pull it or clean the item themselves first. Skills that 0.25 or earlier turned into unapproved drafts this way get their approval back the next time the library opens on the machine that still has the original revision. If you withdrew such an approval yourself, or the content changed (for example line endings), approve it again after reviewing it.
 - Libraries distilled before the per-kind tabs (Insights, Techniques, Tools, Resources) are re-filed the first time they open.
 - `items list` returned detailed metadata by default before 0.16.0; `--full` restores that shape.
 - Updates started from an older Kiln release still follow that release's update flow; the two-step Windows update flow starts after installing 0.8.1.
