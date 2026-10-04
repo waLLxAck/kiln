@@ -53,8 +53,9 @@ export function addTokens(into: TokenCounts, value: Partial<TokenCounts>, scale 
 }
 export const totalTokens = (t: TokenCounts) => t.input + t.cached + t.cacheWrite + t.cacheWrite1h + t.output;
 /** Estimated dollars for `tokens` on `model`, or null when the table has no price for it. */
-export function estimateCost(model: string, tokens: TokenCounts, table: PriceTable) {
-  const found = priceFor(model, table); if (!found) return null;
-  const p = found.price;
+export function estimateCost(model: string, tokens: TokenCounts, table: PriceTable) { return costAt(priceFor(model, table)?.price, tokens); }
+/** `estimateCost` at a price already looked up (the report looks each model up once); null without a price. */
+export function costAt(p: Price | undefined, tokens: TokenCounts) {
+  if (!p) return null;
   return (tokens.input * p.input + tokens.cached * p.cached + tokens.cacheWrite * p.cacheWrite + tokens.cacheWrite1h * p.cacheWrite1h + tokens.output * p.output) / 1_000_000;
 }

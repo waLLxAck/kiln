@@ -1,6 +1,8 @@
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import { targetSkillsFolder, skillLocation, skillLocationLabel, locationFolder, type SkillLocation } from '../providers/skill-locations';
 import { readInstalledCopy } from './keep';
+import { CopyStates, FolderIndex, RACY_MS } from './copies';
+import { factsCache, type RevisionFacts, type RevisionFactsCache } from '../domain/revision-facts';
 import { scanAgents } from '../domain/agents-import';
 import { agentFolder } from '../domain/agent-format';
 import fs from 'node:fs';
@@ -11,7 +13,7 @@ import { z } from 'zod';
 import type { Workbench } from '../domain/workbench';
 import { invariant } from '../domain/errors';
 import { isTextFile, skillName, validateContent } from '../domain/content';
-import { hashSchema, idSchema, type Installation, type Item, type Plan, type ProviderId, type Receipt, type Revision, type Target } from '../protocol/schema';
+import { hashSchema, idSchema, type Approval, type Installation, type Item, type Plan, type ProviderId, type Receipt, type Revision, type Snapshot, type Target } from '../protocol/schema';
 import { contained, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 
 export function readDestination(destination: string): Record<string, string> | null {
@@ -45,17 +47,61 @@ export type RemovalPlan = { id: string; itemIds: string[]; entries: RemovalEntry
 
 type Journal = { id: string; destination: string; stage: string; backup: string; expected: string | null; proposed: string | null; receipt: Receipt; phase: 'prepared' | 'switched' | 'complete' };
 
+const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SKILL_LOCATIONS: SkillLocation[] = ['agents', 'claude', 'codex', 'copilot'];
+
 export class DeploymentService {
-  constructor(private wb: Workbench) {}
-  receipts() { return readRecords(path.join(this.wb.local, 'receipts'), v => v as Receipt).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
+  /** Bumped by every receipt this service writes, so cached receipts and the installations stamp never miss Kiln's own changes. */
+  private generation = 0;
+  /** Receipts as last read, oldest first, with the latest per destination; re-read when the folder or `generation` changes. */
+  private receiptCache?: { key: string; list: Receipt[]; latest: Map<string, Receipt> };
+  /** Approvals read once for a whole batch (sync, update all); see `batch`. */
+  private batchApprovals?: Approval[];
+  /** Installed copies' state hashes, re-read only when a copy's files change (copies.ts). */
+  private readonly states: CopyStates;
+  constructor(private wb: Workbench) { this.states = new CopyStates(wb.local); }
+  private get facts(): RevisionFactsCache { return factsCache(this.wb); }
+  private receiptState() {
+    const dir = path.join(this.wb.local, 'receipts'), stat = fs.statSync(dir, { throwIfNoEntry: false });
+    // Receipts are written by atomic rename, which changes the folder's modification time, also when another process writes one.
+    // A folder changed in the last few seconds by someone else is read again each time, in case its clock had not ticked (RACY_MS).
+    const key = `${this.generation}:${stat?.mtimeMs}:${stat?.ctimeMs}`, recent = !stat || (stat.mtimeMs > Date.now() - RACY_MS && stat.mtimeMs !== this.ownWrite);
+    if (this.receiptCache?.key !== key || recent) {
+      const list = readRecords(dir, v => v as Receipt).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const latest = new Map<string, Receipt>(); for (const receipt of list) latest.set(receipt.destination, receipt);
+      this.receiptCache = { key, list, latest };
+    }
+    return this.receiptCache;
+  }
+  receipts() { return [...this.receiptState().list]; }
+  /** The receipts folder's modification time after this service's last write: that change is known, so not "racy". */
+  private ownWrite = -1;
+  private writeReceipt(receipt: Receipt) {
+    const dir = path.join(this.wb.local, 'receipts');
+    writeJson(path.join(dir, `${receipt.id}.json`), receipt); this.generation++;
+    this.ownWrite = fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? -1;
+  }
+  /** Approvals, read once per batch when inside one. */
+  private approvals() { return this.batchApprovals ?? this.wb.approvals(); }
+  /** Approves through the library, keeping a batch's approvals current. */
+  private approve(input: Parameters<Workbench['approve']>[0]) { const approval = this.wb.approve(input); if (this.batchApprovals) this.batchApprovals = this.wb.approvals(); return approval; }
+  /**
+   * Runs many installs or updates with approvals read once instead of once per plan, apply and render (skills.sync read every
+   * approval about a thousand times for fifty entries). Receipts are cached across calls anyway (`receiptState`).
+   */
+  batch<T>(action: () => T): T {
+    if (this.batchApprovals) return action();
+    this.batchApprovals = this.wb.approvals();
+    try { return action(); } finally { this.batchApprovals = undefined; }
+  }
   private target(id: string) {
     const target = this.wb.targets().find(t => t.id === id); invariant(target, 'TARGET_NOT_ENROLLED', 'Enroll this environment before deployment.'); noLinks(target.root); return target;
   }
-  private render(itemId: string, revision: string, target: Target) {
-    const item = this.wb.getItem(itemId), bundle = this.wb.getRevision(itemId, revision);
+  private render(itemId: string, revision: string, target: Target, read?: Revision) {
+    const item = this.wb.getItem(itemId), bundle = read?.itemId === itemId && read.hash === revision ? read : this.wb.getRevision(itemId, revision);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before deploying.');
     invariant(['skill', 'agent', 'instruction'].includes(bundle.kind), 'NOT_DEPLOYABLE', 'Only skills, agents and instruction resources can be deployed.');
-    invariant(this.wb.approvals().some(a => a.itemId === itemId && a.revision === revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approve this exact revision before deployment. Imported approval records are historical evidence only.');
+    invariant(this.approvals().some(a => a.itemId === itemId && a.revision === revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approve this exact revision before deployment. Imported approval records are historical evidence only.');
     const errors = validateContent(bundle); invariant(!errors.length, 'VALIDATION_FAILED', errors.join('\n'));
     let relative: string, files: Record<string, string>;
     if (bundle.kind === 'skill') {
@@ -75,7 +121,7 @@ export class DeploymentService {
   }
   /** Whether a receipt makes a copy this item's: its own, or one written for a copy since merged into it (consolidation). */
   private owns(receipt: Receipt | undefined, itemId: string): receipt is Receipt { return Boolean(receipt) && (receipt!.itemId === itemId || this.wb.mergedTarget(receipt!.itemId) === itemId); }
-  private latest(destination: string) { const last = this.receipts().filter(r => r.destination === destination).at(-1); return last?.status === 'applied' ? last : undefined; }
+  private latest(destination: string) { const last = this.receiptState().latest.get(destination); return last?.status === 'applied' ? last : undefined; }
   plan(input: unknown): Plan {
     const data = z.object({ itemId: idSchema, revision: hashSchema, targetId: idSchema }).parse(input);
     return withLock(this.wb.canonical, () => {
@@ -130,12 +176,12 @@ export class DeploymentService {
       if (files) fs.renameSync(stage, destination);
       invariant(stateHash(readDestination(destination)) === journal.proposed, 'APPLY_FAILED', 'Installed snapshot failed verification.');
       journal.phase = 'switched'; writeJson(journalFile, journal);
-      writeJson(path.join(this.wb.local, 'receipts', `${receipt.id}.json`), receipt);
+      this.writeReceipt(receipt);
       journal.phase = 'complete'; writeJson(journalFile, journal);
       this.removeOwnedSibling(backup, root, expected);
     } catch (error) {
       receipt.status = 'partial'; receipt.error = error instanceof Error ? error.message : String(error);
-      writeJson(path.join(this.wb.local, 'receipts', `${receipt.id}.json`), receipt);
+      this.writeReceipt(receipt);
       throw error;
     }
   }
@@ -160,7 +206,7 @@ export class DeploymentService {
       }
       const reversal: Receipt = { ...receipt, id: randomUUID(), planId: `rollback-${receipt.id}`, revision: receipt.previousRevision ?? receipt.revision, hash: receipt.previousHash ?? digest({}), previousFiles: null, previousHash: null, previousRevision: null, status: receipt.previousFiles ? 'applied' : 'rolled_back', createdAt: now() };
       this.switchBundle(target, reversal, receipt.previousFiles, receipt.hash);
-      writeJson(path.join(this.wb.local, 'receipts', `${receipt.id}.json`), { ...receipt, status: 'rolled_back' });
+      this.writeReceipt({ ...receipt, status: 'rolled_back' });
       this.wb.record('rolled_back', `Reversed deployment to ${target.name}`, receipt.itemId, reversal.revision); return reversal;
     });
   }
@@ -221,42 +267,113 @@ export class DeploymentService {
     });
     return { destination, revision: revision.hash, exists: installed !== null, files };
   }
-  installations(itemId?: string | string[]): Installation[] {
-    const result: Installation[] = [];
-    const items = (Array.isArray(itemId) ? itemId.map(id => this.wb.getItem(id)) : itemId ? [this.wb.getItem(itemId)] : this.wb.listItems()).filter(item => ['skill', 'agent'].includes(item.kind));
-    const receipts = this.receipts(), targets = this.wb.targets();
-    const approvals = this.wb.approvals();
-    for (const item of items) {
-      let revision: Revision | undefined; try { revision = this.wb.getRevision(item.id); } catch { continue; }
-      const name = this.folderName(item, revision); if (!name) continue;
-      if (revision.kind === 'agent' && validateContent(revision).length) continue;
-      const rendered = this.renderedHash(revision);
-      const candidates = targets.filter(target => revision.kind !== 'agent' || (revision.agent?.provider === target.provider && !target.skillFolder)).map(target => ({ target, location: skillLocation(target), destination: this.skillDestination(target, name, revision) }));
-      if (revision.kind === 'skill') {
-        for (const target of targets) for (const location of ['agents', 'claude', 'codex', 'copilot'] as SkillLocation[]) {
-          const destination = contained(target.root, `${locationFolder(location, target.scope)}/${name}`);
-          if (!candidates.some(c => c.destination === destination)) candidates.push({ target: { ...target, id: '', provider: location === 'agents' ? 'codex' : location }, location, destination });
-        }
-      }
-      const seen = new Set<string>(); let approved: Revision | null | undefined;
-      for (const { target, location, destination } of candidates) {
-        if (seen.has(destination)) continue;
-        seen.add(destination);
-        if (!fs.lstatSync(destination, { throwIfNoEntry: false })) continue;
-        const linked = fs.lstatSync(destination).isSymbolicLink(), last = receipts.filter(r => r.destination === destination).at(-1);
-        const owned = last?.status === 'applied' && this.owns(last, item.id) ? last : undefined;
-        const current = this.currentState(destination);
-        const state: Installation['state'] = owned ? (current === owned.hash ? 'installed' : 'drifted') : 'external';
-        const outdated = owned && state === 'installed' && this.behind(item, target, destination, owned, approved === undefined ? approved = this.approvedRevision(item.id, approvals) : approved);
-        result.push({ itemId: item.id, targetId: target.id, provider: target.provider, location: revision.kind === 'skill' ? location : undefined, scope: target.scope, destination, state, linked, matches: current !== null && current === rendered, receiptId: owned?.id ?? null, ...(outdated ? { outdated: true as const } : {}) });
+  /** `folderName` from a revision's facts, so scans need not read the revision. */
+  private nameOf(item: Item, facts: RevisionFacts | null) {
+    if (item.kind === 'agent') return facts?.kind === 'agent' ? facts.name : '';
+    let name = facts && facts.kind !== 'agent' ? facts.name : '';
+    if (!NAME.test(name)) name = item.source.match(/\/([^/]+)\/SKILL\.md$/)?.[1] ?? '';
+    return NAME.test(name) ? name : '';
+  }
+  /** `skillDestination` from a revision's facts. */
+  private destinationOf(target: Target, name: string, facts: RevisionFacts) {
+    if (facts.kind === 'agent') {
+      invariant(facts.provider === target.provider, 'AGENT_CLIENT_MISMATCH', 'Choose the client this agent was written for.');
+      invariant(!facts.problems.length, 'VALIDATION_FAILED', facts.problems.join('\n'));
+      return contained(target.root, `${agentFolder(target.provider, target.scope)}/${name}`);
+    }
+    return contained(target.root, `${targetSkillsFolder(target)}/${name}`);
+  }
+  /**
+   * Where copies of an item's current revision sit on this machine: its folder name under every enrolled target, and for a skill
+   * under all four skill locations of each target's root. Existence comes from one listing per folder (`folders`), not a probe
+   * per path. Null when the item's revision cannot be read or gives no folder name, as the installations list always skipped those.
+   */
+  private present(item: Item, targets: Target[], folders: FolderIndex) {
+    let revision: RevisionFacts; try { revision = this.facts.get(item); } catch { return null; }
+    const name = this.nameOf(item, revision); if (!name) return null;
+    if (revision.kind === 'agent' && revision.problems.length) return null;
+    const candidates = targets.filter(target => revision.kind !== 'agent' || (revision.provider === target.provider && !target.skillFolder)).map(target => ({ target, location: skillLocation(target), destination: this.destinationOf(target, name, revision) }));
+    if (revision.kind === 'skill') {
+      for (const target of targets) for (const location of SKILL_LOCATIONS) {
+        const destination = contained(target.root, `${locationFolder(location, target.scope)}/${name}`);
+        if (!candidates.some(c => c.destination === destination)) candidates.push({ target: { ...target, id: '', provider: location === 'agents' ? 'codex' : location }, location, destination });
       }
     }
+    const seen = new Set<string>(), copies: (typeof candidates[number] & { linked: boolean })[] = [];
+    for (const candidate of candidates) {
+      if (seen.has(candidate.destination)) continue;
+      seen.add(candidate.destination);
+      const found = folders.find(candidate.destination);
+      if (found) copies.push({ ...candidate, linked: found.linked });
+    }
+    return { revision, copies };
+  }
+  private scanned(itemId?: string | string[]) {
+    return (Array.isArray(itemId) ? itemId.map(id => this.wb.getItem(id)) : itemId ? [this.wb.getItem(itemId)] : this.wb.listItems()).filter(item => ['skill', 'agent'].includes(item.kind));
+  }
+  /**
+   * Every copy of these items on this machine (all when none are given), by item: the same copies `installations` lists, found
+   * without reading or hashing any of them. For counts (the Usage view's "installed but unused").
+   */
+  locate(itemId?: string | string[]): { itemId: string; destination: string }[] {
+    const targets = this.wb.targets(), folders = new FolderIndex();
+    const result = this.scanned(itemId).flatMap(item => (this.present(item, targets, folders)?.copies ?? []).map(copy => ({ itemId: item.id, destination: copy.destination })));
+    this.facts.save();
     return result;
   }
+  installations(itemId?: string | string[]): Installation[] {
+    const result: Installation[] = [];
+    const items = this.scanned(itemId), latest = this.receiptState().latest, targets = this.wb.targets();
+    const approvals = this.wb.approvals(), folders = new FolderIndex(), hashed = new Set<string>();
+    for (const item of items) {
+      const found = this.present(item, targets, folders); if (!found) continue;
+      const { revision, copies } = found;
+      let approved: { hash: string; facts: RevisionFacts } | null | undefined;
+      for (const { target, location, destination, linked } of copies) {
+        const last = latest.get(destination);
+        const owned = last?.status === 'applied' && this.owns(last, item.id) ? last : undefined;
+        // A link is hashed where it points, but never walked into a checkout's dependencies (see CopyStates).
+        const current = this.states.hash(destination, linked); hashed.add(destination);
+        const state: Installation['state'] = owned ? (current === owned.hash ? 'installed' : 'drifted') : 'external';
+        const outdated = owned && state === 'installed' && this.behindFacts(item, target, destination, owned, approved === undefined ? approved = this.approvedFacts(item, approvals) : approved);
+        result.push({ itemId: item.id, targetId: target.id, provider: target.provider, location: revision.kind === 'skill' ? location : undefined, scope: target.scope, destination, state, linked, matches: current !== null && current === revision.rendered, receiptId: owned?.id ?? null, ...(outdated ? { outdated: true as const } : {}) });
+      }
+    }
+    this.facts.save(); this.states.save(itemId === undefined ? hashed : undefined);
+    return result;
+  }
+  /**
+   * Changes whenever what `installations` reports may have changed, so the desktop can skip asking while it stays the same:
+   * Kiln's own deployment writes, the receipts, targets and installs.json files, each target's skill and agent folders (a copy
+   * added, removed or renamed by anything), each Kiln-owned copy's folder and SKILL.md (an edit outside Kiln), and the items and
+   * local approvals given (a new revision changes `matches`, an approval `outdated`). An edit deeper inside a copy, or inside an
+   * external copy, that leaves those untouched shows on the next change or explicit refresh. Costs a few hundred stats, no reads.
+   */
+  installationsStamp(library: Pick<Snapshot, 'items' | 'approvals' | 'targets'>): string {
+    const times: number[] = [];
+    const statStamp = (file: string) => {
+      try { const stat = fs.statSync(file, { throwIfNoEntry: false }); if (!stat) return '-'; times.push(stat.mtimeMs); return `${stat.size}:${stat.mtimeMs}`; } catch { return '!'; }
+    };
+    const parts = [String(this.generation), statStamp(path.join(this.wb.local, 'receipts')), statStamp(path.join(this.wb.local, 'targets')), statStamp(path.join(this.wb.canonical, 'installs.json'))];
+    const folders = new Set<string>();
+    for (const target of library.targets) {
+      for (const location of SKILL_LOCATIONS) folders.add(path.join(target.root, locationFolder(location, target.scope)));
+      folders.add(path.join(target.root, targetSkillsFolder(target)));
+      if (!target.skillFolder) folders.add(path.join(target.root, agentFolder(target.provider, target.scope)));
+    }
+    for (const folder of [...folders].sort()) parts.push(`${folder}=${statStamp(folder)}`);
+    for (const receipt of this.receiptState().latest.values()) if (receipt.status === 'applied') parts.push(`${statStamp(receipt.destination)}/${statStamp(path.join(receipt.destination, 'SKILL.md'))}`);
+    // While something changed in the last few seconds the stamp changes on every call, so a second change in the same clock tick
+    // is not missed on a file system with coarse timestamps (see RACY_MS).
+    const recent = Date.now() - RACY_MS; if (times.some(time => time > recent)) parts.push(String(Date.now()));
+    for (const item of library.items) if (item.kind === 'skill' || item.kind === 'agent') parts.push(`${item.id}:${item.revision}:${item.deletedAt ?? ''}:${item.mergedInto ?? ''}:${item.source}`);
+    for (const approval of library.approvals) if (approval.trust === 'local') parts.push(`${approval.itemId}:${approval.revision}:${approval.createdAt}`);
+    return digest(parts).slice(0, 32);
+  }
   private removalCopies(itemIds: string[]): Installation[] {
-    const copies = this.installations(itemIds), receipts = this.receipts(), targets = this.wb.targets();
+    const copies = this.installations(itemIds), { list: receipts, latest } = this.receiptState(), targets = this.wb.targets();
     for (const receipt of receipts.filter(r => itemIds.includes(r.itemId) && r.status === 'applied')) {
-      if (receipts.filter(r => r.destination === receipt.destination).at(-1)?.id !== receipt.id || copies.some(c => c.destination === receipt.destination)) continue;
+      if (latest.get(receipt.destination)?.id !== receipt.id || copies.some(c => c.destination === receipt.destination)) continue;
       const target = targets.find(t => t.id === receipt.targetId), item = this.wb.getItem(receipt.itemId);
       if (!target || !['skill', 'agent'].includes(item.kind)) continue;
       const root = contained(target.root, item.kind === 'agent' ? agentFolder(target.provider, target.scope) : targetSkillsFolder(target));
@@ -314,7 +431,7 @@ export class DeploymentService {
             const owner = this.latest(entry.destination);
             if (owner?.itemId === copy.itemId) {
               const closed: Receipt = { ...owner, id: randomUUID(), planId: `bulk-unlink-${plan.id}`, status: 'uninstalled', previousHash: null, previousFiles: null, previousRevision: owner.revision, createdAt: now() };
-              writeJson(path.join(this.wb.local, 'receipts', `${closed.id}.json`), closed);
+              this.writeReceipt(closed);
             }
             entry.result = 'Link removed; destination untouched';
           }
@@ -347,9 +464,9 @@ export class DeploymentService {
     return plan;
   }
   /** Personal environment for a provider: the enrolled personal-scope target rooted at the home folder, else the first personal-scope target. */
-  personalTarget(provider: ProviderId | 'codex-native') {
+  personalTarget(provider: ProviderId | 'codex-native', targets = this.wb.targets()) {
     const home = path.resolve(os.homedir()).toLowerCase();
-    const personal = this.wb.targets().filter(t => t.provider === (provider === 'codex-native' ? 'codex' : provider) && t.scope === 'personal' && Boolean(t.skillFolder) === (provider === 'codex-native'));
+    const personal = targets.filter(t => t.provider === (provider === 'codex-native' ? 'codex' : provider) && t.scope === 'personal' && Boolean(t.skillFolder) === (provider === 'codex-native'));
     return personal.find(t => path.resolve(t.root).toLowerCase() === home) ?? personal[0];
   }
   private removeLink(destination: string) {
@@ -369,7 +486,7 @@ export class DeploymentService {
     try { fs.renameSync(destination, backup); } catch { fs.cpSync(destination, backup, { recursive: true }); fs.rmSync(destination, { recursive: true, force: true }); }
     if (owner) {
       const closed: Receipt = { ...owner, id: randomUUID(), planId: `set-aside-${owner.id}`, status: 'uninstalled', previousHash: stateHash(previousFiles), previousFiles, previousRevision: owner.revision, createdAt: now() };
-      writeJson(path.join(this.wb.local, 'receipts', `${closed.id}.json`), closed);
+      this.writeReceipt(closed);
       this.wb.record('uninstalled', `Set aside the edited copy in ${target.name}; kept under ${backup}`, owner.itemId, owner.revision);
     }
     return backup;
@@ -379,7 +496,7 @@ export class DeploymentService {
     const current = stateHash(readDestination(destination)); invariant(current === this.renderedHash(revision), 'TARGET_UNMANAGED', 'Folder content differs from the library revision.');
     return withLock(this.wb.canonical, () => {
       const receipt: Receipt = { id: randomUUID(), planId: `adopt-${randomUUID()}`, itemId: item.id, revision: revision.hash, targetId: target.id, destination, hash: current, previousHash: null, previousFiles: null, previousRevision: null, status: 'applied', createdAt: now(), newSessionRequired: true };
-      writeJson(path.join(this.wb.local, 'receipts', `${receipt.id}.json`), receipt);
+      this.writeReceipt(receipt);
       this.wb.record('adopted', `Kiln now manages the existing copy in ${target.name}`, item.id, revision.hash); return receipt;
     });
   }
@@ -395,8 +512,8 @@ export class DeploymentService {
     const errors = validateContent(revision); invariant(!errors.length, 'VALIDATION_FAILED', errors.join('\n'));
     const name = this.folderName(item, revision); invariant(name, 'INVALID_SKILL_NAME', 'Give the skill a lowercase hyphenated name in its frontmatter first.');
     const destination = this.skillDestination(target, name, revision);
-    if (!this.wb.approvals().some(a => a.itemId === item.id && a.revision === revision.hash && a.trust === 'local')) {
-      this.wb.approve({ id: item.id, revision: revision.hash, reviewer: os.userInfo().username, scope: 'Installed from Kiln', note: 'Approved by choosing Install in Kiln.', waivedChecks: 'Installed directly; no trial evidence linked.' });
+    if (!this.approvals().some(a => a.itemId === item.id && a.revision === revision.hash && a.trust === 'local')) {
+      this.approve({ id: item.id, revision: revision.hash, reviewer: os.userInfo().username, scope: 'Installed from Kiln', note: 'Approved by choosing Install in Kiln.', waivedChecks: 'Installed directly; no trial evidence linked.' });
       item = this.wb.getItem(item.id);
     }
     let setAside: string | null = null, receipt: Receipt | null = null, method: 'installed' | 'updated' | 'adopted' | 'unchanged' = 'installed';
@@ -414,11 +531,11 @@ export class DeploymentService {
         }
       }
     }
-    if (!receipt) {
+    receipt ??= this.batch(() => {
       const plan = this.plan({ itemId: item.id, revision: revision.hash, targetId: target.id });
       invariant(!plan.blocked, 'TARGET_BLOCKED', plan.blocked ?? 'Destination blocked.');
-      receipt = this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
-    }
+      return this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
+    });
     if (target.scope === 'personal') this.wb.setInstall(item.id, item.kind === 'skill' && target.skillFolder ? 'codex-native' : target.provider, true);
     return { destination, method, setAside, receipt, provider: target.provider };
   }
@@ -450,7 +567,8 @@ export class DeploymentService {
     const root = contained(target.root, targetSkillsFolder(target));
     const agentsRoot = contained(target.root, agentFolder(target.provider, target.scope));
     const agents = (target.skillFolder ? [] : scanAgents(this.wb, { root: agentsRoot, provider: target.provider })).filter(entry => !entry.imported).map(entry => ({ kind: 'agent' as const, cleanup: null, name: entry.name, destination: entry.path, linked: false, hasSkillFile: !entry.error, realPath: entry.path, error: entry.error }));
-    const claimed = new Set(this.wb.listItems().filter(i => i.kind === 'skill').map(i => this.folderName(i)).filter(Boolean));
+    const claimed = new Set(this.wb.listItems().filter(i => i.kind === 'skill').map(i => { let facts: RevisionFacts | null = null; try { facts = this.facts.get(i); } catch { /* Named by its source, as before. */ } return this.nameOf(i, facts); }).filter(Boolean));
+    this.facts.save();
     const entries = (fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }) : []).filter(entry => entry.isDirectory() || entry.isSymbolicLink()).map(entry => {
       const destination = path.join(root, entry.name); let realPath = destination;
       try { realPath = fs.realpathSync(destination); } catch { if (entry.isSymbolicLink()) realPath = path.resolve(path.dirname(destination), fs.readlinkSync(destination)); }
@@ -492,13 +610,15 @@ export class DeploymentService {
   }
   /** Brings this machine in line with the desired installs recorded in the library. Missing personal environments are reported, not created. */
   syncInstalls() {
-    const installs = this.wb.installs(); const report: { itemId: string; provider: ProviderId | 'codex-native'; result: string }[] = [];
-    for (const [itemId, providers] of Object.entries(installs)) for (const provider of providers) {
-      const target = this.personalTarget(provider);
-      if (!target) { report.push({ itemId, provider, result: 'skipped: skill location not set up on this machine' }); continue; }
-      report.push({ itemId, provider, result: this.installApproved(itemId, target) });
-    }
-    return report;
+    return this.batch(() => {
+      const installs = this.wb.installs(), targets = this.wb.targets(); const report: { itemId: string; provider: ProviderId | 'codex-native'; result: string }[] = [];
+      for (const [itemId, providers] of Object.entries(installs)) for (const provider of providers) {
+        const target = this.personalTarget(provider, targets);
+        if (!target) { report.push({ itemId, provider, result: 'skipped: skill location not set up on this machine' }); continue; }
+        report.push({ itemId, provider, result: this.installApproved(itemId, target) });
+      }
+      return report;
+    });
   }
   /**
    * Installs the latest locally trusted approved revision of an item into one target, as sync does: an identical copy is
@@ -508,10 +628,10 @@ export class DeploymentService {
   installApproved(itemId: string, target: Target) {
     try {
       const item = this.wb.getItem(itemId); if (item.deletedAt) return 'skipped: item is in the trash';
-      const approval = this.wb.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      const approval = this.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
       invariant(approval, 'APPROVAL_REQUIRED', 'No approved revision is available. Review and approve this item before syncing.');
       const revision = this.wb.getRevision(itemId, approval.revision);
-      const rendered = this.render(itemId, revision.hash, target);
+      const rendered = this.render(itemId, revision.hash, target, revision);
       const current = readDestination(rendered.destination);
       if (current && stateHash(current) === rendered.proposedHash) {
         if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
@@ -523,10 +643,10 @@ export class DeploymentService {
     } catch (error) { return `failed: ${error instanceof Error ? error.message : String(error)}`; }
   }
   drift() {
-    const destinations = [...new Set(this.receipts().map(r => r.destination))];
-    return destinations.flatMap(destination => {
-      const receipt = this.latest(destination); if (!receipt) return [];
-      try { return [{ ...receipt, actualHash: stateHash(readDestination(destination)), drifted: stateHash(readDestination(destination)) !== receipt.hash, checkedAt: now() }]; }
+    const { list, latest } = this.receiptState();
+    return [...new Set(list.map(r => r.destination))].flatMap(destination => {
+      const last = latest.get(destination), receipt = last?.status === 'applied' ? last : undefined; if (!receipt) return [];
+      try { const actualHash = stateHash(readDestination(destination)); return [{ ...receipt, actualHash, drifted: actualHash !== receipt.hash, checkedAt: now() }]; }
       catch (error) { return [{ ...receipt, actualHash: null, drifted: true, checkedAt: now(), error: error instanceof Error ? error.message : String(error) }]; }
     });
   }
@@ -537,7 +657,7 @@ export class DeploymentService {
       const current = stateHash(readDestination(journal.destination));
       if (current === journal.proposed) {
         journal.receipt.status = journal.proposed === null ? (journal.receipt.planId.startsWith('uninstall-') ? 'uninstalled' : 'rolled_back') : 'applied';
-        writeJson(path.join(this.wb.local, 'receipts', `${journal.receipt.id}.json`), journal.receipt);
+        this.writeReceipt(journal.receipt);
         journal.phase = 'complete'; writeJson(path.join(this.wb.local, 'journals', `${journal.id}.json`), journal);
         this.removeOwnedSibling(journal.backup, target.root, journal.expected);
         return { id: journal.id, status: 'completed' };
@@ -546,7 +666,7 @@ export class DeploymentService {
       if (stateHash(readDestination(journal.destination)) === journal.expected) {
         this.removeOwnedSibling(journal.stage, target.root, journal.proposed);
         journal.phase = 'complete'; journal.receipt.status = 'rolled_back';
-        writeJson(path.join(this.wb.local, 'receipts', `${journal.receipt.id}.json`), journal.receipt);
+        this.writeReceipt(journal.receipt);
         writeJson(path.join(this.wb.local, 'journals', `${journal.id}.json`), journal);
         return { id: journal.id, status: 'restored previous state' };
       }
@@ -561,17 +681,24 @@ export class DeploymentService {
     if (!hash) return null;
     try { return this.wb.getRevision(itemId, hash); } catch { return null; }
   }
+  /** `approvedRevision` as facts: what the installations list needs to tell an outdated copy, without reading the revision. */
+  private approvedFacts(item: Item, approvals: Approval[]): { hash: string; facts: RevisionFacts } | null {
+    const local = approvals.filter(a => a.itemId === item.id && a.trust === 'local');
+    const hash = local.some(a => a.revision === item.revision) ? item.revision : local.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.revision;
+    if (!hash) return null;
+    try { return { hash, facts: this.facts.get(item, hash) }; } catch { return null; }
+  }
   /** Whether a copy Kiln wrote holds something other than the approved revision, which would be written to this same place. */
-  private behind(item: Item, target: Target, destination: string, owned: Receipt, approved: Revision | null) {
-    if (!approved || owned.revision === approved.hash || this.renderedHash(approved) === owned.hash) return false;
-    try { return this.skillDestination(target, this.folderName(item, approved), approved) === destination; } catch { return false; }
+  private behindFacts(item: Item, target: Target, destination: string, owned: Receipt, approved: { hash: string; facts: RevisionFacts } | null) {
+    if (!approved || owned.revision === approved.hash || approved.facts.rendered === owned.hash) return false;
+    try { return this.destinationOf(target, this.nameOf(item, approved.facts), approved.facts) === destination; } catch { return false; }
   }
   private copyLabel(copy: Pick<Installation, 'targetId' | 'scope' | 'location' | 'provider'>) {
     if (copy.scope === 'project') return this.wb.targets().find(t => t.id === copy.targetId)?.name ?? 'project folder';
     return copy.location ? skillLocationLabel[copy.location] : ({ codex: 'Codex', claude: 'Claude', copilot: 'Copilot' } as const)[copy.provider];
   }
   private approveHere(item: Item, note: string) {
-    this.wb.approve({ id: item.id, revision: item.revision, reviewer: os.userInfo().username, scope: 'Installed from Kiln', note, waivedChecks: 'Approved from Kiln; no trial evidence linked.' });
+    this.approve({ id: item.id, revision: item.revision, reviewer: os.userInfo().username, scope: 'Installed from Kiln', note, waivedChecks: 'Approved from Kiln; no trial evidence linked.' });
   }
   /**
    * Update: brings copies Kiln wrote, and that are unchanged since, up to the approved revision through the usual plan and apply,
@@ -590,7 +717,7 @@ export class DeploymentService {
       invariant(data.expect === item.revision, 'REVISION_CONFLICT', 'This item changed since you opened it. Review the new revision before approving it.');
       if (!this.wb.approvals().some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local')) { this.approveHere(item, 'Approved by choosing Approve & update installs in Kiln.'); approved = true; }
     }
-    return { ...this.updateItem(item, this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId)), approved };
+    return { ...this.batch(() => this.updateItem(item, this.installations(item.id).filter(c => !data.targetId || c.targetId === data.targetId))), approved };
   }
   /**
    * Update all outdated (Machines): each item with an outdated copy on this machine, or only the copies given, goes through the
@@ -600,10 +727,10 @@ export class DeploymentService {
     const { copies } = z.object({ copies: z.array(z.object({ itemId: idSchema, targetId: idSchema })).max(5000).optional() }).parse(input ?? {});
     const all = this.installations(), chosen = (c: Installation) => !copies || copies.some(x => x.itemId === c.itemId && x.targetId === c.targetId);
     const ids = [...new Set(all.filter(c => c.outdated && chosen(c)).map(c => c.itemId))];
-    return ids.map(id => ({ ...this.updateItem(this.wb.getItem(id), all.filter(c => c.itemId === id && chosen(c))), approved: false }));
+    return this.batch(() => ids.map(id => ({ ...this.updateItem(this.wb.getItem(id), all.filter(c => c.itemId === id && chosen(c))), approved: false })));
   }
   private updateItem(item: Item, copies: Installation[]): Omit<UpdateResult, 'approved'> {
-    const revision = this.approvedRevision(item.id); invariant(revision, 'APPROVAL_REQUIRED', 'Approve a revision before updating installed copies.');
+    const revision = this.approvedRevision(item.id, this.approvals()); invariant(revision, 'APPROVAL_REQUIRED', 'Approve a revision before updating installed copies.');
     const wanted = this.renderedHash(revision);
     const updated: UpdatedCopy[] = [], adopted: UpdatedCopy[] = [], skipped: UpdateResult['skipped'] = [];
     let current = 0;

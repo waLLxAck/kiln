@@ -24,7 +24,7 @@ import { ProjectInstalls } from '../deployment/projects';
 import { RepoImports } from './repo-import';
 import { McpServers } from '../deployment/mcp';
 import { UsageService, type LibraryView } from '../usage/service';
-import { skillName } from './content';
+import { factsCache } from './revision-facts';
 
 import { BackgroundFetch, pullFetched } from '../git/sync';
 import { GitQueue } from '../git/queue';
@@ -139,7 +139,7 @@ export class Router {
   }
   private route(method: string, args: unknown) {
     switch (method) {
-      case 'snapshot': return { ...this.wb.snapshot(), publish: this.publisher.list() };
+      case 'snapshot': { const snapshot = this.wb.snapshot(); return { ...snapshot, publish: this.publisher.list(), stamps: { installations: this.deployments.installationsStamp(snapshot) } }; }
       case 'publish.jobs': return this.publisher.list();
       case 'publish.retry': return this.publisher.retry(z.object({ id: idSchema }).parse(args).id);
       case 'settings.distill': return this.wb.saveDistillTypes(args);
@@ -332,24 +332,28 @@ export class Router {
    */
   async usageReport(args: unknown) {
     const { scan } = z.object({ scan: z.boolean().default(true) }).passthrough().parse(args ?? {});
-    if (scan) await this.usage.scan();
-    return this.usage.report(args, this.usageLibrary(true));
+    const status = scan ? await this.usage.scan() : undefined;
+    return this.usage.report(args, this.usageLibrary(true), status);
   }
-  /** Live skills with the names they install and are invoked as (folder name, SKILL.md name, title), Kiln's receipts and, for the report, this machine's copies. */
+  /**
+   * Live skills with the names they install and are invoked as (folder name, SKILL.md name, title), Kiln's receipts and, for the
+   * report, where this machine has copies of them: found as the installations list finds them, but without reading any copy.
+   */
   usageLibrary(withCopies: boolean): LibraryView {
-    const items = this.wb.listItems(), skills: LibraryView['skills'] = [];
+    const items = this.wb.listItems(), skills: LibraryView['skills'] = [], facts = factsCache(this.wb);
     for (const item of items) {
       if (item.kind !== 'skill' || item.deletedAt) continue;
       let names = this.usageNames.get(item.revision);
       if (!names) {
         // Imported skills remember their folder (`local:<folder>`) or file (`…/<name>/SKILL.md`) as the source.
         names = [item.title, item.source.match(/[\\/]([^\\/]+)[\\/]SKILL\.md$/)?.[1] ?? (item.source.startsWith('local:') ? path.basename(item.source.slice(6)) : '')];
-        try { names.unshift(skillName(this.wb.getRevision(item.id))); } catch { /* A damaged revision still matches by title. */ }
+        try { names.unshift(facts.get(item).name); } catch { /* A damaged revision still matches by title. */ }
         this.usageNames.set(item.revision, names = [...new Set(names.filter(Boolean))]);
       }
       skills.push({ id: item.id, title: item.title, status: item.status, names });
     }
-    return { skills, titles: Object.fromEntries(items.map(i => [i.id, i.title])), receipts: this.deployments.receipts(), ...(withCopies ? { copies: () => this.deployments.installations(skills.map(s => s.id)) } : {}) };
+    facts.save();
+    return { skills, titles: Object.fromEntries(items.map(i => [i.id, i.title])), receipts: this.deployments.receipts(), ...(withCopies ? { copies: () => this.deployments.locate(skills.map(s => s.id)) } : {}) };
   }
   /** Installing an unapproved revision approves it first, so the same push to GitHub happens as with an explicit Approve. */
   installSkill(args: unknown) {

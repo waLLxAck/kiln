@@ -11,6 +11,7 @@ import { authoringSchema, type Authoring } from '../protocol/schema';
 import { bundleFiles, digest, safeRelative } from '../storage/files';
 import { targetSkillsFolder } from '../providers/skill-locations';
 import { providerIds, skillsFolder } from '../providers/service';
+import { contentKey, factsCache } from './revision-facts';
 
 const LIMIT = MAX_ATTACHMENT_BYTES;
 /** Folder entries a skill import leaves out: version control, dependencies and OS litter. */
@@ -50,7 +51,7 @@ export function skillBundle(folder: string, source: string, extra: Partial<Pick<
   return authoringSchema.parse({ title: skillTitle(folder, content), kind: 'skill', content, files, source, licence: 'Unknown', collection: 'Imported skills', tags: ['imported'], ...extra });
 }
 /** Content identity independent of title, tags or source: the same SKILL.md and files anywhere count as the same skill. */
-export const contentKey = (value: { content: string; files: Record<string, string> }) => digest({ content: value.content.replace(/\r\n/g, '\n'), files: value.files });
+export { contentKey };
 
 /** Folders where installed agents look for skills on this machine. */
 export function localSkillRoots(home = process.env.KILN_HOME ?? os.homedir()) {
@@ -60,7 +61,9 @@ export type LocalSkill = { root: string; name: string; path: string; realPath: s
 /** Every skill folder in the local agent folders, once each even when one folder is a link to another, marked when the library already has it. */
 export function scanLocalSkills(wb: Workbench, roots = [...new Set([...localSkillRoots(), ...wb.targets().map(t => path.join(t.root, targetSkillsFolder(t)))])]): { roots: string[]; entries: LocalSkill[] } {
   const known = new Set<string>();
-  for (const item of wb.listItems().filter(i => i.kind === 'skill')) { try { known.add(contentKey(wb.getRevision(item.id))); } catch { /* A damaged item cannot be matched; it is reported elsewhere. */ } }
+  const facts = factsCache(wb);
+  for (const item of wb.listItems().filter(i => i.kind === 'skill')) { try { known.add(facts.get(item).key); } catch { /* A damaged item cannot be matched; it is reported elsewhere. */ } }
+  facts.save();
   const seen = new Set<string>(); const entries: LocalSkill[] = [];
   const visited = new Set<string>();
   /** Lists the folders under `root` and returns whether any skill was found beneath it. A folder without SKILL.md that only holds
@@ -98,7 +101,9 @@ export function scanLocalSkills(wb: Workbench, roots = [...new Set([...localSkil
 export function importLocalSkills(wb: Workbench, input: unknown) {
   const data = z.object({ paths: z.array(z.string().min(1)).min(1).max(2000), confirm: z.literal(true) }).parse(input);
   const known = new Map<string, string>();
-  for (const item of wb.listItems().filter(i => i.kind === 'skill')) { try { known.set(contentKey(wb.getRevision(item.id)), item.id); } catch { /* skip */ } }
+  const facts = factsCache(wb);
+  for (const item of wb.listItems().filter(i => i.kind === 'skill')) { try { known.set(facts.get(item).key, item.id); } catch { /* skip */ } }
+  facts.save();
   const imported: string[] = [], unchanged: string[] = [], failed: { path: string; error: string }[] = [];
   for (const folder of data.paths) {
     try {

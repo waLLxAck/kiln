@@ -8,6 +8,7 @@ import type { Workbench } from './workbench';
 import { digest } from '../storage/files';
 import { invariant } from './errors';
 import { validateContent } from './content';
+import { agentKey as key, factsCache } from './revision-facts';
 
 const providerSchema = z.enum(['codex', 'claude', 'copilot']);
 export type AgentFile = { path: string; provider: ProviderId; name: string; imported: boolean; validation: string[]; error: string };
@@ -17,8 +18,7 @@ function bundle(file: string, provider: ProviderId) {
   let meta: Record<string, unknown> = {}; try { meta = agentMetadata(content, provider); } catch { /* Invalid files can be imported as drafts for repair. */ }
   return authoringSchema.parse({ kind: 'agent', agent: { provider, filename: path.basename(file) }, title: typeof meta.name === 'string' ? meta.name : path.basename(file).replace(/(?:\.agent)?\.(md|toml)$/, ''), description: typeof meta.description === 'string' ? meta.description.slice(0, 600) : '', content, source: `local:${file}`, collection: 'Imported agents', tags: ['imported'] });
 }
-const key = (value: { content: string; agent?: { provider: ProviderId } }) => digest({ content: value.content.replace(/\r\n/g, '\n'), provider: value.agent?.provider });
-function known(wb: Workbench) { return new Set(wb.listItems().filter(i => i.kind === 'agent').map(i => key(wb.getRevision(i.id)))); }
+function known(wb: Workbench) { const facts = factsCache(wb), keys = new Set(wb.listItems().filter(i => i.kind === 'agent').map(i => facts.get(i).key)); facts.save(); return keys; }
 export function scanAgents(wb: Workbench, input: unknown) {
   const data = z.object({ root: z.string().optional(), provider: providerSchema.optional() }).parse(input);
   const home = process.env.KILN_HOME ?? os.homedir();

@@ -210,6 +210,27 @@ test('lists installed skills unused in the window, and Kiln runs by kind and ite
   } finally { f.close(); }
 });
 
+test('the report counts copies on this machine without the installations scan, and reads the log tree once per call', async () => {
+  const f = fixture();
+  try {
+    const target = f.wb.enroll({ name: 'Claude skills', root: f.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    const idle = f.wb.create({ title: 'Never used', kind: 'skill', content: skill('never-used') }), spare = f.wb.create({ title: 'Spare', kind: 'skill', content: skill('spare-skill') });
+    approve(f.wb, idle.id); f.router.call('skills.install', { itemId: idle.id, targetId: target.id, confirm: true });
+    // A copy Kiln did not write counts too, as it always has: the same copies the installations list shows.
+    const external = path.join(f.home, '.agents', 'skills', 'spare-skill'); fs.mkdirSync(external, { recursive: true }); fs.writeFileSync(path.join(external, 'SKILL.md'), skill('spare-skill'));
+    const expected = (f.router.call('deploy.installations') as { itemId: string }[]).reduce<Record<string, number>>((n, c) => ({ ...n, [c.itemId]: (n[c.itemId] ?? 0) + 1 }), {});
+    let scans = 0; const installations = f.router.deployments.installations.bind(f.router.deployments);
+    f.router.deployments.installations = (...args) => { scans++; return installations(...args); };
+    const walked: string[] = [], readdir = fs.readdirSync;
+    (fs as { readdirSync: unknown }).readdirSync = (...args: Parameters<typeof fs.readdirSync>) => { walked.push(String(args[0])); return readdir(...args); };
+    let report: UsageReport;
+    try { report = await f.report(); } finally { fs.readdirSync = readdir; }
+    assert.equal(scans, 0, 'usage.report does not hash installed copies');
+    assert.deepEqual(Object.fromEntries(report.unused.map(u => [u.itemId, u.copies])), { [idle.id]: expected[idle.id], [spare.id]: expected[spare.id] });
+    assert.equal(walked.filter(folder => folder === path.join(f.home, '.codex', 'sessions')).length, 1, 'one walk of the logs per call');
+  } finally { f.close(); }
+});
+
 test('prices: model ids normalise to one row, unknown models have no estimate, and defaults are clearly dated', () => {
   assert.equal(normaliseModel('claude-opus-5-5[1m]'), 'claude-opus-5-5');
   assert.equal(normaliseModel('anthropic.claude-sonnet-4-6-20260101'), 'claude-sonnet-4-6');
