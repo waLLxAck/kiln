@@ -1,12 +1,13 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { Workbench } from '../domain/workbench';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { atomicWrite, now, withLock } from '../storage/files';
-import { gitStatus } from './service';
+import { gitStatus, push } from './service';
 import { GitQueue } from './queue';
-import { catFile, gitDirs, mergeInProgress, networkTimeout, run, runRaw, type RunOptions } from './run';
+import { catFile, gitDirs, headCommit, mergeInProgress, networkTimeout, run, runRaw, type RunError, type RunOptions } from './run';
 
 export { mergeInProgress } from './run';
 
@@ -141,6 +142,152 @@ async function committedTexts(root: string, ref: string, files: string[]) {
 }
 /** item.json files to put back to their committed bytes before a merge (see `settleBookkeeping`). */
 type Settle = { file: string; head: string }[];
+/** Keys of item.json that are organisation or bookkeeping: changing only these on this machine is not a draft. */
+const organisation = new Set(['collection', 'order', 'favourite', 'updatedAt']);
+const withoutOrganisation = (value: Record<string, unknown>) => canonicalJson(Object.fromEntries(Object.entries({ ...value, conflictHeads: value.conflictHeads ?? [] }).filter(([key]) => !organisation.has(key))));
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+/**
+ * Three-way merge of two JSON values that parted from `base`: objects key by key, lists as sets (what either side added stays,
+ * what either side removed goes), and where both sides set one value differently, this machine's wins. `clashes` names those keys.
+ */
+export function mergeJson(base: unknown, ours: unknown, theirs: unknown, at = ''): { value: unknown; clashes: string[] } {
+  const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+  if (same(ours, theirs) || same(theirs, base)) return { value: ours, clashes: [] };
+  if (same(ours, base)) return { value: theirs, clashes: [] };
+  if (isRecord(ours) && isRecord(theirs)) {
+    const before = isRecord(base) ? base : {}, value: Record<string, unknown> = {}, clashes: string[] = [];
+    for (const key of new Set([...Object.keys(ours), ...Object.keys(theirs)])) {
+      const merged = mergeJson(before[key], ours[key], theirs[key], at ? `${at}.${key}` : key);
+      if (merged.value !== undefined) value[key] = merged.value;
+      clashes.push(...merged.clashes);
+    }
+    return { value, clashes };
+  }
+  if (Array.isArray(ours) && Array.isArray(theirs)) {
+    const before = new Set((Array.isArray(base) ? base : []).map(canonicalJson)), mine = new Set(ours.map(canonicalJson)), seen = new Set<string>();
+    const value = [...theirs.filter(v => !before.has(canonicalJson(v)) || mine.has(canonicalJson(v))), ...ours.filter(v => !before.has(canonicalJson(v)))]
+      .filter(v => { const key = canonicalJson(v); if (seen.has(key)) return false; seen.add(key); return true; });
+    return { value, clashes: [] };
+  }
+  return { value: ours, clashes: [at] };
+}
+/** Library-wide manifests both machines write: desired installs, the collection list, and pairs marked as not duplicates. */
+const manifests = (wb: Workbench) => { const { prefix } = itemPaths(wb), library = prefix.slice(0, -'items/'.length); return new Set(['installs.json', 'workbench.json', 'distinct.json'].map(name => library + name)); };
+const later = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' ? (a > b ? a : b) : a ?? b;
+/**
+ * Kiln's JSON files that both `head` and `ref` changed since they parted (manifests, item.json), merged key by key: a line-by-line
+ * merge of JSON can succeed and still be wrong, such as one key added twice. `unresolved` are item.json files where both sides
+ * changed more than organisation (content, revision, status), and files one side deleted; those are left to Git and the user.
+ * Reads only commits, so it runs without the library lock.
+ */
+export async function mergeJsonFiles(wb: Workbench, ref: string, head = 'HEAD') {
+  const { split } = itemPaths(wb), shared = manifests(wb), isItem = (file: string) => { const part = split(file); return Boolean(part && uuid.test(part.id) && part.rest === 'item.json'); };
+  const parted = (await git(wb.root, ['merge-base', head, ref])).trim();
+  const changed = async (to: string) => new Set((await git(wb.root, ['diff', '--name-only', '-z', '--no-renames', parted, to], { maxBuffer: 64_000_000 })).split('\0').filter(file => file && (shared.has(file) || isItem(file))));
+  const [ours, theirsChanged] = await Promise.all([changed(head), changed(ref)]);
+  const both = [...theirsChanged].filter(f => ours.has(f)), files: Record<string, string> = {}, unresolved: string[] = [];
+  const blobs = await catFile(wb.root, both.flatMap(file => [`${parted}:${file}`, `${head}:${file}`, `${ref}:${file}`]));
+  const read = (rev: string, file: string) => { const bytes = blobs.get(`${rev}:${file}`); if (!bytes) throw new Error(`${file} is not in ${rev}`); return JSON.parse(bytes.toString('utf8')) as unknown; };
+  for (const file of both) {
+    try {
+      let before: unknown = {}; try { before = read(parted, file); } catch { /* Added on both sides. */ }
+      const mine = read(head, file), theirs = read(ref, file), merged = mergeJson(before, mine, theirs);
+      // An item's content, revision or status changed on both sides needs the user, even when no single key clashes: a withdrawn
+      // approval of one revision must not land on the newer revision the other machine approved.
+      if (isItem(file) && (!isRecord(before) || !isRecord(mine) || !isRecord(theirs) || (withoutOrganisation(mine) !== withoutOrganisation(before) && withoutOrganisation(theirs) !== withoutOrganisation(before)))) { unresolved.push(file); continue; }
+      if (isItem(file) && isRecord(merged.value) && isRecord(mine) && isRecord(theirs)) merged.value.updatedAt = later(mine.updatedAt, theirs.updatedAt);
+      files[file] = JSON.stringify(merged.value, null, 2) + '\n';
+    } catch { unresolved.push(file); }
+  }
+  return { files, unresolved };
+}
+/** Local edits put out of a merge's way: see `setAside`. */
+export type Aside = {
+  /** Paths that will be set aside, so the overlap check can leave them out. */
+  files: Set<string>;
+  /** Puts them back to the committed bytes. Under the library lock, right before merging; one changed since it was read stays in the way. */
+  apply(): void;
+  /** Puts them back exactly, when nothing was merged. */
+  restore(): void;
+  /** Lays them over what the merge brought. */
+  reapply(): void;
+};
+/**
+ * Edits made here that GitHub changed too, but that are not drafts: the manifests, and item.json files where only organisation
+ * changed (a move or reorder not published yet). Git would refuse to merge over them, so they are put back to the committed
+ * bytes first (`apply`); `reapply` lays them over what the merge brought, and `restore` puts them back exactly when nothing was
+ * merged. Which files is worked out here, without the lock; `local` is this machine's changed paths.
+ */
+export async function setAside(wb: Workbench, local: string[], ref = '@{upstream}'): Promise<Aside> {
+  const incoming = new Set(await incomingPaths(wb.root, ref)), { split } = itemPaths(wb), shared = manifests(wb);
+  // Items with any other local change (content, files, a new revision) are drafts, and stay in the way.
+  const touched = new Set(local.map(split).filter(part => part && part.rest !== 'item.json').map(part => part!.id));
+  const isCarriedItem = (file: string) => { const part = split(file); return Boolean(part && uuid.test(part.id) && part.rest === 'item.json' && !touched.has(part.id)); };
+  const candidates = local.filter(f => incoming.has(f) && (isCarriedItem(f) || shared.has(f))), heads = await committedTexts(wb.root, 'HEAD', candidates);
+  const planned: { file: string; text: string; committed: string; head: unknown; item: boolean }[] = [];
+  for (const file of candidates) {
+    const committed = heads.get(file), item = isCarriedItem(file); if (committed === undefined) continue;
+    try {
+      const text = fs.readFileSync(path.join(wb.root, file), 'utf8'), head = JSON.parse(committed) as unknown, working = JSON.parse(text) as unknown;
+      if (item && !(isRecord(head) && isRecord(working) && withoutOrganisation(head) === withoutOrganisation(working))) continue;
+      planned.push({ file, text, committed, head, item });
+    } catch { /* Unreadable, deleted or new: a real change, left in the way. */ }
+  }
+  const carried: typeof planned = [];
+  return {
+    files: new Set(planned.map(p => p.file)),
+    apply() {
+      for (const c of planned) {
+        const full = path.join(wb.root, c.file);
+        try { if (fs.readFileSync(full, 'utf8') !== c.text) continue; } catch { continue; }
+        atomicWrite(full, c.committed); carried.push(c);
+      }
+    },
+    restore() { for (const c of carried) atomicWrite(path.join(wb.root, c.file), c.text); },
+    reapply() {
+      for (const c of carried) {
+        const full = path.join(wb.root, c.file);
+        let now: unknown; try { now = JSON.parse(fs.readFileSync(full, 'utf8')); } catch { if (!c.item) atomicWrite(full, c.text); continue; }
+        const ours = JSON.parse(c.text) as unknown, merged = mergeJson(c.head, ours, now).value;
+        if (c.item && isRecord(merged) && isRecord(ours) && isRecord(now)) merged.updatedAt = later(ours.updatedAt, now.updatedAt);
+        if (canonicalJson(merged) !== canonicalJson(now)) atomicWrite(full, JSON.stringify(merged, null, 2) + '\n');
+      }
+    },
+  };
+}
+/** Paths a merge left conflicted, from `git ls-files -u -z` or the conflict list of `git merge-tree -z` (`<mode> <blob> <stage>\t<path>`). */
+export function conflictedPaths(entries: string[]) {
+  const paths = new Set<string>();
+  for (const entry of entries) { const match = entry.match(/^\d+ [0-9a-f]+ [123]\t(.+)$/s); if (!match) break; paths.add(match[1]); }
+  return paths;
+}
+/**
+ * The merge of commits `head` and `theirs` as a commit, built without touching the working tree or the index (so without the
+ * library lock), with Kiln's JSON files merged key by key. Null when an item really conflicts, so the user has to choose.
+ */
+async function mergeCommit(wb: Workbench, head: string, theirs: string) {
+  let output: string;
+  try { output = await git(wb.root, ['merge-tree', '--write-tree', '-z', head, theirs], { maxBuffer: 64_000_000 }); }
+  catch (error) {
+    // 1 means conflicts. Anything else (Git older than 2.38 has no --write-tree) leaves the merge to Merge from GitHub.
+    const failed = error as RunError; if (failed.code !== 1 || !failed.stdout) return null;
+    output = failed.stdout;
+  }
+  const [tree, ...entries] = output.split('\0');
+  const { files, unresolved } = await mergeJsonFiles(wb, theirs, head);
+  if (unresolved.length || [...conflictedPaths(entries)].some(file => !(file in files))) return null;
+  let merged = tree;
+  if (Object.keys(files).length) {
+    const index = path.join(wb.canonical, `.git-index-merge-${process.pid}-${randomUUID()}`);
+    const inIndex = async (args: string[], input?: string) => (await git(wb.root, args, { input, env: { GIT_INDEX_FILE: index } })).trim();
+    try {
+      await inIndex(['read-tree', tree]);
+      for (const [file, text] of Object.entries(files)) await inIndex(['update-index', '--add', '--cacheinfo', `100644,${await inIndex(['hash-object', '-w', '--stdin'], text)},${file}`]);
+      merged = await inIndex(['write-tree']);
+    } finally { fs.rmSync(index, { force: true }); }
+  }
+  return (await git(wb.root, ['commit-tree', merged, '-p', head, '-p', theirs, '-m', 'Merge library changes from GitHub'])).trim();
+}
 /**
  * Approving rewrites item.json with a fresh `updatedAt` and the published copy adds an empty `conflictHeads`, so an approved item
  * can look changed when it is not. Before merging, such item.json files that GitHub also changed are put back to the committed
@@ -206,57 +353,98 @@ export function describeOverlap(overlap: Overlap) {
 }
 /**
  * What GitHub's side would collide with here, worked out without the library lock or the thread: the item.json files to settle
- * first, and what still overlaps once they are settled.
+ * first, the edits to set aside (see `setAside`), and what still overlaps once both are out of the way.
  */
 async function mergePreview(wb: Workbench, ref: string) {
   const local = await localPaths(wb.root);
   const settle = await settleBookkeeping(wb, local, ref), settled = new Set(settle.map(s => s.file));
-  return { settle, overlap: await incomingOverlap(wb, local.filter(file => !settled.has(file)), ref) };
+  const unsettled = local.filter(file => !settled.has(file)), aside = await setAside(wb, unsettled, ref);
+  return { settle, aside, overlap: await incomingOverlap(wb, unsettled.filter(file => !aside.files.has(file)), ref) };
 }
 /**
  * Refuses a merge only for what would really get in its way: a merge already in progress, files staged by hand, or local changes
  * to what GitHub changed. Drafts elsewhere stay exactly where they are; Git leaves files it does not merge untouched.
  *
- * Returns the bookkeeping to settle, under the library lock, right before merging (`applySettle`).
+ * Returns what to do under the library lock right before merging: `settle` puts bookkeeping back (`applySettle`) and sets
+ * manifests and organisation aside; `aside` lays those over the result afterwards, or restores them when nothing was merged.
  */
 export async function assertMergeable(wb: Workbench, ref = '@{upstream}', verb: 'pull' | 'merge' = 'merge') {
   invariant(!mergeInProgress(wb.root), 'GIT_CONFLICT', 'A merge from GitHub is already in progress. Resolve conflicts and finish it first.');
   if (!await succeeds(wb.root, ['diff', '--cached', '--quiet'])) throw new WorkbenchError('GIT_STAGED', `Some files are staged in Git on this machine. Commit or unstage them in your Git tool, then ${verb} again.`);
-  const { settle, overlap } = await mergePreview(wb, ref);
+  const { settle, aside, overlap } = await mergePreview(wb, ref);
   if (overlap.items.length || overlap.paths.length) throw new WorkbenchError('GIT_DIRTY', `GitHub has changes to ${describeOverlap(overlap)}, which you also changed on this machine. Approve or discard those drafts, then ${verb} again.`);
-  return { overlap, settle: () => applySettle(wb, settle) };
+  return { overlap, aside, settle: () => { applySettle(wb, settle); aside.apply(); } };
 }
 
-export type PullResult = { status: 'pulled'; count: number } | { status: 'current' } | { status: 'diverged'; ahead: number; behind: number } | { status: 'blocked'; items: Overlap['items']; paths: string[] };
+export type PullResult = { status: 'pulled'; count: number } | { status: 'merged'; count: number } | { status: 'current' } | { status: 'diverged'; ahead: number; behind: number } | { status: 'blocked'; items: Overlap['items']; paths: string[] };
 /**
- * Pull without the network: fast-forwards to what the last fetch brought. Local drafts are never moved, stashed or rewritten;
- * the pull is refused (naming the items) when GitHub changed something that also changed here. The checks run without the
- * library lock; only settling bookkeeping and the fast-forward itself, which change working files, hold it.
+ * Pull without the network: brings in what the last fetch brought. A fast-forward when this machine has no commits of its own;
+ * otherwise a merge commit, made without touching the working tree, as long as no item changed on both sides (`diverged` then:
+ * the user chooses in Merge from GitHub). Drafts are never moved, stashed or rewritten; the pull is refused (naming the items)
+ * when GitHub changed something that is a draft here. Manifests and organisation changed on both sides are merged.
+ *
+ * The checks and the merge commit run without the library lock; only settling bookkeeping, setting edits aside and the
+ * fast-forward itself, which change working files, hold it.
  */
 export async function pullFetched(wb: Workbench): Promise<PullResult> {
   let result: PullResult;
   try {
     invariant((await gitStatus(wb.root)).attached, 'NOT_A_REPOSITORY', 'Attach a Git repository first.');
-    if (!await succeeds(wb.root, ['rev-parse', '--verify', '@{upstream}'])) throw new WorkbenchError('NO_UPSTREAM', 'This branch is not on GitHub yet. Approve something to push it first.');
-    const [ahead, behind] = (await git(wb.root, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).trim().split(/\s+/).map(n => Number(n) || 0);
+    let commits: string[];
+    try { commits = (await git(wb.root, ['rev-parse', 'HEAD', '@{upstream}'])).trim().split(/\s+/); }
+    catch { throw new WorkbenchError('NO_UPSTREAM', 'This branch is not on GitHub yet. Approve something to push it first.'); }
+    const [head, upstream] = commits;
+    const [ahead, behind] = (await git(wb.root, ['rev-list', '--left-right', '--count', `${head}...${upstream}`])).trim().split(/\s+/).map(n => Number(n) || 0);
     if (!behind) return { status: 'current' };
-    if (ahead) return { status: 'diverged', ahead, behind };
     invariant(!mergeInProgress(wb.root), 'GIT_CONFLICT', 'A merge from GitHub is in progress. Resolve conflicts and finish it first.');
-    const { settle, overlap } = await mergePreview(wb, '@{upstream}');
+    const { settle, aside, overlap } = await mergePreview(wb, upstream);
     if (overlap.items.length || overlap.paths.length) return { status: 'blocked', ...overlap };
+    const target = ahead ? await mergeCommit(wb, head, upstream) : upstream;
+    if (!target) return { status: 'diverged', ahead, behind };
     result = withLock(wb.canonical, (): PullResult => {
-      applySettle(wb, settle);
-      try { gitSyncRun(wb.root, ['merge', '--ff-only', '--no-edit', '@{upstream}']); }
-      catch (error) {
-        const stderr = stderrOf(error);
-        // Git checks before it writes anything, so a refusal here leaves every file as it was.
-        if (/would be overwritten|untracked working tree files/i.test(stderr)) return { status: 'blocked', items: [], paths: stderr.split('\n').map(l => l.trim()).filter(l => l && !/^(error|hint|Please|Aborting|Updating)/i.test(l) && !l.endsWith(':')).slice(0, 20) };
-        throw new WorkbenchError('GIT_SYNC_FAILED', stderr.split('\n').filter(l => l.trim()).join(' ').slice(0, 600) || 'git merge failed');
-      }
-      return { status: 'pulled', count: behind };
+      // A commit made while this was worked out (a checkpoint) would be lost behind the merge: pull again instead.
+      const now = headCommit(wb.root);
+      if (now && now !== head) throw new WorkbenchError('GIT_SYNC_FAILED', 'The library got a new commit while pulling. Pull again.');
+      applySettle(wb, settle); aside.apply();
+      let merged = false;
+      try {
+        try { gitSyncRun(wb.root, ['merge', '--ff-only', '--no-edit', target]); }
+        catch (error) {
+          const stderr = stderrOf(error);
+          // Git checks before it writes anything, so a refusal here leaves every file as it was.
+          if (/would be overwritten|untracked working tree files/i.test(stderr)) return { status: 'blocked', items: [], paths: stderr.split('\n').map(l => l.trim()).filter(l => l && !/^(error|hint|Please|Aborting|Updating)/i.test(l) && !l.endsWith(':')).slice(0, 20) };
+          throw new WorkbenchError('GIT_SYNC_FAILED', stderr.split('\n').filter(l => l.trim()).join(' ').slice(0, 600) || 'git merge failed');
+        }
+        merged = true;
+        return ahead ? { status: 'merged', count: behind } : { status: 'pulled', count: behind };
+      } finally { if (merged) aside.reapply(); else aside.restore(); }
     });
   } finally { await wb.refreshGit(); }
   // New and changed items show at once rather than when the folder watcher catches up.
-  if (result.status === 'pulled') wb.refresh();
+  if (result.status === 'pulled' || result.status === 'merged') wb.refresh();
   return result;
+}
+/** Whether GitHub's commits, as of the last fetch, change anything in the item's folder that this machine has not got. */
+export async function changedOnGitHub(wb: Workbench, itemId: string) {
+  try { return Boolean((await git(wb.root, ['diff', '--name-only', 'HEAD...@{upstream}', '--', `${itemPaths(wb).prefix}${itemId}`])).trim()); } catch { return false; }
+}
+/** Whether GitHub, as of the last fetch, has `commit`. */
+export function onGitHub(root: string, commit: string) {
+  return succeeds(root, ['merge-base', '--is-ancestor', commit, '@{upstream}']);
+}
+/**
+ * Pushes this machine's commits. When GitHub refuses because another machine pushed first, fetches, brings those commits in
+ * (see `pullFetched`) and pushes again. Run it in its turn in the Git queue; it fetches with `fetchHeld`. The push and the fetch
+ * are network calls without prompts (see run.ts) and never hold the library lock.
+ */
+export async function pushToGitHub(wb: Workbench, fetcher: BackgroundFetch) {
+  for (let attempt = 0; ; attempt++) {
+    try { const state = await push(wb.root); wb.invalidateGit(); return state; }
+    catch (error) { if (!(error instanceof WorkbenchError && error.code === 'GIT_PUSH_REJECTED') || attempt >= 2) throw error; }
+    const fetched = await fetcher.fetchHeld(0);
+    if (fetched.error) throw new WorkbenchError('GIT_PUSH_FAILED', `GitHub has commits this machine does not have yet, and fetching them failed: ${fetched.error}`);
+    const result = await pullFetched(wb);
+    if (result.status === 'blocked') throw new WorkbenchError('GIT_DIRTY', `GitHub has newer changes to ${describeOverlap(result)}, which you also changed on this machine. Approve or discard those drafts, then retry.`);
+    if (result.status === 'diverged') throw new WorkbenchError('GIT_DIVERGED', 'GitHub has a different version of an item changed here. Pull, choose which to keep in Merge from GitHub, and this goes out with it.');
+  }
 }

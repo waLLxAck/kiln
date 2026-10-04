@@ -189,8 +189,11 @@ export async function push(root: string) {
   try { await git(root, ['push', '-u', 'origin', 'HEAD'], { network: true, timeoutMs: networkTimeout(120_000) }); }
   catch (error) {
     const stderr = explain(error);
-    const reason = stderr.split('\n').map(l => l.trim()).filter(l => l && !/^(To |remote: ?$|branch '|\* \[new branch\])/.test(l)).join(' ').slice(0, 600);
-    throw new WorkbenchError('GIT_PUSH_FAILED', (error as { killed?: boolean }).killed ? 'GitHub did not answer in time.' : reason || 'git push failed');
+    if ((error as { killed?: boolean }).killed) throw new WorkbenchError('GIT_PUSH_FAILED', 'GitHub did not answer in time.');
+    // Another machine pushed first: callers that can fetch and merge (sync.ts `pushToGitHub`) catch this and try again.
+    if (/\[rejected\]|non-fast-forward|fetch first/i.test(stderr)) throw new WorkbenchError('GIT_PUSH_REJECTED', 'GitHub has commits this machine does not have yet. Pull from GitHub, then push again.');
+    const reason = stderr.split('\n').map(l => l.trim()).filter(l => l && !/^(To |remote: ?$|branch '|\* \[new branch\]|hint:)/.test(l)).join(' ').slice(0, 600);
+    throw new WorkbenchError('GIT_PUSH_FAILED', reason || 'git push failed');
   }
   return gitStatus(root);
 }

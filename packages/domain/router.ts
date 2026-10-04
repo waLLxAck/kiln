@@ -7,7 +7,7 @@ import { invariant } from './errors';
 import { Workbench } from './workbench';
 import { DeploymentService, type UpdateResult } from '../deployment/service';
 import { readInvocation, setModelInvocation } from './invocation';
-import { checkpoint, gitDiff, inventory, sync } from '../git/service';
+import { checkpoint, gitDiff, gitStatus, inventory, sync } from '../git/service';
 import { Publisher, type Composer } from '../git/publish';
 import { codexDescriber, type Describer } from '../agent/summarise';
 import { detectProviders } from '../providers/service';
@@ -26,7 +26,7 @@ import { McpServers } from '../deployment/mcp';
 import { UsageService, type LibraryView } from '../usage/service';
 import { factsCache } from './revision-facts';
 
-import { BackgroundFetch, pullFetched } from '../git/sync';
+import { BackgroundFetch, pullFetched, pushToGitHub, type PullResult } from '../git/sync';
 import { GitQueue } from '../git/queue';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
@@ -74,8 +74,8 @@ export class Router {
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
   constructor(readonly wb: Workbench, options: RouterOptions = {}) {
     this.deployments = new DeploymentService(wb);
-    this.publisher = new Publisher(wb, options.log, options.composer, this.gitQueue);
     this.fetcher = new BackgroundFetch(wb, this.gitQueue);
+    this.publisher = new Publisher(wb, options.log, options.composer, this.gitQueue, this.fetcher);
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
     this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
@@ -114,7 +114,7 @@ export class Router {
         this.organiseSoon();
       }
       if (reportTriggers.has(method)) this.fleet.changed();
-      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
+      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull' || method === 'sync.push') this.fleet.afterPull();
     };
     // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
     if (result instanceof Promise) return result.then(value => { settled(value); return value; });
@@ -154,10 +154,21 @@ export class Router {
     try { return this.autoSyncReady() ? this.publisher.organise(installIds, hint) : null; }
     catch (error) { this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) }); return null; }
   }
-  private async pull() {
+  /**
+   * Pull, in its turn in the Git queue: brings in what the last fetch found, then pushes whatever this machine still has waiting
+   * (approvals whose push GitHub refused, a merge just made). A push that fails is reported beside the pull, which still happened.
+   */
+  private async pull(): Promise<PullResult & { pushError?: string }> {
     const result = await pullFetched(this.wb);
-    if (result.status === 'pulled') this.log('sync.pulled', { count: result.count });
-    return result;
+    if (result.status === 'pulled' || result.status === 'merged') this.log('sync.pulled', { status: result.status, count: result.count });
+    if (result.status === 'blocked' || result.status === 'diverged' || !(await gitStatus(this.wb.root)).ahead) { await this.publisher.settle(); return result; }
+    try { await this.pushWaiting(); return result; }
+    catch (error) { const pushError = error instanceof Error ? error.message : String(error); this.log('sync.push.failed', { message: pushError }); return { ...result, pushError }; }
+  }
+  /** Pushes this machine's commits, merging GitHub's first when it has moved on, and marks failed approvals that went with them done. */
+  private async pushWaiting() {
+    try { return await pushToGitHub(this.wb, this.fetcher); }
+    finally { await this.wb.refreshGit(); await this.publisher.settle(); }
   }
   private route(method: string, args: unknown) {
     switch (method) {
@@ -285,11 +296,17 @@ export class Router {
       case 'git.conflicts': return conflicts(this.wb);
       case 'git.merge': return this.gitQueue.run(() => mergeFetched(this.wb));
       case 'git.resolve': return resolveItemConflict(this.wb, args);
-      case 'git.finishMerge': return this.gitQueue.run(() => finishMerge(this.wb));
+      case 'git.finishMerge': return this.gitQueue.run(async () => {
+        const commit = finishMerge(this.wb); this.wb.invalidateGit();
+        // The merge is what lets this machine's commits reach GitHub, so they go now; Push now remains if this fails.
+        try { await this.pushWaiting(); } catch (error) { this.log('sync.push.failed', { message: error instanceof Error ? error.message : String(error) }); }
+        return commit;
+      });
       case 'git.checkpoint': return checkpoint(this.wb.root, this.wb.canonical, z.object({ message: z.string().trim().min(1).max(300) }).parse(args).message);
       case 'sync.status': return this.fetcher.status();
       case 'sync.fetch': return this.fetcher.fetch(z.object({ maxAgeMs: z.number().int().min(0).default(0) }).parse(args).maxAgeMs);
       case 'sync.pull': return this.gitQueue.run(() => this.pull());
+      case 'sync.push': return this.gitQueue.run(() => this.pushWaiting());
       case 'git.sync': { const { action } = z.object({ action: z.enum(['fetch', 'pull', 'push']) }).parse(args); return this.gitQueue.run(() => sync(this.wb.root, this.wb.canonical, action)); }
       default: throw new WorkbenchError('CAPABILITY_UNSUPPORTED', `Unsupported operation: ${method}`);
     }

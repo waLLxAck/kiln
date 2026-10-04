@@ -127,7 +127,7 @@ test('an item approved here still pulls: bookkeeping-only changes to item.json a
   } finally { w.close(); }
 });
 
-test('Merge from GitHub runs beside drafts and commits neither the drafts nor their activity', async () => {
+test('a pull merges by itself beside drafts when no item changed on both sides, then pushes what was waiting', async () => {
   const w = world();
   try {
     w.a.git('remote', 'set-url', 'origin', path.join(w.root, 'missing.git'));
@@ -137,17 +137,96 @@ test('Merge from GitHub runs beside drafts and commits neither the drafts nor th
     const incoming = await publish(w.b, 'From GitHub', 'from-github');
     const draft = w.a.wb.create({ title: 'Secret draft', kind: 'prompt', content: 'Private working notes' });
     const before = folderState(w.a.wb.itemDir(draft.id));
-    assert.equal((await catchUp(w.a)).status, 'diverged');
-    const result = await mergeFetched(w.a.wb);
-    assert.deepEqual(result.paths, []);
-    finishMerge(w.a.wb);
+    const result = await catchUp(w.a);
+    assert.deepEqual(result, { status: 'merged', count: 1 });
     assert.deepEqual(folderState(w.a.wb.itemDir(draft.id)), before);
     const merged = w.a.git('diff', '--name-only', 'HEAD^1', 'HEAD');
     assert.match(merged, new RegExp(incoming.id));
     assert.doesNotMatch(merged, new RegExp(draft.id));
+    assert.ok(w.a.wb.snapshot().items.some(i => i.id === incoming.id), 'the merged item shows at once');
+    assert.equal(run(w.origin, 'rev-parse', 'HEAD'), w.a.git('rev-parse', 'HEAD'), 'the merge and the waiting approval reached GitHub');
+    assert.ok(w.a.router.publisher.list().every(j => j.status === 'done'), 'the failed approval is done now that GitHub has it');
     const tracked = w.a.git('ls-files', 'workbench/activity').split('\n').filter(Boolean);
     assert.ok(tracked.every(file => JSON.parse(fs.readFileSync(path.join(w.a.library, file), 'utf8')).itemId !== draft.id), 'draft activity stays local');
     assert.match(w.a.git('status', '--porcelain'), new RegExp(draft.id), 'the draft is still uncommitted');
+  } finally { w.close(); }
+});
+
+test('an approval whose push GitHub refuses fetches, merges and pushes again by itself', async () => {
+  const w = world();
+  try {
+    const incoming = await publish(w.b, 'From the laptop', 'from-the-laptop');
+    // This machine has not fetched: it approves on top of an older commit, and GitHub refuses the first push.
+    const ours = await publish(w.a, 'From the desktop', 'from-the-desktop');
+    assert.equal(run(w.origin, 'rev-parse', 'HEAD'), w.a.git('rev-parse', 'HEAD'));
+    for (const id of [incoming.id, ours.id]) assert.ok(run(w.origin, 'show', `HEAD:workbench/items/${id}/item.json`));
+    assert.ok(w.a.wb.snapshot().items.some(i => i.id === incoming.id));
+    // When the last fetch already knew, the approval is built on GitHub's commits instead: no merge commit.
+    const third = await publish(w.b, 'Third', 'third-skill'), github = run(w.origin, 'rev-parse', 'HEAD');
+    await w.a.router.fetcher.fetch();
+    await publish(w.a, 'Fourth', 'fourth-skill');
+    assert.equal(w.a.git('rev-parse', 'HEAD^@'), github, 'one parent: GitHub’s commit');
+    assert.equal(run(w.origin, 'rev-parse', 'HEAD'), w.a.git('rev-parse', 'HEAD'));
+    assert.ok(w.a.wb.snapshot().items.some(i => i.id === third.id));
+  } finally { w.close(); }
+});
+
+test('a waiting approval never replaces a newer version of its item that another machine pushed', async () => {
+  const w = world();
+  try {
+    const shared = await publish(w.a, 'Shared', 'shared-skill');
+    await catchUp(w.b);
+    const theirs = await edit(w.b, w.b.wb.getItem(shared.id), '\nImproved on the laptop.');
+    w.b.router.approve(approveArgs(theirs)); await w.b.router.publisher.idle();
+    await w.a.router.fetcher.fetch();
+    // This machine withdraws its approval of the older revision, knowing GitHub has a newer one of the same item.
+    w.a.router.unapprove({ id: shared.id, revision: shared.revision, reason: 'Withdrawn' }); await w.a.router.publisher.idle();
+    const published = JSON.parse(run(w.origin, 'show', `HEAD:workbench/items/${shared.id}/item.json`)) as Item;
+    assert.equal(published.revision, theirs.revision, 'GitHub keeps the laptop’s revision');
+    assert.equal(published.status, 'approved');
+  } finally { w.close(); }
+});
+
+test('desired installs and collections changed on both machines are merged, not called drafts', async () => {
+  const w = world();
+  try {
+    const one = await publish(w.a, 'One', 'one-skill'), two = await publish(w.a, 'Two', 'two-skill');
+    await catchUp(w.b);
+    const installs = (side: Side) => path.join(side.wb.canonical, 'installs.json');
+    // The laptop publishes an install of One and a new collection.
+    w.b.wb.setInstall(one.id, 'claude', true); w.b.wb.createCollection({ name: 'Laptop' });
+    w.b.git('add', '--', 'workbench/installs.json', 'workbench/workbench.json'); w.b.git('commit', '-q', '-m', 'Laptop organisation'); w.b.git('push', '-q');
+    // This machine has unpublished edits to the same files: an install of Two and its own collection.
+    w.a.wb.setInstall(two.id, 'codex', true); w.a.wb.createCollection({ name: 'Desktop' });
+    const result = await catchUp(w.a);
+    assert.deepEqual(result, { status: 'pulled', count: 1 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(installs(w.a), 'utf8')), { [one.id]: ['claude'], [two.id]: ['codex'] }, 'both installs are wanted');
+    const collections = (JSON.parse(fs.readFileSync(path.join(w.a.wb.canonical, 'workbench.json'), 'utf8')) as { collections: string[] }).collections;
+    assert.ok(collections.includes('Laptop') && collections.includes('Desktop'), collections.join(', '));
+    assert.deepEqual(JSON.parse(w.a.git('show', 'HEAD:workbench/installs.json')), { [one.id]: ['claude'] }, 'this machine’s edit is still only local');
+    // The same when both sides committed them: the merge combines the manifests key by key.
+    w.a.git('add', '--', 'workbench/installs.json', 'workbench/workbench.json'); w.a.git('commit', '-q', '-m', 'Desktop organisation');
+    w.b.wb.setInstall(two.id, 'claude', true); w.b.git('add', '--', 'workbench/installs.json'); w.b.git('commit', '-q', '-m', 'Laptop install'); w.b.git('push', '-q');
+    const second = await catchUp(w.a);
+    assert.equal(second.status, 'merged');
+    assert.deepEqual(JSON.parse(run(w.origin, 'show', 'HEAD:workbench/installs.json')), { [one.id]: ['claude'], [two.id]: ['claude', 'codex'] });
+  } finally { w.close(); }
+});
+
+test('Merge from GitHub merges manifests by itself and leaves only the contested item to choose', async () => {
+  const w = world();
+  try {
+    const { id } = await divergedApprovals(w, async shared => {
+      w.a.wb.setInstall(shared, 'codex', true);
+      w.b.wb.setInstall(shared, 'claude', true); w.b.git('add', '--', 'workbench/installs.json'); w.b.git('commit', '-q', '-m', 'Laptop install'); w.b.git('push', '-q');
+    });
+    const listed = conflicts(w.a.wb);
+    assert.deepEqual(listed.otherPaths, []);
+    resolveItemConflict(w.a.wb, { id, choice: 'theirs' });
+    await w.a.router.call('git.finishMerge');
+    assert.equal(run(w.origin, 'rev-parse', 'HEAD'), w.a.git('rev-parse', 'HEAD'), 'the finished merge is pushed');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.a.wb.canonical, 'installs.json'), 'utf8'))[id], ['claude', 'codex'], 'GitHub’s install and the one waiting here');
+    assert.deepEqual(JSON.parse(w.a.git('show', 'HEAD:workbench/installs.json'))[id], ['claude'], 'the one waiting here is not in the merge commit');
   } finally { w.close(); }
 });
 
@@ -238,7 +317,7 @@ test('Approve & install after keeping publishes the desired install when the kep
 });
 
 /** Both machines approve different revisions of one item; this machine's approval never reached GitHub. */
-async function divergedApprovals(w: ReturnType<typeof world>) {
+async function divergedApprovals(w: ReturnType<typeof world>, before?: (id: string) => Promise<void>) {
   const shared = await publish(w.a, 'Contested', 'contested');
   await catchUp(w.b);
   w.a.git('remote', 'set-url', 'origin', path.join(w.root, 'missing.git'));
@@ -247,6 +326,7 @@ async function divergedApprovals(w: ReturnType<typeof world>) {
   w.a.git('remote', 'set-url', 'origin', w.origin);
   const theirs = await edit(w.b, w.b.wb.getItem(shared.id), '\nLaptop wording.');
   w.b.router.approve(approveArgs(theirs)); await w.b.router.publisher.idle();
+  await before?.(shared.id);
   assert.equal((await catchUp(w.a)).status, 'diverged');
   const result = await mergeFetched(w.a.wb);
   assert.ok(result.items.some(i => i.id === shared.id), 'the item conflicts');

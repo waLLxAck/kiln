@@ -10,7 +10,7 @@
  */
 export const pureReads = new Set(['paths', 'settings', 'snapshot', 'getRevision', 'referencePath', 'items.read', 'items.revision', 'items.list', 'items.search', 'items.origins', 'items.duplicates', 'deploy.installations', 'targets.list', 'observations.list', 'context.sessionStart', 'publish.jobs']);
 /** Calls that legitimately take minutes (clones, pushes, pulls, waiting for the Git queue, whole-library imports): no deadline. */
-export const longCalls = new Set(['attach', 'importLibrary', 'exportLibrary', 'repos.import', 'repos.source', 'github.clone', 'github.publish', 'github.login', 'git.sync', 'git.merge', 'git.finishMerge', 'sync.pull', 'sync.fetch', 'skills.sync', 'repository.create', 'repository.migrate', 'repository.upgrade', 'usage.scan']);
+export const longCalls = new Set(['attach', 'importLibrary', 'exportLibrary', 'repos.import', 'repos.source', 'github.clone', 'github.publish', 'github.login', 'git.sync', 'git.merge', 'git.finishMerge', 'sync.pull', 'sync.push', 'sync.fetch', 'skills.sync', 'repository.create', 'repository.migrate', 'repository.upgrade', 'usage.scan']);
 export const READ_DEADLINE_MS = 30_000;
 export const CALL_DEADLINE_MS = 120_000;
 /** How long the main process waits for an answer before giving up on a call; null for calls without a deadline. */

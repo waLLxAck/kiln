@@ -1,4 +1,5 @@
 import { privateAttachment, shareableAuthoring, shareableTrial } from './privacy';
+import { migrateProvenance, unmigratedArchives } from './provenance';
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,7 +49,7 @@ const RECONCILE_BUDGET_MS = 1000;
 /** Bytes of recently read revisions kept parsed (by file size). Revisions with large attachments are read again when needed. */
 const REVISION_CACHE_BYTES = 32_000_000;
 /** Bump when what `cleanPrivateContent` treats as private changes, so every revision is looked at again. */
-const PRIVACY_CHECK = 1;
+const PRIVACY_CHECK = 2;
 /**
  * What this machine knows about the library without reading it (library-cache.json in the private folder): parsed item.json by
  * size and time, working-file fingerprints that matched their revision, and the per-revision summaries that duplicates and
@@ -447,10 +448,19 @@ export class Workbench {
   }
   /** Revisions this process saved, to be recorded as checked. */
   private cleanSaved = new Set<string>();
+  /** After provenance repair rewrote items and records in place: what was read of them is read again. */
+  private forgetMigrated(ids: string[] | null) {
+    if (ids) for (const id of ids) { this.itemCache.delete(id); this.fingerprints.delete(id); }
+    else { this.itemCache.clear(); this.fingerprints.clear(); }
+    // Approvals, trials, analyses, scores, activity and receipts may point at re-keyed revisions now.
+    for (const folder of this.folders.values()) folder.forget();
+    this.cacheChanged = true;
+  }
   /**
-   * Old snapshots remain available locally; current private attachments become a clean, unapproved draft. Each revision is looked
-   * at once per machine (revisions-checked.json): revisions never change under their hash, and reading a whole history means
-   * parsing every revision with its attachments. The lock is taken only when something is left to look at.
+   * Provenance-only cleanup preserves decisions (provenance.ts); removing private attachments creates an unapproved draft, and old
+   * snapshots with them remain available locally. Each revision is looked at once per machine (revisions-checked.json):
+   * revisions never change under their hash, and reading a whole history means parsing every revision with its attachments.
+   * Provenance repair reads only items with something not yet looked at. The lock is taken only when something is left.
    */
   private cleanPrivateContent() {
     const checkedFile = this.checkedFile(), stored = this.checkedRevisions();
@@ -458,9 +468,19 @@ export class Workbench {
     const clean = (value: Revision) => JSON.stringify(shareableAuthoring(value)) === JSON.stringify(value);
     const files = (id: string) => { try { return fs.readdirSync(path.join(this.itemDir(id), 'revisions')).filter(name => name.endsWith('.json')); } catch { return []; } };
     const items = this.listItems(true), ids = new Set(items.map(item => item.id));
-    const pending = items.filter(item => !checked.has(`${item.id}:${item.revision}`) || files(item.id).some(name => !checked.has(`${item.id}:${name.slice(0, -5)}`)));
-    if (pending.length) this.mutate(() => {
-      for (const listed of pending) {
+    const unchecked = (id: string, revision: string) => !checked.has(`${id}:${revision}`) || files(id).some(name => !checked.has(`${id}:${name.slice(0, -5)}`));
+    const pending = items.filter(item => unchecked(item.id, item.revision));
+    // A revision checked as clean has no provenance to repair, so only these items' histories are read for it.
+    const migrating = new Set([...pending.map(item => item.id), ...unmigratedArchives(this, ids)]);
+    if (migrating.size) this.mutate(() => {
+      try {
+        const changed = migrateProvenance(this, migrating);
+        if (changed.length) this.forgetMigrated(changed);
+      } catch (error) {
+        this.forgetMigrated(null);
+        this.warnings.push(`Provenance cleanup could not finish and will retry next time: ${String(error)}`); return;
+      }
+      for (const listed of items.filter(item => migrating.has(item.id))) {
         try {
           const item = this.getItem(listed.id), revision = this.getRevision(item.id);
           if (!clean(revision)) this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection }), 'Moved private session data and machine provenance out of shared content');

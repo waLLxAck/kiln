@@ -5,12 +5,15 @@ import type { Workbench } from '../domain/workbench';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { now, readJson, readRecords, writeJson } from '../storage/files';
 import { runCodex } from '../agent/codex';
-import { commitSnapshot, committedJson, committedJsonSync, gitStatus, push } from './service';
-import { privateAttachment, portableSource, shareableTrial } from '../domain/privacy';
+import { commitSnapshot, committedJson, committedJsonSync, gitStatus } from './service';
+import { privateAttachment, portableSource, shareableAuthoring, shareableTrial } from '../domain/privacy';
+import { provenanceOnly } from '../domain/provenance';
+import { revisionHash } from '../domain/content';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
 import type { PublishAction, PublishJob } from '../protocol/schema';
 import { CommittedFiles, hintedFiles, organisationPlan, planFor, type OrganiseHint } from './organise';
 import { mergeInProgress } from './run';
+import { BackgroundFetch, changedOnGitHub, onGitHub, pullFetched, pushToGitHub } from './sync';
 import { GitQueue } from './queue';
 export type { PublishAction, PublishJob, PublishStatus } from '../protocol/schema';
 export type ComposeInput = { action: PublishAction; title: string; kind: string; summary: string; diff: string; revision: string; model: string; effort: string; folder: string; signal: AbortSignal };
@@ -62,8 +65,11 @@ export class Publisher {
   /** Organising changes not yet looked at, collected while the committed files are being read. */
   private hint = { ids: new Set<string>(), all: false, collections: false, distinct: false };
   private loading = false;
-  /** `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there. */
-  constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer, private queue = new GitQueue()) {
+  /**
+   * `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there.
+   * `fetcher` fetches again when GitHub refuses a push because another machine pushed first.
+   */
+  constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer, private queue = new GitQueue(), private fetcher = new BackgroundFetch(wb, queue)) {
     this.folder = path.join(wb.local, 'publish'); fs.mkdirSync(path.join(this.folder, 'jobs'), { recursive: true });
     for (const job of readRecords(path.join(this.folder, 'jobs'), value => value as PublishJob)) {
       if (!['done', 'failed'].includes(job.status)) { job.status = 'failed'; job.error = 'Kiln closed before this reached GitHub. Retry to push it.'; job.finishedAt = now(); this.save(job); }
@@ -135,9 +141,34 @@ export class Publisher {
   private pendingInstalls(): string[] {
     try { const value = readJson(path.join(this.folder, 'organise-installs.json')); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []; } catch { return []; }
   }
+  /** Failed jobs whose commit GitHub now has, carried by a later push, pull or merge, are done. */
+  async settle() {
+    for (const job of [...this.jobs.values()]) {
+      if (job.status === 'failed' && job.commit && await onGitHub(this.wb.root, job.commit)) { job.status = 'done'; job.error = undefined; this.save(job); }
+    }
+  }
+  /**
+   * When the last fetch found GitHub ahead and this machine has nothing of its own waiting, the commit is built on GitHub's
+   * commits, so history stays a line. Anything in the way is left for the push, which merges when it has to.
+   * Not when GitHub changed the job's own item: the snapshot was taken before, and committing it on top would replace GitHub's
+   * version unseen. Built on the older commit instead, the push is refused and the merge stops on that item for the user.
+   */
+  private async catchUp(itemId = '') {
+    const state = await gitStatus(this.wb.root);
+    if (!state.behind || state.ahead || mergeInProgress(this.wb.root)) return;
+    if (itemId && await changedOnGitHub(this.wb, itemId)) { this.log('publish.catchUp', { status: 'skipped', itemId }); return; }
+    try { const result = await pullFetched(this.wb); this.log('publish.catchUp', { status: result.status }); }
+    catch (error) { this.log('publish.catchUp.failed', { message: error instanceof Error ? error.message : String(error) }); }
+  }
+  /** Pushes through refusals (see `pushToGitHub`), outside the library lock. */
+  private async push() {
+    await pushToGitHub(this.wb, this.fetcher); await this.wb.refreshGit();
+    await this.settle();
+  }
   private async publishOrganisation(job: PublishJob) {
     job.status = 'committing'; this.save(job);
     invariant(!mergeInProgress(this.wb.root), 'GIT_CONFLICT', 'Finish the merge from GitHub first, then retry.');
+    await this.catchUp();
     const installIds = this.pendingInstalls(), plan = await organisationPlan(this.wb, installIds, this.committed);
     job.message = plan.message; job.composer = 'fallback';
     // Changed back before the job ran, and nothing else waits to be pushed: no commit and no network needed.
@@ -149,7 +180,7 @@ export class Publisher {
     await this.committed.load(this.wb).catch(() => {});
     await this.wb.refreshGit();
     job.status = 'pushing'; this.save(job);
-    await push(this.wb.root); await this.wb.refreshGit();
+    await this.push();
     job.status = 'done';
     // Pushing sends every commit, so earlier organisation jobs that failed have now reached GitHub too.
     for (const old of this.jobs.values()) if (old.action === 'organise' && old.status === 'failed' && old.id !== job.id) { old.status = 'done'; old.error = undefined; this.save(old); }
@@ -176,31 +207,42 @@ export class Publisher {
       files[name] = fs.readFileSync(path.join(this.wb.root, name)).toString('base64');
     }
     const approvals = this.wb.approvals(true).filter(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local');
-    if (job.action === 'approve') {
-      invariant(approvals.some(a => !a.revokedAt), 'APPROVAL_REQUIRED', 'This revision no longer has an approval.');
+    const publishedItem = job.action === 'unapprove' ? committedJsonSync(this.wb.root, `${relative}/items/${job.itemId}/item.json`) as { revision?: string } : null;
+    let withdrawingLegacy = false;
+    if (publishedItem?.revision && publishedItem.revision !== job.revision) {
+      try {
+        const old = this.wb.getRevision(job.itemId, publishedItem.revision);
+        withdrawingLegacy = provenanceOnly(old) && revisionHash(shareableAuthoring(old), 2) === job.revision;
+      } catch (error) { if (!(error instanceof WorkbenchError && error.code === 'REVISION_NOT_FOUND')) throw error; }
+    }
+    if (job.action === 'approve' || withdrawingLegacy) {
+      if (job.action === 'approve') invariant(approvals.some(a => !a.revokedAt), 'APPROVAL_REQUIRED', 'This revision no longer has an approval.');
       const revision = this.wb.getRevision(job.itemId, job.revision), item = this.wb.getItem(job.itemId);
       invariant(!Object.keys(revision.files).some(privateAttachment) && portableSource(revision.source) === revision.source, 'PRIVATE_CONTENT', 'This legacy revision contains private session data or a machine path. Save a cleaned draft and approve it before publishing.');
       const folder = `${relative}/items/${item.id}`;
       replace.push(folder);
       const { content, files: assets, hash, parent: _parent, author: _author, createdAt: _created, summary: _summary, itemId: _id, schemaVersion: _schema, hashVersion: _version, ...metadata } = revision;
       // The collection is organisation kept on the item; the revision may name the one it was saved in.
-      json(`${folder}/item.json`, { ...item, ...metadata, collection: item.collection, revision: hash, status: 'approved', deletedAt: null, conflictHeads: [] });
+      json(`${folder}/item.json`, { ...item, ...metadata, collection: item.collection, revision: hash, status: job.action === 'approve' ? 'approved' : 'captured', deletedAt: null, conflictHeads: [] });
       const published = new Map([[hash, revision]]);
+      const publishedApprovals = [];
       for (const approval of this.wb.approvals(true).filter(a => a.itemId === item.id && a.trust === 'local')) {
         const old = this.wb.getRevision(item.id, approval.revision);
-        if (!Object.keys(old.files).some(privateAttachment) && portableSource(old.source) === old.source) published.set(old.hash, old);
+        if (!Object.keys(old.files).some(privateAttachment) && portableSource(old.source) === old.source) {
+          published.set(old.hash, old); publishedApprovals.push(approval);
+          json(`${relative}/approvals/${approval.id}.json`, approval);
+        }
       }
       for (const old of published.values()) json(`${folder}/revisions/${old.hash}.json`, { ...old, parent: old.parent && published.has(old.parent) ? old.parent : null });
       files[`${folder}/content.md`] = Buffer.from(content).toString('base64');
       for (const [name, bytes] of Object.entries(assets)) files[`${folder}/files/${name}`] = bytes;
-      const evidence = new Set(approvals.flatMap(a => a.evidence));
-      for (const trial of this.wb.trials(true).filter(t => evidence.has(t.id) && t.revision === hash)) json(`${relative}/experiments/${trial.id}.json`, shareableTrial(trial));
+      const evidence = new Set(publishedApprovals.flatMap(a => a.evidence));
+      for (const trial of this.wb.trials(true).filter(t => evidence.has(t.id) && published.has(t.revision))) json(`${relative}/experiments/${trial.id}.json`, shareableTrial(trial));
     }
     for (const approval of approvals) json(`${relative}/approvals/${approval.id}.json`, approval);
-    if (job.action === 'unapprove') {
+    if (job.action === 'unapprove' && !withdrawingLegacy) {
       const name = `${relative}/items/${job.itemId}/item.json`;
-      const published = committedJsonSync(this.wb.root, name) as { revision?: string };
-      if (published.revision === job.revision) json(name, { ...published, status: 'captured' });
+      if (publishedItem?.revision === job.revision) json(name, { ...publishedItem, status: 'captured' });
     }
     const desired = this.wb.installs()[job.itemId];
     writeJson(path.join(this.folder, 'snapshots', `${job.id}.json`), { files, replace, install: { path: `${relative}/installs.json`, providers: desired ?? [] } });
@@ -234,6 +276,7 @@ export class Publisher {
   private async commitAndPush(job: PublishJob) {
     const snapshotFile = path.join(this.folder, 'snapshots', `${job.id}.json`);
     if (!fs.existsSync(snapshotFile)) this.snapshot(job);
+    await this.catchUp(job.itemId);
     if (job.action === 'approve') invariant(this.wb.approvals().some(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approval was withdrawn before publishing.');
     const snapshot = readJson(snapshotFile) as { files: Record<string, string>; replace: string[]; install?: { path: string; providers: string[] } };
     // Merge this item's captured intent into the latest published manifest, so queued items cannot erase each other.
@@ -252,7 +295,7 @@ export class Publisher {
     await this.committed.load(this.wb).catch(() => {});
     await this.wb.refreshGit();
     job.status = 'pushing'; this.save(job);
-    await push(this.wb.root); await this.wb.refreshGit();
+    await this.push();
     job.status = 'done';
   }
 }
