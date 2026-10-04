@@ -1,5 +1,6 @@
 // Starts a packaged Kiln build against an empty, isolated library and checks that its window opens and the app knows which
-// platform it is on. release.yml runs it on each runner after building, since nobody clicks through those builds by hand.
+// platform it is on. Wait for the usable interface: the startup splash alone does not prove the backend opened.
+// release.yml runs it on each runner after building, since nobody clicks through those builds by hand.
 //   node scripts/smoke-packaged.mjs <path to the Kiln executable>
 // On Linux, run it under a display, for example `xvfb-run -a node scripts/smoke-packaged.mjs release/linux-unpacked/kiln-workbench`.
 import assert from 'node:assert/strict';
@@ -17,7 +18,10 @@ try {
   const page = await app.firstWindow();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.waitForFunction(() => document.body.innerText.trim().length > 20, undefined, { timeout: 60_000 });
+  await page.getByRole('heading', { name: 'Set up your Kiln repository', exact: true }).waitFor({ timeout: 150_000 });
+  const snapshot = await page.evaluate(() => window.kiln.call('snapshot'));
+  assert.equal(path.resolve(snapshot.root), path.join(root, 'library'), 'the backend opened the isolated library');
+  assert.equal(snapshot.items.length, 0, 'the new library is readable');
   const main = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), platform: process.platform, arch: process.arch }));
   assert.equal(main.packaged, true, 'runs as a packaged app');
   assert.equal(main.version, version, 'reports the package.json version');

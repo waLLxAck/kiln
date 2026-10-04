@@ -134,6 +134,8 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     buttons: ['Cancel', 'Agree and continue'], defaultId: 0, cancelId: 0, checkboxLabel: "Don’t show again", checkboxChecked: false,
   }), { chatSession: method === 'agent.chat' });
   switch (method) {
+    // IPC waits for `opening` before dispatching this, including the private library paths.
+    case 'desktop.ready': return true;
     case 'desktop.resetAgentConsent': agentConsent.reset(); return true;
     case 'desktop.exportSession': {
       const { id } = z.object({ id: idSchema }).parse(args);

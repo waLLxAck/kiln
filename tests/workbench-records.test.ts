@@ -84,9 +84,10 @@ test('opening an item reads only that item\'s files once the record folders are 
     assert.deepEqual(readsDuring(() => wb.detail(items[0].id)).files, [], 'a second look reads nothing');
     // Another process's record still shows up: a new file changes the folder.
     const other = wb.getItem(items[1].id);
-    fs.writeFileSync(path.join(wb.local, 'observations', 'external.json'), JSON.stringify({ schemaVersion: 1, eventId: 'external', itemId: other.id, revision: other.revision, kind: 'opened', source: 'cli', confidence: 'observed', sessionId: '', occurredAt: new Date().toISOString() }));
+    const lastUsed = new Date(Date.now() + 1000).toISOString();
+    fs.writeFileSync(path.join(wb.local, 'observations', 'external.json'), JSON.stringify({ schemaVersion: 1, eventId: 'external', itemId: other.id, revision: other.revision, kind: 'opened', source: 'cli', confidence: 'observed', sessionId: '', occurredAt: lastUsed }));
     assert.equal(wb.detail(other.id).observations.length, 6);
-    assert.deepEqual(wb.snapshot().usage[other.id], { copied: 5, used: 6 });
+    assert.deepEqual(wb.snapshot().usage[other.id], { copied: 5, used: 6, lastUsed });
   } finally { wb.close(); f.done(); }
 });
 

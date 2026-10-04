@@ -1,4 +1,4 @@
-import { useViewMemory, useScrollMemory, useGroupBy, useSavedViews } from './view-memory';
+import { useViewMemory, useScrollMemory, useSavedViews } from './view-memory';
 import { BulkRemovalDialog } from './BulkLibrary';
 import { inStage, matchesQuery, narrowest, parseTyped, railCounts, sameToken, stages, statusLabel, tokenLabel, type QueryToken, type Stage } from './library-filters';
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
@@ -86,9 +86,8 @@ export default function App() {
   const knownJobs = useRef<Map<string,string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [installations, setInstallations] = useState<Installation[]>([]);
-  const { section, collection, stage, selected, open: itemOpen, query, tokens, sort, key: viewKey,
-    setSection, setCollection, setStage, setSelected, setOpen, setQuery, setTokens, setSort } = useViewMemory();
-  const [group, setGroup] = useGroupBy();
+  const { section, collection, stage, selected, open: itemOpen, query, tokens, sort, group, key: viewKey,
+    setSection, setCollection, setStage, setSelected, setOpen, setQuery, setTokens, setSort, setGroup } = useViewMemory();
   const savedViews = useSavedViews();
   // The open item: loading, failed or shown (load-state.ts). `detail` is only ever the selected item's.
   const [detailState, dispatchDetail] = useReducer(openDetail, idleDetail as DetailState<ItemDetail>);
@@ -113,6 +112,7 @@ export default function App() {
   useEffect(() => { setBulkIds(current => current.length ? [] : current); }, [query, tokens, collection, stage, section, snapshot?.root]);
   useEffect(() => { setBulkReview(null); }, [snapshot?.root]);
   const [dialog, setDialog] = useState<Dialog>(null); const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerError, setProviderError] = useState('');
   const [models, setModels] = useState<CodexModel[] | null>(null);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -151,11 +151,23 @@ export default function App() {
   // One library load at a time: asking while one runs gets one more after it (load-state.ts), so actions, focus, sync and
   // finished runs never stack snapshots in the backend's queue. `lastLoad` is when the latest one started.
   const lastLoad = useRef(0);
-  const refresh = useMemo(() => coalesce(async () => { lastLoad.current = Date.now(); setSnapshot(await api<Snapshot>('snapshot', {}, { fresh: true })); }), []);
+  const opened = useRef(false);
+  const [startupSince, setStartupSince] = useState(() => Date.now());
+  const refresh = useMemo(() => coalesce(async () => {
+    lastLoad.current = Date.now();
+    if (!opened.current) {
+      setStartupSince(lastLoad.current);
+      // A cold library can take longer than an ordinary read. Start the snapshot deadline once it is open.
+      await api('desktop.ready', {}, { timeoutMs: 120_000 });
+      opened.current = true;
+    }
+    setSnapshot(await api<Snapshot>('snapshot', {}, { fresh: true }));
+  }), []);
   // Jobs as the screens see them: replaced only when something they show changed, so an idle poll redraws nothing.
   const jobsKey = useRef('');
   const showJobs = useCallback((current: AgentJobSummary[]) => { const key = jobsSignature(current); if (key !== jobsKey.current) { jobsKey.current = key; setJobs(current); } }, []);
   useEffect(() => {
+    if (!snapshot) return;
     let active = true, pending = false, again = false, lastPoll = 0;
     const poll = async () => {
       if (pending) { again = true; return; }
@@ -184,7 +196,14 @@ export default function App() {
   const perform = async (action: () => Promise<unknown>, success = '') => { setError(''); setBusy(true); const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null; button?.setAttribute('aria-busy','true'); try { await action(); if (success) setMessage(success); } catch (e) { const message = e instanceof Error ? e.message : String(e); setError(message); window.dispatchEvent(new CustomEvent('kiln:error', { detail: message })); } finally { setBusy(false); button?.removeAttribute('aria-busy'); } };
   // Keep these changes from the Installs rail, Machines and Compare; its dialog is rendered with the others below.
   const keeper = useKeepChanges({ items: snapshot?.items ?? [], installations, perform, refresh, onMessage: setMessage });
-  useEffect(() => { void perform(refresh); void api<Provider[]>('providers.detect').then(setProviders).catch(e => setError(String(e))); }, []);
+  useEffect(() => { void perform(refresh); }, []);
+  // Detection is optional and starts after the library opens; its failure belongs to the agents card, not the startup screen.
+  useEffect(() => {
+    if (!snapshot?.root) return;
+    let active = true;
+    void api<Provider[]>('providers.detect').then(value => { if (active) { setProviders(value); setProviderError(''); } }).catch(e => { if (active) setProviderError(errorText(e)); });
+    return () => { active = false; };
+  }, [snapshot?.root]);
   useEffect(() => { if (section === 'settings' && models === null) void api<CodexModel[]>('agent.models').then(setModels).catch(() => setModels([])); }, [section, models]);
   // Coming back to the window re-reads the library, unless it was read moments ago (alt-tabbing, quick search).
   useEffect(() => { const onFocus = () => { if (focusReloads(Date.now(), lastLoad.current, document.visibilityState === 'hidden')) void refresh().catch(e => setError(String(e))); }; window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [refresh]);
@@ -422,13 +441,15 @@ export default function App() {
   /** The view before search and tokens: its section, collection or stage. Suggestions count from here. */
   const base = useMemo(() => items.filter(i => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i))
     && inCollection(i, collection) && (section !== 'library' || inStage(i, stage, installations))), [items, section, collection, stage, installations]);
+  const filterPool = useMemo(() => base.filter(bySearch), [base, searchText, searchSet]);
   // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
   // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
   const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
-  const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
+  const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort;
+  const pinSources = Boolean(collection) && (relevance || !['used', 'copied', 'lastUsed'].includes(order.key));
   const found = useMemo(() => base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet, invocation ?? {})), [base, searchText, searchSet, installations, tokens, duplicateSet, invocation]);
   const matching = useMemo(() => relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, usage ?? {}, pinSources), [found, relevance, searchIds, order, usage, pinSources]);
-  const groups = useMemo(() => groupItems(matching, group), [matching, group]);
+  const groups = useMemo(() => groupItems(matching, group, usage), [matching, group, usage]);
   /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
   const shown = useMemo(() => groups.flatMap(g => g.items), [groups]);
   const configured = useMemo(() => targets ? providers.map(p => ({ provider: p, target: personalTarget(targets, providers, p.id) })).filter((l): l is Location => Boolean(l.target)) : [], [providers, targets]);
@@ -437,7 +458,7 @@ export default function App() {
   // Duplicates (Consolidate.tsx): how many copies are in each row's group.
   const groupSize = useMemo(() => new Map((duplicates ?? []).flatMap(g => g.ids.map(id => [id, g.ids.length] as const))), [duplicates]);
   const counts = useMemo(() => railCounts(items, isHidden, (i, s) => inStage(i, s, installations)), [items, installations]);
-  if (!snapshot) return <div className="startup"><span className="brand-symbol"><KilnMark /></span><h1>Kiln</h1><p>{error || 'Opening your workbench…'}</p>{error && <button className="button" onClick={() => void perform(refresh)}>Retry</button>}</div>;
+  if (!snapshot) return <div className="startup"><span className="brand-symbol"><KilnMark /></span><h1>Kiln</h1>{error ? <LoadError error={errorText(error)} onRetry={() => void perform(refresh)} /> : <Waiting since={startupSince} label="Opening workbench">Opening your workbench…</Waiting>}</div>;
   // Kiln only works on a Kiln repository connected to GitHub. Anything else lands here until one is connected.
   if (!snapshot.repository.ready || setupOpen) return <Setup snapshot={snapshot} previous={previousLibrary.current} providers={providers} onSetLocation={updateLocation} onRefresh={refresh} onAttach={async root => { await api('desktop.attach', { root }); setSelected(''); await refresh(); setSetupOpen(true); }} onDone={async (review = false) => { await refresh(); setStage(''); setQuery(''); setTokens([]); setSelected(''); setOpen(false); setSetupOpen(false); if (review) setMessage('Use Select all, then choose a bulk action. You can narrow the list with filters first.'); }} />;
   // Each filter is a predicate, so the query bar can count what a token would show under all the others.
@@ -578,13 +599,14 @@ export default function App() {
   });
   const libraryPage = <section className="library-page">
     <div className="list-heading"><h2>{sectionName} <span>{matching.length}</span></h2><span className="inline">{matching.length > 1 && <button className="button" onClick={selectAll}>Select all</button>}{section === 'trash' && matching.length > 0 && <button className="button danger-text" onClick={() => setDialog({ name: 'empty-trash' })}><Trash2 size={14} />Empty trash</button>}<button className="icon-button" aria-label="Refresh library" onClick={() => void perform(refresh)}><RefreshCw size={17} /></button></span></div>
-    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={base} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} duplicates={duplicateSet} invocation={snapshot.invocation} saved={savedViews}
+    <QueryBar tokens={tokens} onTokens={setTokens} query={query} onQuery={setQuery} pool={filterPool} installations={installations} sources={snapshot.items.filter(i => i.kind === 'source')} duplicates={duplicateSet} invocation={snapshot.invocation} saved={savedViews}
+      onRestore={view => { setTokens(view.tokens); setQuery(view.query); if (view.group !== undefined) setGroup(view.group); if (view.sort !== undefined) { setSort(view.sort === 'relevance' ? null : view.sort); setSearchSort(view.sort === 'relevance' ? 'relevance' : view.sort); } }}
       sort={order} onSort={searchText ? setSearchSort : setSort} relevance={searchText ? { active: relevance, onPick: () => setSearchSort('relevance') } : undefined} searching={searching} close={Boolean(searchText) && closeMatches}
       group={group} onGroup={setGroup} canReorder={!relevance && bulkItems.length < 2 && order.key === 'order' && group === 'none'} reorder={reorderSelected} reorderDisabled={[!moveInOrder(matching, selected, -1, pinSources), !moveInOrder(matching, selected, 1, pinSources)]}
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
-    <LibraryTable groups={groups} group={group} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
+    <LibraryTable groups={groups} group={group} scope={snapshot.root + viewKey} usage={snapshot.usage} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
       locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} scores={snapshot.scores} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}
@@ -630,7 +652,7 @@ export default function App() {
             <div className="wrap-actions"><button className="button" disabled={!snapshot.git.changes.length} onClick={() => void perform(async () => { setGitPreview(await api('git.diff')); setDialog({ name: 'git-diff' }); })}>View draft changes</button><button className="button" onClick={() => requestSync('fetch')}>Fetch from GitHub</button><button className="button" onClick={() => requestSync('pull')}>Pull from GitHub</button><button className="button" onClick={() => requestSync('merge')}>Merge from GitHub</button><button className="button" onClick={() => void perform(async () => { setConflicts(await api('git.conflicts')); setDialog({ name: 'conflicts' }); })}>Resolve conflicts</button><button className="button" onClick={() => void perform(async () => { const root = await api<string | null>('desktop.chooseDirectory'); if (root) setInventory(await api('git.inventory', { root })); })}><FolderOpen size={15} />Inspect a repository</button><button className="button" onClick={() => setSetupOpen(true)}>Connect a different repository…</button></div>
             <details><summary>Draft paths on this machine</summary><pre>{snapshot.git.changes.join('\n') || 'None'}</pre></details></section>
           <section className="settings-card"><h3>Desktop preferences</h3><form onSubmit={event => { event.preventDefault(); const v = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>; void perform(async () => { const settings = await api<Snapshot['settings']>('desktop.settings', { shortcut: v.shortcut, theme: v.theme, launchAtLogin: v.launchAtLogin === 'on', agentProvider: v.agentProvider }); setTheme(v.theme); localStorage.setItem('kiln-theme', v.theme); setSnapshot(current => current ? { ...current, settings } : current); }, 'Preferences saved'); }}><Field label="Default agent for capture, experiments and skill drafts" hint="Every run dialog still lets you pick the other one."><select name="agentProvider" defaultValue={snapshot.settings.agentProvider}>{providers.filter(p => p.id !== 'copilot').map(p => <option key={p.id} value={p.id}>{p.label}{p.available ? '' : ' · not detected'}</option>)}</select></Field><Field label="Global quick-search shortcut"><input name="shortcut" defaultValue={snapshot.settings.shortcut} required /></Field><Field label="Theme"><select name="theme" defaultValue={snapshot.settings.theme}><option value="light">Light</option><option value="dark">Dark</option><option value="system">Follow system</option></select></Field>{platform !== 'linux' && <label className="check-row"><input name="launchAtLogin" type="checkbox" defaultChecked={snapshot.settings.launchAtLogin} /><span>Launch Kiln when I sign in</span></label>}<p className="muted small">{platform === 'darwin' ? 'Closing the window keeps Kiln in the menu bar. Use its menu or Cmd+Q to quit.' : platform === 'linux' ? 'Closing the window keeps Kiln running in the tray. Quit from the tray menu, or from File → Quit (press Alt to show the menu bar). Opening Kiln again brings the window back.' : 'Closing the window keeps Kiln in the tray. Use the tray menu to quit.'}</p><button className="button" type="submit">Save preferences</button></form></section>
-          <section className="settings-card"><h3>Official agents</h3>{providers.map(p => <div className="provider-row" key={p.id}><div className={`provider-mark ${p.id}`}><Terminal size={18} /></div><div><b>{p.label}</b><small>{p.version}</small><code className="path-text">{p.executable ?? 'Not detected on PATH'}</code></div><Badge status={p.available ? 'detected' : 'unavailable'} /></div>)}<p className="muted small">Runs use each client’s own sign-in. Kiln never asks for an API key.</p><button className="button" onClick={() => void perform(async () => setProviders(await api('providers.detect')))}>Detect again</button>
+          <section className="settings-card"><h3>Official agents</h3>{providerError && <p className="load-error" role="alert">{providerError}</p>}{providers.map(p => <div className="provider-row" key={p.id}><div className={`provider-mark ${p.id}`}><Terminal size={18} /></div><div><b>{p.label}</b><small>{p.version}</small><code className="path-text">{p.executable ?? 'Not detected on PATH'}</code></div><Badge status={p.available ? 'detected' : 'unavailable'} /></div>)}<p className="muted small">Runs use each client’s own sign-in. Kiln never asks for an API key.</p><button className="button" onClick={() => { setProviderError(''); void api<Provider[]>('providers.detect', {}, { fresh: true }).then(setProviders).catch(e => setProviderError(errorText(e))); }}>Detect again</button>
             {(() => { const chosen = models?.find(m => m.slug === snapshot.settings.codexModel) ?? models?.[0]; const commitChosen = models?.find(m => m.slug === snapshot.settings.commitModel); const save = (patch: Partial<Pick<typeof snapshot.settings, 'codexModel' | 'codexEffort' | 'commitModel' | 'commitEffort'>>) => void perform(async () => { await api('desktop.agentSettings', { codexModel: snapshot.settings.codexModel, codexEffort: snapshot.settings.codexEffort, commitModel: snapshot.settings.commitModel, commitEffort: snapshot.settings.commitEffort, ...patch }); await refresh(); }); return <form className="form-grid agent-model-form" onSubmit={e => e.preventDefault()}>
               <Field label="Codex model" hint={models === null ? 'Reading the catalog from the installed CLI…' : models.length ? chosen?.description : 'Catalog unavailable. Runs use the CLI default and record what was used.'}><select aria-label="Codex model" value={snapshot.settings.codexModel} disabled={!models?.length} onChange={e => save({ codexModel: e.target.value, codexEffort: '' })}><option value="">Catalog default{models?.[0] ? ` (${models[0].name})` : ''}</option>{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
               <Field label="Reasoning effort" hint="Shown on every run alongside the model, thread id and token counts."><select aria-label="Reasoning effort" value={snapshot.settings.codexEffort} disabled={!chosen} onChange={e => save({ codexEffort: e.target.value })}><option value="">Model default{chosen?.defaultEffort ? ` (${chosen.defaultEffort})` : ''}</option>{chosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>

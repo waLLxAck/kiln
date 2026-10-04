@@ -42,3 +42,20 @@ test('groups keep the list order inside them, with unfiled items last', () => {
   assert.deepEqual(groupItems(filed, 'none').map(g => ids(g.items)), [['a', 'b', 'c', 'd']]);
   assert.deepEqual(groupItems([item('x', 'prompt', 1, { status: 'captured' }), item('y', 'prompt', 2, { status: 'approved' })], 'status').map(g => g.label), ['Approved', 'Drafts']);
 });
+
+test('last used follows observation times, with unknown and invalid times last in both directions', () => {
+  const usage = { skill: { copied: 0, used: 2, lastUsed: at(7) }, 'old-source': { copied: 0, used: 2, lastUsed: at(8) }, prompt: { copied: 0, used: 1, lastUsed: 'invalid' } };
+  assert.deepEqual(ids(sortItems(items, { key: 'lastUsed', dir: 'desc' }, usage)), ['old-source', 'skill', 'prompt', 'new-source']);
+  assert.deepEqual(ids(sortItems(items, { key: 'lastUsed', dir: 'asc' }, usage)), ['skill', 'old-source', 'prompt', 'new-source']);
+  assert.deepEqual(ids(sortItems(items, { key: 'used', dir: 'desc' }, usage)), ['old-source', 'skill', 'prompt', 'new-source'], 'equal counts prefer the most recent use');
+  assert.equal(nextSort(null, 'lastUsed')?.dir, 'desc');
+});
+
+test('last-used groups use local calendar boundaries, keep row order, and separate never-used items', () => {
+  const now = new Date(2026, 9, 4, 14), when = (days: number) => { const date = new Date(now); date.setDate(date.getDate() - days); return date.toISOString(); };
+  const list = Array.from({ length: 7 }, (_, i) => item(String(i), 'prompt', i + 1));
+  const usage = Object.fromEntries([0, 1, 6, 29, 30, 0].map((days, i) => [String(i), { copied: 0, used: 1, lastUsed: when(days) }]));
+  assert.deepEqual(groupItems(list, 'lastUsed', usage, now).map(g => [g.label, ids(g.items)]), [
+    ['Today', ['0', '5']], ['Yesterday', ['1']], ['Last 7 days', ['2']], ['Last 30 days', ['3']], ['Earlier', ['4']], ['Never used', ['6']],
+  ]);
+});

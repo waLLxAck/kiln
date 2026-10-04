@@ -20,8 +20,8 @@ test('copy observations do not invalidate the content index',()=>{
 });
 test('usage counts ride on the snapshot without re-reading observations each time',()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'kiln-usage-'));const wb=new Workbench(path.join(root,'library'),path.join(root,'private'));
-  try {const item=wb.create({title:'Example',kind:'prompt',content:'Text',files:{}});const observe=(eventId:string,kind:string)=>wb.observe({schemaVersion:1,eventId,itemId:item.id,revision:item.revision,kind,source:'kiln',confidence:'observed',occurredAt:new Date().toISOString()});
-    observe('copy-1','copied');observe('open-1','opened');assert.deepEqual(wb.snapshot().usage[item.id],{copied:1,used:2});
+  try {const item=wb.create({title:'Example',kind:'prompt',content:'Text',files:{}});const at='2026-10-04T10:00:00.000Z';const observe=(eventId:string,kind:string)=>wb.observe({schemaVersion:1,eventId,itemId:item.id,revision:item.revision,kind,source:'kiln',confidence:'observed',occurredAt:at});
+    observe('copy-1','copied');observe('open-1','opened');assert.deepEqual(wb.snapshot().usage[item.id],{copied:1,used:2,lastUsed:at});
     let reads=0;const original=wb.observations.bind(wb);wb.observations=()=>{reads++;return original();};wb.snapshot();wb.snapshot();assert.equal(reads,0);
-    observe('copy-2','copied');assert.deepEqual(wb.snapshot().usage[item.id],{copied:2,used:3});assert.equal(reads,1);}finally{wb.close();}
+    observe('copy-2','copied');assert.deepEqual(wb.snapshot().usage[item.id],{copied:2,used:3,lastUsed:at});assert.equal(reads,1);}finally{wb.close();}
 });

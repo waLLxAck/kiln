@@ -84,9 +84,10 @@ export function MenuPill({ icon, name, value, entries, title }: { icon: ReactNod
     {open && <ContextMenu x={open.x} y={open.y} entries={entries} onClose={() => setOpen(null)} />}
   </span>;
 }
-const groupLabel: Record<GroupKey, string> = { none: 'None', collection: 'Collection', kind: 'Kind', status: 'Status' };
+const groupLabel: Record<GroupKey, string> = { none: 'No grouping', collection: 'Collection', kind: 'Type', status: 'Status', lastUsed: 'Last used' };
+const groupHint: Record<GroupKey, string> = { none: 'One list in your chosen sort order', collection: 'Keep related material together', kind: 'Sources, prompts, skills and other types', status: 'Approved, testing and drafts', lastUsed: 'Today, yesterday, earlier and never used' };
 export function GroupMenu({ group, onGroup }: { group: GroupKey; onGroup: (group: GroupKey) => void }) {
-  return <MenuPill icon={<Rows3 size={13} />} name="Group" value={groupLabel[group]} title="Group the list under headings" entries={(Object.keys(groupLabel) as GroupKey[]).map(g => ({ label: groupLabel[g], checked: g === group, onSelect: () => onGroup(g) }))} />;
+  return <MenuPill icon={<Rows3 size={13} />} name="Group by" value={groupLabel[group]} title="Group the list under headings; sorting applies within each group" entries={(Object.keys(groupLabel) as GroupKey[]).map(g => ({ label: groupLabel[g], hint: groupHint[g], checked: g === group, onSelect: () => onGroup(g) }))} />;
 }
 
 /**

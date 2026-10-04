@@ -72,7 +72,7 @@ Every build shows the same renderer; `KILN_PUBLIC_BUILD=1` only affects the upda
 
 ## Releases
 
-Pushing a version tag such as `v0.20.0` runs `.github/workflows/release.yml`. It builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes every installer together with the `latest*.yml` update feeds, one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). Running the workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
+Pushing a version tag such as `v0.20.0` runs `.github/workflows/release.yml`. It builds Windows, Linux and macOS on their own runners, starts each packaged app once, and publishes every installer together with the `latest*.yml` update feeds, one `SHA256SUMS.txt` and the notes from [`docs/releases/`](releases/). The packaged smoke check waits for the setup screen and reads the isolated library through the backend; showing the startup splash alone does not pass. Running the workflow by hand is a dry run: it builds everything and uploads the files as workflow artifacts without publishing.
 
 To publish without Actions, build each platform on its own machine and upload with `gh`:
 

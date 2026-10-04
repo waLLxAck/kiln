@@ -12,7 +12,9 @@ export type CallOptions = { fresh?: boolean; timeoutMs?: number };
 function deadline<T>(call: Promise<T>, method: string, ms: number): Promise<T> {
   if (!ms) return call;
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`TIMEOUT: Kiln did not answer ${method} within ${Math.round(ms / 1000)} s.`)), ms);
+    const timer = setTimeout(() => reject(new Error(method === 'desktop.ready'
+      ? `TIMEOUT: Kiln could not finish opening the library within ${Math.round(ms / 1000)} s. Try again, or restart Kiln.`
+      : `TIMEOUT: Kiln did not answer ${method} within ${Math.round(ms / 1000)} s.`)), ms);
     call.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
   });
 }

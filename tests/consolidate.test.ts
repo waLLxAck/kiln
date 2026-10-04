@@ -104,6 +104,7 @@ test('consolidating keeps one copy, takes the chosen text, unions tags and moves
     assert.ok(merged.deletedAt); assert.equal(merged.mergedInto, kept.id);
     const snapshot = f.wb.snapshot();
     assert.equal(snapshot.usage[kept.id]?.copied, 1, 'use of the merged copy counts for the kept one');
+    assert.equal(snapshot.usage[kept.id]?.lastUsed, snapshot.usage[newer.id]?.lastUsed, 'the merged copy carries its latest use into the kept item');
     assert.deepEqual(snapshot.installs[kept.id], ['claude', 'codex'], 'desired installs move to the kept item');
     assert.equal(snapshot.installs[newer.id], undefined);
     assert.equal(snapshot.duplicates.length, 0, 'the group is gone');

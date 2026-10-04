@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ArrowDown, ArrowDownUp, ArrowUp, Bookmark, Check, CornerDownLeft, Loader2, Plus, Search, Star, X } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, Bookmark, Check, Clock3, CornerDownLeft, ListFilter, Loader2, Plus, Search, Star, TrendingUp, X } from 'lucide-react';
 import type { Installation, Item, Snapshot } from '../../../packages/protocol/schema';
 import { KindIcon, type MenuEntry } from './components';
 import { candidateTokens, facets, matchesQuery, parseTyped, sameToken, stateHint, isHint, tokenLabel, type Facet, type InstallState, type QueryToken } from './library-filters';
 import { GroupMenu, MenuPill } from './Library';
-import { sortChoices, sortLabel, type GroupKey, type Sort } from './library-sort';
+import { defaultSort, sortChoices, sortLabel, type GroupKey, type Sort } from './library-sort';
 import type { SavedView } from './view-memory';
 import './query.css';
 
@@ -13,7 +13,8 @@ type Props = {
   tokens: QueryToken[]; onTokens: (tokens: QueryToken[]) => void; query: string; onQuery: (query: string) => void;
   /** Items the view shows before any token applies: its section, collection or stage, and the search text. Counts come from these. */
   pool: Item[]; installations: Installation[]; sources: Item[]; /** Ids of items in a duplicate group, for `is:duplicate`. */ duplicates?: ReadonlySet<string>; /** Model-invocation switches per skill, for `is:model-invoked` and `is:user-only`. */ invocation?: Snapshot['invocation'];
-  saved: { views: SavedView[]; save: (name: string, tokens: QueryToken[], query: string) => void; remove: (id: string) => void };
+  saved: { views: SavedView[]; save: (name: string, tokens: QueryToken[], query: string, sort: Sort | 'relevance', group: GroupKey) => void; remove: (id: string) => void };
+  onRestore: (view: SavedView) => void;
   sort: NonNullable<Sort>; onSort: (sort: Sort) => void; group: GroupKey; onGroup: (group: GroupKey) => void;
   canReorder: boolean; reorder: (direction: number) => void; reorderDisabled: [boolean, boolean];
   /** While free text is searched: whether the list is in relevance order, and how to go back to it after picking another sort. */
@@ -41,12 +42,13 @@ const sameSet = (a: QueryToken[], b: QueryToken[]) => a.length === b.length && a
  * One field for finding things: filter tokens as chips (picked from suggestions grouped by facet, each with the count it would
  * show) and free text that searches titles, descriptions, content and tags, best match first. Saved views, Group and Sort sit on the row under it.
  */
-export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations, sources, duplicates, invocation, saved, sort, onSort, group, onGroup, canReorder, reorder, reorderDisabled, relevance, searching, close, onLeave }: Props) {
+export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations, sources, duplicates, invocation, saved, onRestore, sort, onSort, group, onGroup, canReorder, reorder, reorderDisabled, relevance, searching, close, onLeave }: Props) {
   const [open, setOpen] = useState(false), [active, setActive] = useState(-1), [naming, setNaming] = useState<string | null>(null);
+  const [browseFilters, setBrowseFilters] = useState(false), [filterFacet, setFilterFacet] = useState<Facet | null>(null);
   const input = useRef<HTMLInputElement>(null), box = useRef<HTMLDivElement>(null);
   useEffect(() => { const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); }; window.addEventListener('mousedown', away); return () => window.removeEventListener('mousedown', away); }, []);
   const title = (id: string) => sources.find(s => s.id === id)?.title;
-  const typed = parseTyped(query);
+  const typed = browseFilters ? { facet: filterFacet, rest: '' } : parseTyped(query);
   // Counted only while the suggestions are open: each is what adding that token would show.
   const suggestions = useMemo(() => {
     if (!open) return [];
@@ -58,26 +60,36 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
       const matching = candidateTokens(base, installations, sources, duplicates, invocation).filter(t => t.facet === facet.key && !tokens.some(u => sameToken(t, u)))
         .filter(t => { const q = typed.rest; if (!q) return true; const label = tokenLabel(t, title).toLowerCase(); return label.includes(q) || t.value.toLowerCase().includes(q) || (!typed.facet && facet.key.startsWith(q)); })
         .map(token => ({ token, count: pool.filter(i => matchesQuery(i, installations, [...tokens, token], duplicates, invocation)).length })).filter(s => s.count > 0);
-      const limit = typed.facet ? 12 : typed.rest ? 4 : 3;
+      const limit = typed.facet && browseFilters ? Infinity : typed.facet ? 12 : typed.rest ? 4 : 3;
       if (matching.length) rows.push({ facet: facet.key, rows: facet.key === 'kind' || facet.key === 'tag' ? matching.sort((a, b) => b.count - a.count).slice(0, limit) : matching.slice(0, limit) });
     }
     return rows;
-  }, [open, pool, installations, sources, duplicates, invocation, tokens, query]);
+  }, [open, pool, installations, sources, duplicates, invocation, tokens, query, browseFilters, filterFacet]);
   const flat = suggestions.flatMap(g => g.rows);
   useEffect(() => setActive(-1), [query, tokens]);
   /** Adds a token; whatever was typed to find it is cleared by the caller, so it does not also search. */
   const add = (token: QueryToken) => { onTokens([...tokens, token]); input.current?.focus(); };
+  const pick = (token: QueryToken) => { add(token); if (!browseFilters) onQuery(''); else setOpen(false); };
   const remove = (token: QueryToken) => onTokens(tokens.filter(t => !sameToken(t, token)));
   const keyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') { event.preventDefault(); if (open && flat.length && (active >= 0 || query.trim())) setActive(i => Math.min(flat.length - 1, i + 1)); else { setOpen(false); onLeave(); } }
     else if (event.key === 'ArrowUp') { if (open) { event.preventDefault(); setActive(i => Math.max(-1, i - 1)); } }
-    else if (event.key === 'Enter') { event.preventDefault(); const pick = flat[active] ?? (typed.facet ? flat[0] : undefined); if (open && pick) { add(pick.token); onQuery(''); } else setOpen(false); }
-    else if (event.key === 'Tab' && open && query.trim() && flat.length) { event.preventDefault(); add((flat[active] ?? flat[0]).token); onQuery(''); }
+    else if (event.key === 'Enter') { event.preventDefault(); const choice = flat[active] ?? (typed.facet ? flat[0] : undefined); if (open && choice) pick(choice.token); else setOpen(false); }
+    else if (event.key === 'Tab' && open && query.trim() && flat.length) { event.preventDefault(); pick((flat[active] ?? flat[0]).token); }
     else if (event.key === 'Backspace' && !query && tokens.length) onTokens(tokens.slice(0, -1));
     else if (event.key === 'Escape') { event.preventDefault(); if (open) setOpen(false); else if (query) onQuery(''); else input.current?.blur(); }
   };
   const viewIs = (view: { tokens: QueryToken[]; query: string }) => sameSet(view.tokens, tokens) && view.query === query.trim();
-  const current = viewIs({ tokens: [], query: '' }) ? 'all' : viewIs({ tokens: [favourite], query: '' }) ? 'favourites' : saved.views.find(viewIs)?.id;
+  const activeSort = relevance?.active ? 'relevance' : sort;
+  const savedIs = (view: SavedView) => viewIs(view) && (view.group === undefined || view.group === group) && (view.sort === undefined || JSON.stringify(view.sort ?? defaultSort) === JSON.stringify(activeSort));
+  const current = saved.views.find(savedIs)?.id ?? (viewIs({ tokens: [], query: '' }) ? 'all' : viewIs({ tokens: [favourite], query: '' }) ? 'favourites' : undefined);
+  const customView = !['all', 'favourites'].includes(current ?? '') || group !== 'none' || relevance?.active || sort.key !== defaultSort.key || sort.dir !== defaultSort.dir;
+  const quickSorts = [
+    { label: 'Recently added', sort: defaultSort, icon: <Plus size={12} /> },
+    { label: 'Last used', sort: { key: 'lastUsed', dir: 'desc' } as const, icon: <Clock3 size={12} /> },
+    { label: 'Most used', sort: { key: 'used', dir: 'desc' } as const, icon: <TrendingUp size={12} /> },
+    { label: 'Title A–Z', sort: { key: 'title', dir: 'asc' } as const },
+  ];
   const icon = (token: QueryToken) => token.facet === 'kind' ? <KindIcon kind={token.value as Item['kind']} size={13} /> : <span className={`q-dot f-${token.facet}`} />;
 
   return <div className="query">
@@ -88,17 +100,18 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
           <span className="q-facet">{token.facet}:</span><span className="q-value">{tokenLabel(token, title)}</span>
           <button type="button" onClick={() => remove(token)} aria-label={`Remove ${token.facet}: ${tokenLabel(token, title)}`}><X size={12} /></button>
         </span>)}
-        <input ref={input} aria-label="Search library" value={query} title="Ctrl+F" onChange={event => { onQuery(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onKeyDown={keyDown}
-          placeholder={tokens.length ? 'Add a filter or search…' : 'Search, or filter with kind: status: in: tag: from:…'} role="combobox" aria-expanded={open && flat.length > 0} aria-controls="query-suggestions" aria-autocomplete="list" />
-        {(tokens.length > 0 || query) && <button type="button" className="query-clear" onClick={() => { onTokens([]); onQuery(''); input.current?.focus(); }}>Clear</button>}
+        <input ref={input} aria-label="Search library" value={query} title="Ctrl+F · You can also type kind: status: tag:…" onChange={event => { setBrowseFilters(false); setFilterFacet(null); onQuery(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onKeyDown={keyDown}
+          placeholder={tokens.length ? 'Search within these filters…' : 'Search titles, content and tags…'} role="combobox" aria-expanded={open && flat.length > 0} aria-controls="query-suggestions" aria-autocomplete="list" />
+        {(tokens.length > 0 || query) && <button type="button" className="query-clear" onClick={() => { onTokens([]); onQuery(''); setBrowseFilters(false); setFilterFacet(null); input.current?.focus(); }}>Clear</button>}
         <kbd>Ctrl F</kbd>
+        <button type="button" className="query-filter-button" aria-expanded={open && browseFilters} aria-controls="query-suggestions" onClick={() => { input.current?.focus(); setBrowseFilters(true); setFilterFacet(null); setOpen(!(open && browseFilters)); }}><ListFilter size={14} />Filters{tokens.length > 0 && <span className="query-count">{tokens.length}</span>}</button>
       </div>
       {open && <div className="query-drop" id="query-suggestions" role="listbox" aria-label="Filter suggestions">
-        {!typed.facet && !typed.rest && <div className="query-facets">{facets.map(f => <button key={f.key} type="button" className="query-facet" title={f.hint} onMouseDown={event => { event.preventDefault(); onQuery(`${f.key}:`); input.current?.focus(); }}>{f.key}:</button>)}</div>}
-        {typed.facet && <div className="query-label">{typed.facet}: <span className="faint">{facets.find(f => f.key === typed.facet)?.hint}</span></div>}
+        {(!typed.rest || browseFilters) && <div className="query-facets">{facets.map(f => <button key={f.key} type="button" className={`query-facet ${typed.facet === f.key ? 'on' : ''}`} title={f.hint} aria-pressed={typed.facet === f.key} onClick={() => { setBrowseFilters(true); setFilterFacet(current => current === f.key ? null : f.key); setActive(-1); input.current?.focus(); }}>{f.label}</button>)}</div>}
+        {typed.facet && <div className="query-label">{facets.find(f => f.key === typed.facet)?.label} <span className="faint">{facets.find(f => f.key === typed.facet)?.hint}</span></div>}
         {suggestions.map(group => <div key={group.facet} className="query-group">
           {!typed.facet && <div className="query-label">{facets.find(f => f.key === group.facet)?.label}</div>}
-          {group.rows.map(row => { const index = flat.indexOf(row); return <button key={row.token.value} type="button" role="option" aria-selected={index === active} className={`query-option ${index === active ? 'active' : ''}`} onMouseEnter={() => setActive(index)} onMouseDown={event => { event.preventDefault(); add(row.token); onQuery(''); }}>
+          {group.rows.map(row => { const index = flat.indexOf(row); return <button key={row.token.value} type="button" role="option" aria-selected={index === active} className={`query-option ${index === active ? 'active' : ''}`} onMouseEnter={() => setActive(index)} onClick={() => pick(row.token)}>
             <span className="query-option-icon">{icon(row.token)}</span><span className="query-option-text"><span className="q-facet">{row.token.facet}:</span> {tokenLabel(row.token, title)}</span><span className="query-count">{row.count}</span>{index === active && <CornerDownLeft size={12} className="faint" />}
           </button>; })}
         </div>)}
@@ -107,23 +120,30 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
       </div>}
     </div>
     {close && <p className="query-note" role="status">No exact matches — showing close matches</p>}
-    <div className="query-views">
-      <div className="query-pills" role="group" aria-label="Saved views">
-        <button type="button" className={`q-view ${current === 'all' ? 'on' : ''}`} aria-pressed={current === 'all'} onClick={() => { onTokens([]); onQuery(''); }}>All</button>
-        <button type="button" className={`q-view ${current === 'favourites' ? 'on' : ''}`} aria-pressed={current === 'favourites'} onClick={() => { onTokens([favourite]); onQuery(''); }}><Star size={12} />Favourites</button>
-        {saved.views.map(view => <span key={view.id} className={`q-view saved ${current === view.id ? 'on' : ''}`}>
-          <button type="button" aria-pressed={current === view.id} onClick={() => { onTokens(view.tokens); onQuery(view.query); }} title={[...view.tokens.map(t => `${t.facet}:${tokenLabel(t, title)}`), view.query && `“${view.query}”`].filter(Boolean).join(' ')}>{view.name}</button>
-          <button type="button" className="q-view-remove" aria-label={`Delete saved view ${view.name}`} title="Delete this saved view" onClick={() => saved.remove(view.id)}><X size={11} /></button>
-        </span>)}
-        {naming !== null
-          ? <form className="q-name" onSubmit={event => { event.preventDefault(); saved.save(naming, tokens, query); setNaming(null); }}><Bookmark size={12} /><input autoFocus aria-label="Name this view" value={naming} maxLength={60} onChange={event => setNaming(event.target.value)} placeholder="Name this view" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setNaming(null); } }} onBlur={() => { if (!naming.trim()) setNaming(null); }} /><button type="submit" aria-label="Save view"><Check size={12} /></button></form>
-          : !current && <button type="button" className="q-view save" onClick={() => setNaming('')}><Plus size={12} />Save this view</button>}
+    <div className="query-order">
+      <div className="query-quick-sort" role="group" aria-label="Quick sort">
+        <span className="query-sort-label">Quick sort</span>
+        {relevance && <button type="button" className={`q-sort ${relevance.active ? 'on' : ''}`} aria-pressed={relevance.active} onClick={() => { setOpen(false); relevance.onPick(); }}>Relevance</button>}
+        {quickSorts.map(choice => { const active = !relevance?.active && sort.key === choice.sort.key && sort.dir === choice.sort.dir; return <button key={choice.sort.key} type="button" className={`q-sort ${active ? 'on' : ''}`} aria-pressed={active} title={sortChoices.find(c => c.label === choice.label)?.hint} onClick={() => { setOpen(false); onSort(choice.sort); }}>{choice.icon}{choice.label}</button>; })}
       </div>
       <span className="query-tools">
         <GroupMenu group={group} onGroup={onGroup} />
         <SortPill sort={sort} onSort={onSort} relevance={relevance} />
         {canReorder && <span className="inline"><button type="button" className="icon-button" aria-label="Move selected item up" disabled={reorderDisabled[0]} onClick={() => reorder(-1)}><ArrowUp size={13} /></button><button type="button" className="icon-button" aria-label="Move selected item down" disabled={reorderDisabled[1]} onClick={() => reorder(1)}><ArrowDown size={13} /></button></span>}
       </span>
+    </div>
+    <div className="query-views">
+      <div className="query-pills" role="group" aria-label="Saved views">
+        <button type="button" className={`q-view ${current === 'all' ? 'on' : ''}`} aria-pressed={current === 'all'} onClick={() => { onTokens([]); onQuery(''); }}>All</button>
+        <button type="button" className={`q-view ${current === 'favourites' ? 'on' : ''}`} aria-pressed={current === 'favourites'} onClick={() => { onTokens([favourite]); onQuery(''); }}><Star size={12} />Favourites</button>
+        {saved.views.map(view => <span key={view.id} className={`q-view saved ${current === view.id ? 'on' : ''}`}>
+          <button type="button" aria-pressed={current === view.id} onClick={() => onRestore(view)} title={[...view.tokens.map(t => `${t.facet}:${tokenLabel(t, title)}`), view.query && `“${view.query}”`, view.sort && (view.sort === 'relevance' ? 'Relevance' : sortLabel(view.sort)), view.group && view.group !== 'none' && `Grouped by ${view.group === 'kind' ? 'type' : view.group === 'lastUsed' ? 'last used' : view.group}`].filter(Boolean).join(' ')}>{view.name}</button>
+          <button type="button" className="q-view-remove" aria-label={`Delete saved view ${view.name}`} title="Delete this saved view" onClick={() => saved.remove(view.id)}><X size={11} /></button>
+        </span>)}
+        {naming !== null
+          ? <form className="q-name" onSubmit={event => { event.preventDefault(); saved.save(naming, tokens, query, activeSort, group); setNaming(null); }}><Bookmark size={12} /><input autoFocus aria-label="Name this view" value={naming} maxLength={60} onChange={event => setNaming(event.target.value)} placeholder="Name this view" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setNaming(null); } }} onBlur={() => { if (!naming.trim()) setNaming(null); }} /><button type="submit" aria-label="Save view"><Check size={12} /></button></form>
+          : customView && !saved.views.some(savedIs) && <button type="button" className="q-view save" disabled={saved.views.length >= 40} title={saved.views.length >= 40 ? 'Delete a saved view to add another' : 'Remember these filters, sort and grouping'} onClick={() => setNaming('')}><Plus size={12} />Save this view</button>}
+      </div>
     </div>
   </div>;
 }

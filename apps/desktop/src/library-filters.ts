@@ -13,11 +13,11 @@ export const sameToken = (a: QueryToken, b: QueryToken) => a.facet === b.facet &
 
 /** Facets in the order the autocomplete lists them, each with what its values mean. */
 export const facets: { key: Facet; label: string; hint: string }[] = [
-  { key: 'kind', label: 'Kind', hint: 'skill, prompt, source…' },
+  { key: 'kind', label: 'Type', hint: 'skill, prompt, source…' },
   { key: 'status', label: 'Status', hint: 'draft, testing, approved' },
   { key: 'state', label: 'Installed', hint: 'installed, not installed, changed outside Kiln' },
   { key: 'in', label: 'Installed in', hint: 'a skill folder, personal or in a project' },
-  { key: 'is', label: 'Is', hint: 'favourite, duplicate, model-invoked, you only' },
+  { key: 'is', label: 'Properties', hint: 'favourite, duplicate, model-invoked, you only' },
   { key: 'tag', label: 'Tag', hint: 'a tag' },
   { key: 'from', label: 'From source', hint: 'what one source produced, wherever it is filed' },
   { key: 'collection', label: 'Collection', hint: 'a collection and its subfolders' },
