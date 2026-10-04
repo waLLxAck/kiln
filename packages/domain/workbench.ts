@@ -399,7 +399,14 @@ export class Workbench {
   /** Every snapshot carries these counts; they are counted again only when the observations folder's records change. */
   usage(): Usage {
     const folder = this.observationRecords;
-    if (this.usageCache?.version !== folder.check()) this.usageCache = { value: this.observations().reduce<Usage>((acc, o) => { if (o.itemId) { const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++; } return acc; }, {}), version: folder.version };
+    if (this.usageCache?.version !== folder.check()) this.usageCache = { value: this.observations().reduce<Usage>((acc, o) => {
+      if (o.itemId) {
+        const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++;
+        const at = Date.parse(o.occurredAt);
+        if (Number.isFinite(at) && (!n.lastUsed || at > Date.parse(n.lastUsed))) n.lastUsed = new Date(at).toISOString();
+      }
+      return acc;
+    }, {}), version: folder.version };
     return this.usageCache.value;
   }
   /** Usage with each merged copy's counts added to the item it was merged into (they stay on the copy too, for the trash). */
@@ -407,7 +414,11 @@ export class Workbench {
     const usage = this.usage(), merged = this.indexedAllItems.filter(i => i.deletedAt && i.mergedInto && usage[i.id]);
     if (!merged.length) return usage;
     const folded: Usage = Object.fromEntries(Object.entries(usage).map(([id, n]) => [id, { ...n }]));
-    for (const item of merged) { const target = this.mergedTarget(item.id); if (!target) continue; const n = folded[target] ??= { copied: 0, used: 0 }; n.copied += usage[item.id].copied; n.used += usage[item.id].used; }
+    for (const item of merged) {
+      const target = this.mergedTarget(item.id); if (!target) continue;
+      const n = folded[target] ??= { copied: 0, used: 0 }, source = usage[item.id]; n.copied += source.copied; n.used += source.used;
+      if (source.lastUsed && (!n.lastUsed || source.lastUsed > n.lastUsed)) n.lastUsed = source.lastUsed;
+    }
     return folded;
   }
   activity() { return this.activityRecords.all(this.warnings).sort((a, b) => b.at.localeCompare(a.at)); }

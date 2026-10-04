@@ -96,7 +96,8 @@ test('library columns resize from their edges without sorting or moving, and the
   const app = await electron.launch({ args: ['.'], env: desktopEnv(root) });
   try {
     const page = await app.firstWindow();
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1500, 900));
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1500, 900); w.show(); w.focus(); });
     await page.evaluate(async () => {
       for (const title of ['Beta', 'Alpha']) await window.kiln.call('items.create', { kind: 'prompt', title, content: 'Widths fixture', collection: 'A collection with a long enough name/and a nested folder' });
     });

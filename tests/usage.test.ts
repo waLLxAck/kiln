@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { Workbench } from '../packages/domain/workbench';
 import { Router } from '../packages/domain/router';
 import { HomeFiles } from '../packages/home/service';
@@ -23,6 +24,8 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-usage-'));
   const home = path.join(root, 'home'), claudeConfig = path.join(root, 'claude-config'), proj = path.join(root, 'code', 'shop'), proj2 = path.join(root, 'code', 'game');
   for (const folder of [home, proj, proj2]) fs.mkdirSync(folder, { recursive: true });
+  // Keep project attribution isolated even when TMPDIR lives inside another Git checkout.
+  for (const folder of [proj, proj2]) execFileSync('git', ['init', '--quiet', folder]);
   const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
   // Claude's logs follow CLAUDE_CONFIG_DIR; Codex's stay in the home folder's .codex.
   const router = new Router(wb, { composer: null, home: new HomeFiles({ home, privateRoot: path.join(root, 'private-home'), env: { CLAUDE_CONFIG_DIR: claudeConfig } }) });

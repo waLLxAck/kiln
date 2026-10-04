@@ -64,7 +64,7 @@ export class Publisher {
   readonly committed = new CommittedFiles();
   /** Organising changes not yet looked at, collected while the committed files are being read. */
   private hint = { ids: new Set<string>(), all: false, collections: false, distinct: false };
-  private loading = false;
+  private loading?: Promise<void>;
   /**
    * `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there.
    * `fetcher` fetches again when GitHub refuses a push because another machine pushed first.
@@ -78,8 +78,8 @@ export class Publisher {
   }
   list() { return [...this.jobs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 100); }
   get busy() { return this.active > 0; }
-  /** Resolves once every queued job has finished, successfully or not. */
-  idle() { return this.chain; }
+  /** Resolves once metadata loading and every queued job have finished, successfully or not. */
+  async idle() { await this.loading; await this.chain; }
   enqueue(action: PublishAction, itemId: string, revision: string) {
     const item = this.wb.getItem(itemId);
     const job: PublishJob = { id: randomUUID(), itemId, revision, title: item.title, action, status: 'queued', message: '', composer: '', commit: '', startedAt: now() };
@@ -124,13 +124,12 @@ export class Publisher {
   /** Reads the last commit again, then decides on everything hinted meanwhile. */
   private reload() {
     if (this.loading) return;
-    this.loading = true;
-    this.committed.load(this.wb).then(() => {
-      this.loading = false;
+    this.loading = this.committed.load(this.wb).then(() => {
+      this.loading = undefined;
       try { if (this.wb.repositoryState().ready) this.decide(); }
       catch (error) { this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) }); }
     }, error => {
-      this.loading = false;
+      this.loading = undefined;
       // Unreadable for now: let the job work it out from Git itself, as long as something was organised.
       const asked = this.hint.all || this.hint.collections || this.hint.distinct || this.hint.ids.size > 0 || this.pendingInstalls().length > 0;
       this.clearHint();

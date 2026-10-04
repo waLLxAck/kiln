@@ -147,7 +147,7 @@ export type Snapshot = { schemaVersion: 1; root: string; items: Item[]; trials: 
    * installs.json, the skill and agent folders, Kiln's copies, items and approvals); the desktop asks again only when it changes.
    */
   stamps?: { installations: string } };
-export type Usage = Record<string, { copied: number; used: number }>;
+export type Usage = Record<string, { copied: number; used: number; /** Most recent valid observation time, absent for older snapshots. */ lastUsed?: string }>;
 /**
  * Whether a skill's own files let the model invoke it on its own (packages/domain/invocation.ts). `claude`: no
  * `disable-model-invocation: true` in SKILL.md (Claude Code, and clients reading the same key). `codex`: no

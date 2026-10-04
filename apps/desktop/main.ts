@@ -134,6 +134,8 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
     buttons: ['Cancel', 'Agree and continue'], defaultId: 0, cancelId: 0, checkboxLabel: "Don’t show again", checkboxChecked: false,
   }), { chatSession: method === 'agent.chat' });
   switch (method) {
+    // IPC waits for `opening` before dispatching this, including the private library paths.
+    case 'desktop.ready': return true;
     case 'desktop.resetAgentConsent': agentConsent.reset(); return true;
     case 'desktop.exportSession': {
       const { id } = z.object({ id: idSchema }).parse(args);
@@ -334,7 +336,15 @@ if (singleInstance) void app.whenReady().then(async () => {
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
   // The window opens while the worker opens the library. Its calls wait for this, apart from `backend.status`, which says what Kiln is doing.
-  const opening = backend.opened.then(() => backend.call<{ local: string; canonical: string }>('paths')).then(paths => { ({ local, canonical } = paths); });
+  const openBackend = () => {
+    const opened = backend.opened.then(() => backend.call<{ local: string; canonical: string }>('paths')).then(paths => { ({ local, canonical } = paths); });
+    void opened.then(async () => {
+      syncUpdateTimer();
+      try { await registerShortcut((await backend.call('settings')).shortcut); } catch { log('shortcut.failed'); }
+    }).catch(error => log('startup.failed', { message: String(error) }));
+    return opened;
+  };
+  let opening = openBackend();
   // The worker reports each finished run; a notification shows when Kiln is not in front, and opens the result.
   backend.onAgentFinished = event => void notifyRunFinished(event, { window: () => main, log, open: async finished => {
     if (main.isMinimized()) main.restore(); main.show(); main.focus();
@@ -364,6 +374,7 @@ if (singleInstance) void app.whenReady().then(async () => {
       const name = z.string().max(100).parse(method);
       // Answered here, never by the worker, so it works while the worker is busy, opening the library or restarting; polled, so not logged.
       if (name === 'backend.status') return { ok: true, data: backend.status() };
+      if (name === 'desktop.ready' && backend.retryOpening()) opening = openBackend();
       operation = name;
       if (name !== 'desktop.telemetry') { log('request.started', { requestId, method: name }); await opening; }
       return { ok: true, data: await desktopCall(name, args ?? {}, sender) };
@@ -380,7 +391,4 @@ if (singleInstance) void app.whenReady().then(async () => {
   tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Kiln', click: () => main.show() }, { label: 'Quick search', click: openPalette }, { type: 'separator' }, { label: 'Quit Kiln', click: () => app.quit() }]));
   tray.on('double-click', () => main.show());
   app.on('activate', () => main.show());
-  await opening;
-  syncUpdateTimer();
-  try { await registerShortcut((await backend.call('settings')).shortcut); } catch (error) { log('shortcut.failed'); }
 }).catch(error => { console.error('Kiln startup failed:', error); dialog.showErrorBox('Kiln could not start', String(error)); app.quit(); });

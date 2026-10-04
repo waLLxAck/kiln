@@ -1,39 +1,45 @@
-/** How the library list is ordered: the sort choices, the default, and sources leading inside a collection. Kept free of React so it can be tested. */
+/** Library ordering helpers, kept free of React so they can be tested. */
 import type { Item, Usage } from '../../../packages/protocol/schema';
 
-export type SortKey = 'title' | 'kind' | 'collection' | 'status' | 'updatedAt' | 'createdAt' | 'site' | 'copied' | 'used' | 'order';
+export type SortKey = 'title' | 'kind' | 'collection' | 'status' | 'updatedAt' | 'createdAt' | 'lastUsed' | 'site' | 'copied' | 'used' | 'order';
 export type Sort = { key: SortKey; dir: 'asc' | 'desc' } | null;
 /** What the list shows until someone picks another order: newest captures first, everywhere. */
 export const defaultSort = { key: 'createdAt', dir: 'desc' } as const satisfies Sort;
 /** Clicking a heading sorts by it; clicking again flips the direction. Dates start newest first, text starts A to Z. */
 export function nextSort(current: Sort, key: SortKey): Sort {
   if (current?.key === key) return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
-  return { key, dir: key === 'updatedAt' || key === 'createdAt' ? 'desc' : 'asc' };
+  return { key, dir: ['updatedAt', 'createdAt', 'lastUsed', 'used', 'copied'].includes(key) ? 'desc' : 'asc' };
 }
 /** The orders offered in the sort menu. Custom order is the hand-arranged `order` field, the only one the move arrows change. */
 export const sortChoices: { label: string; sort: NonNullable<Sort>; hint?: string }[] = [
   { label: 'Recently added', sort: defaultSort }, { label: 'Recently updated', sort: { key: 'updatedAt', dir: 'desc' } },
+  { label: 'Last used', sort: { key: 'lastUsed', dir: 'desc' }, hint: 'Latest copy, open, test or recorded agent use; unused items last' },
   { label: 'Most copied', sort: { key: 'copied', dir: 'desc' }, hint: 'Times copied from Kiln' },
   { label: 'Most used', sort: { key: 'used', dir: 'desc' }, hint: 'Copies, opens, tests and agent use Kiln has seen' },
   { label: 'Title A–Z', sort: { key: 'title', dir: 'asc' } }, { label: 'Custom order', sort: { key: 'order', dir: 'asc' }, hint: 'Arranged by hand with the move arrows' },
 ];
-const headingLabel: Partial<Record<SortKey, string>> = { kind: 'Type', collection: 'Collection', status: 'State', site: 'Site', title: 'Title Z–A', createdAt: 'Oldest added', updatedAt: 'Least recently updated', copied: 'Least copied', used: 'Least used' };
+const headingLabel: Partial<Record<SortKey, string>> = { kind: 'Type', collection: 'Collection', status: 'State', site: 'Site', title: 'Title Z–A', createdAt: 'Oldest added', updatedAt: 'Least recently updated', lastUsed: 'Least recently used', copied: 'Least copied', used: 'Least used' };
 /** A heading click can pick an order the menu does not list; the pill still names it. */
 export const sortLabel = (sort: NonNullable<Sort>) => sortChoices.find(c => c.sort.key === sort.key && c.sort.dir === sort.dir)?.label ?? `${headingLabel[sort.key] ?? 'Custom order'}${['kind', 'collection', 'status', 'site'].includes(sort.key) && sort.dir === 'desc' ? ' (reversed)' : ''}`;
 export const site = (item: Item) => { try { return new URL(item.source).hostname.replace(/^www\./, ''); } catch { return item.source || '—'; } };
 const statusRank: Record<string, number> = { approved: 0, testing: 1, captured: 2, rejected: 3, archived: 4 };
-/** `usage` holds copy and use counts per item id; counts tie often, so ties fall back to newest added. A null sort is the default. */
+/** Counts tie often, so prefer the latest recorded activity, then newest added. A null sort is the default. */
 export function sortItems(items: Item[], sort: Sort, usage: Usage = {}): Item[] {
   const { key, dir } = sort ?? defaultSort;
-  if (key === 'copied' || key === 'used') return [...items].sort((a, b) => ((usage[b.id]?.[key] ?? 0) - (usage[a.id]?.[key] ?? 0)) * (dir === 'asc' ? -1 : 1) || b.createdAt.localeCompare(a.createdAt));
+  if (key === 'lastUsed') return [...items].sort((a, b) => {
+    const x = useTime(usage[a.id]?.lastUsed), y = useTime(usage[b.id]?.lastUsed);
+    // Items with no known use stay at the end in either direction.
+    if (x === null || y === null) return x === y ? b.createdAt.localeCompare(a.createdAt) : x !== null ? -1 : 1;
+    return (x - y) * (dir === 'asc' ? 1 : -1) || b.createdAt.localeCompare(a.createdAt);
+  });
+  if (key === 'copied' || key === 'used') return [...items].sort((a, b) => ((usage[b.id]?.[key] ?? 0) - (usage[a.id]?.[key] ?? 0)) * (dir === 'asc' ? -1 : 1) || (useTime(usage[b.id]?.lastUsed) ?? 0) - (useTime(usage[a.id]?.lastUsed) ?? 0) || b.createdAt.localeCompare(a.createdAt));
   if (key === 'order') return [...items].sort((a, b) => a.order - b.order || b.updatedAt.localeCompare(a.updatedAt));
   const value = (i: Item): string | number => key === 'site' ? site(i).toLowerCase() : key === 'status' ? statusRank[i.status] ?? 9 : String(i[key]).toLowerCase();
   const direction = dir === 'asc' ? 1 : -1;
   return [...items].sort((a, b) => { const x = value(a), y = value(b); return (x < y ? -1 : x > y ? 1 : a.title.localeCompare(b.title)) * direction; });
 }
 /**
- * The list as shown. Inside a collection its sources are the material everything else was made from, so they lead, sorted
- * among themselves; across the whole library they mix in with the rest.
+ * Optional source pinning preserves the sorted order within each partition. The caller chooses when pinning applies.
  */
 export function arrangeItems(items: Item[], sort: Sort, usage: Usage = {}, pinSources = false): Item[] {
   const sorted = sortItems(items, sort, usage);
@@ -58,18 +64,24 @@ export function moveInOrder(shown: Item[], id: string, direction: number, pinSou
 /** Every kind, in the order kind groups and suggestions list them. */
 export const KINDS: Item['kind'][] = ['source', 'prompt', 'skill', 'agent', 'mcp', 'insight', 'technique', 'tool', 'resource', 'link', 'instruction', 'image', 'file', 'reference'];
 export const kindPlural: Record<Item['kind'], string> = { source: 'Sources', prompt: 'Prompts', skill: 'Skills', agent: 'Agents', insight: 'Insights', technique: 'Techniques', tool: 'Tools', resource: 'Resources', link: 'Links', instruction: 'Instructions', image: 'Images', file: 'Files', reference: 'References', mcp: 'MCP servers' };
-export type GroupKey = 'none' | 'collection' | 'kind' | 'status';
+export type GroupKey = 'none' | 'collection' | 'kind' | 'status' | 'lastUsed';
+const useTime = (at?: string) => { const value = Date.parse(at ?? ''); return Number.isFinite(value) ? value : null; };
+const recentGroups = ['Today', 'Yesterday', 'Last 7 days', 'Last 30 days', 'Earlier', 'Never used'];
+/** Calendar boundaries in the user's timezone, including days that span a daylight-saving change. */
+const dayBefore = (now: Date, days: number) => { const day = new Date(now); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - days); return day.getTime(); };
 const statusGroup: Record<Item['status'], string> = { captured: 'Drafts', testing: 'Testing', approved: 'Approved', rejected: 'Rejected', archived: 'Archived' };
 /**
  * The shown list cut into groups, each keeping the list's order inside it. Collections sort by name with unfiled items last;
  * kinds and statuses follow their usual order. `none` is one unlabelled group.
  */
-export function groupItems(items: Item[], key: GroupKey): { key: string; label: string; items: Item[] }[] {
+export function groupItems(items: Item[], key: GroupKey, usage: Usage = {}, now = new Date()): { key: string; label: string; items: Item[] }[] {
   if (key === 'none') return [{ key: '', label: '', items }];
-  const keyOf = (i: Item) => key === 'collection' ? i.collection : key === 'kind' ? i.kind : i.status;
+  const boundaries = [0, 1, 6, 29].map(days => dayBefore(now, days));
+  const recent = (i: Item) => { const at = useTime(usage[i.id]?.lastUsed); if (at === null) return '5'; const bucket = boundaries.findIndex(before => at >= before); return String(bucket < 0 ? 4 : bucket); };
+  const keyOf = (i: Item) => key === 'collection' ? i.collection : key === 'kind' ? i.kind : key === 'lastUsed' ? recent(i) : i.status;
   const groups = new Map<string, Item[]>();
-  for (const item of items) { const k = keyOf(item); groups.set(k, [...(groups.get(k) ?? []), item]); }
-  const rank = (k: string) => key === 'kind' ? KINDS.indexOf(k as Item['kind']) : statusRank[k] ?? 9;
+  for (const item of items) { const k = keyOf(item), bucket = groups.get(k); if (bucket) bucket.push(item); else groups.set(k, [item]); }
+  const rank = (k: string) => key === 'kind' ? KINDS.indexOf(k as Item['kind']) : key === 'lastUsed' ? Number(k) : statusRank[k] ?? 9;
   const order = [...groups.keys()].sort((a, b) => key === 'collection' ? (!a ? 1 : !b ? -1 : a.localeCompare(b)) : rank(a) - rank(b));
-  return order.map(k => ({ key: k, label: key === 'collection' ? k.replaceAll('/', ' / ') || 'No collection' : key === 'kind' ? kindPlural[k as Item['kind']] : statusGroup[k as Item['status']], items: groups.get(k)! }));
+  return order.map(k => ({ key: k, label: key === 'collection' ? k.replaceAll('/', ' / ') || 'No collection' : key === 'kind' ? kindPlural[k as Item['kind']] : key === 'lastUsed' ? recentGroups[Number(k)] : statusGroup[k as Item['status']], items: groups.get(k)! }));
 }

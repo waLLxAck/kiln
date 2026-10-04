@@ -1,6 +1,6 @@
-import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type Ref, type RefObject, type UIEvent } from 'react';
 import { ChevronDown, ChevronRight, Copy, Download, Files, FlaskConical, Star, Tags, X } from 'lucide-react';
-import type { Approval, Installation, Item, ScoreSummary, SkillListing, Snapshot, Trial } from '../../../packages/protocol/schema';
+import type { Approval, Installation, Item, ScoreSummary, SkillListing, Snapshot, Trial, Usage } from '../../../packages/protocol/schema';
 import { ContextMenu, KindIcon, type MenuEntry } from './components';
 import { date } from './api';
 import { InstalledCell, StatusCell, TestCell, type Location } from './Library';
@@ -17,7 +17,7 @@ import type { useItemDrag } from './ItemDrag';
 
 type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number; /** Other copies of it in the library (a duplicate group). */ copies?: number; /** In Trash after a consolidation: the title of the item it was merged into ('' when that is gone too). */ mergedInto?: string };
 type Props = {
-  groups: { key: string; label: string; items: Item[] }[]; group: GroupKey; collectionShown: boolean;
+  groups: { key: string; label: string; items: Item[] }[]; group: GroupKey; scope: string; usage: Usage; collectionShown: boolean;
   row: (item: Item) => Row; locations: Location[]; installations: Installation[]; approvals: Approval[];
   /** Per skill: whether a model may invoke it (the Invoked by column), and its switch. */
   invocation: Snapshot['invocation']; onInvocation: (item: Item, model: boolean) => void;
@@ -45,6 +45,7 @@ type Props = {
 export function LibraryTable(props: Props) {
   const { groups, group, collectionShown, row, locations, installations, approvals, invocation, scores = {}, selected, picked, sort, onSort, onFocusRow, onPick, onOpen, onSelectAll, shortcut, canSwipe, installEntries, scroll, empty, hint } = props;
   const [folded, setFolded] = useState<string[]>([]);
+  useEffect(() => setFolded([]), [props.scope, group]);
   const [install, setInstall] = useState<{ x: number; y: number; item: Item } | null>(null);
   const [layout, setLayout] = useColumnLayout();
   // Invoked by gives way while no skill is listed, as Collection does inside a collection: it would be dashes only.
@@ -72,6 +73,7 @@ export function LibraryTable(props: Props) {
   };
   return <div className="lib-table" role="table" aria-label="Library items" aria-rowcount={visible.length} style={{ '--lib-cols': tracks.full, '--lib-cols-mid': tracks.mid, '--lib-cols-narrow': tracks.narrow } as CSSProperties}>
     <LibraryHead layout={layout} shown={shown} gone={gone} collectionShown={collectionShown} sort={sort} onSort={onSort} onLayout={setLayout} />
+    {group !== 'none' && groups.length > 0 && <div className="lib-group-tools" role="group" aria-label="Group controls"><span>{groups.length} {groups.length === 1 ? 'group' : 'groups'} · {visible.length} of {groups.reduce((n, g) => n + g.items.length, 0)} items shown</span><button type="button" disabled={!groups.some(g => folded.includes(g.key))} onClick={() => setFolded([])}>Expand all</button><button type="button" disabled={groups.every(g => folded.includes(g.key))} onClick={() => setFolded(groups.map(g => g.key))}>Collapse all</button></div>}
     <div className="item-list" ref={scroll.ref} onScroll={scroll.onScroll} onKeyDown={keyDown} onFocus={event => { const id = (event.target as HTMLElement).dataset.id; if (id) lastFocus.current = id; }}>
       {groups.map(g => { const shut = group !== 'none' && folded.includes(g.key); return <Fragment key={g.key || 'all'}>
         {group !== 'none' && <button type="button" className="lib-group" aria-expanded={!shut} onClick={() => setFolded(current => shut ? current.filter(k => k !== g.key) : [...current, g.key])}>
@@ -79,7 +81,7 @@ export function LibraryTable(props: Props) {
           {shut && <span className="faint ellipsis lib-group-hint">{g.items.slice(0, 3).map(i => i.title).join(', ')}{g.items.length > 3 ? '…' : ''}</span>}
         </button>}
         {!shut && g.items.map(item => <LibraryRow key={item.id} {...row(item)} columns={shown} selected={selected === item.id} picked={many && picked.includes(item.id)} focusable={item.id === focusable} menuOpen={install?.item.id === item.id} swipes={!many && canSwipe(item)}
-          locations={locations} installations={installations} approvals={approvals} listing={invocation[item.id]} score={scores[item.id]} context={context} />)}
+          locations={locations} installations={installations} approvals={approvals} listing={invocation[item.id]} score={scores[item.id]} usage={props.usage[item.id]} usageSort={sort?.key} context={context} />)}
       </Fragment>; })}
       {!visible.length && !groups.some(g => g.items.length) && empty}
       {visible.length > 0 && <p className="muted small lib-hint">{hint}</p>}
@@ -90,6 +92,7 @@ export function LibraryTable(props: Props) {
 
 type RowContext = { props: Props; pickedItems: Item[]; setInstall: (menu: { x: number; y: number; item: Item }) => void };
 type RowProps = Row & {
+  usage?: Usage[string]; usageSort?: SortKey;
   columns: ColumnKey[]; selected: boolean; picked: boolean; focusable: boolean; menuOpen: boolean; swipes: boolean;
   locations: Location[]; installations: Installation[]; approvals: Approval[]; listing?: SkillListing; score?: ScoreSummary;
   context: RefObject<RowContext>;
@@ -102,14 +105,15 @@ const tooltip = (text: () => string) => (event: MouseEvent<HTMLElement>) => { ev
  * poll. Its handlers ask `context` for the table's latest props when they run, so a row that skipped a render never acts on
  * an old selection.
  */
-const LibraryRow = memo(function LibraryRow({ item, published, trial, place, from, made, copies, mergedInto, columns, selected, picked, focusable, menuOpen, swipes, locations, installations, approvals, listing, score, context }: RowProps) {
+const LibraryRow = memo(function LibraryRow({ item, published, trial, place, from, made, copies, mergedInto, columns, selected, picked, focusable, menuOpen, swipes, locations, installations, approvals, listing, score, usage, usageSort, context }: RowProps) {
   const latest = () => context.current!;
   // The description is left out of the row to save space; it stays discoverable as the row's tooltip.
   const about = item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '));
+  const usageLabel = usageSort === 'used' ? `${usage?.used ?? 0} ${(usage?.used ?? 0) === 1 ? 'use' : 'uses'}` : usageSort === 'copied' ? `${usage?.copied ?? 0} copies` : usageSort === 'lastUsed' ? usage?.lastUsed ? date(usage.lastUsed) : 'Never used' : '';
   /** ItemDrag.tsx's handler, asked for when the event happens so a drag takes the current selection. */
   const drag = <K extends Exclude<keyof DragHandlers, 'draggable'>>(name: K) => (event: Parameters<DragHandlers[K]>[0]) => (latest().props.drag.source(item, swipes, latest().pickedItems)[name] as (event: unknown) => void)(event);
   const cells: Record<ColumnKey, ReactNode> = {
-    title: <span className="lib-title"><span className={`item-kind ${item.kind}`} title={`${item.kind} · drag onto a collection to move it`}><KindIcon kind={item.kind} size={14} /></span><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} />{from && <span className="lib-from" title={`From ${from.full}`}>from {from.label}</span>}{copies ? <span className="lib-dup" aria-label={`${copies + 1} copies`} title={`${copies} other ${copies === 1 ? 'copy' : 'copies'} of this ${item.kind} in your library. Open it to consolidate.`}><Files size={11} aria-hidden="true" />{copies + 1}</span> : null}{mergedInto !== undefined && <span className="lib-from" title="Consolidated: restore it to have it back as its own item">merged into {mergedInto || 'a deleted item'}</span>}</span>,
+    title: <span className="lib-title"><span className={`item-kind ${item.kind}`} title={`${item.kind} · drag onto a collection to move it`}><KindIcon kind={item.kind} size={14} /></span><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} />{from && <span className="lib-from" title={`From ${from.full}`}>from {from.label}</span>}{copies ? <span className="lib-dup" aria-label={`${copies + 1} copies`} title={`${copies} other ${copies === 1 ? 'copy' : 'copies'} of this ${item.kind} in your library. Open it to consolidate.`}><Files size={11} aria-hidden="true" />{copies + 1}</span> : null}{usageLabel && <span className="lib-usage" title="Activity recorded by Kiln">{usageLabel}</span>}{mergedInto !== undefined && <span className="lib-from" title="Consolidated: restore it to have it back as its own item">merged into {mergedInto || 'a deleted item'}</span>}</span>,
     collection: <span className="muted" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>,
     status: <StatusCell item={item} approvals={approvals} published={published} made={made} />,
     installed: <InstalledCell item={item} locations={locations} installations={installations} />,

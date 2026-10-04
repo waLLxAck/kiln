@@ -1,15 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from 'react';
 import { z } from 'zod';
 import type { QueryToken } from './library-filters';
-import type { GroupKey } from './library-sort';
+import type { GroupKey, Sort } from './library-sort';
 import { filterSchema, noFilter, type MachinesFilter } from './machines-filter';
 
 const tokenSchema = z.object({ facet: z.enum(['kind', 'status', 'in', 'state', 'provider', 'scope', 'tag', 'from', 'collection', 'is']), value: z.string() });
-/** What one view remembers: the focused row, whether it is open as a page, the search text, the filter tokens and the order. */
+const sortSchema = z.object({ key: z.enum(['title', 'kind', 'collection', 'status', 'updatedAt', 'createdAt', 'lastUsed', 'site', 'copied', 'used', 'order']), dir: z.enum(['asc', 'desc']) }).nullable();
+const groupSchema = z.enum(['none', 'collection', 'kind', 'status', 'lastUsed']);
+/** Machine-private state for one view; defaults keep older saved state readable. */
 const viewSchema = z.object({
   selected: z.string().default(''), open: z.boolean().default(false), query: z.string().default(''),
   tokens: z.array(tokenSchema).default([]),
-  sort: z.object({ key: z.enum(['title', 'kind', 'collection', 'status', 'updatedAt', 'createdAt', 'site', 'copied', 'used', 'order']), dir: z.enum(['asc', 'desc']) }).nullable().default(null),
+  sort: sortSchema.default(null), group: groupSchema.default('none'),
 });
 /** Where the library is pointed: a section, a collection or a lifecycle stage. Older builds stored a kind tab here; it is dropped. */
 const locationSchema = z.object({ section: z.string(), collection: z.string(), stage: z.enum(['', 'drafts', 'testing', 'approved', 'installed']).catch('') });
@@ -26,6 +28,10 @@ function readMemory(): z.infer<typeof memorySchema> {
     const raw = JSON.parse(localStorage.getItem(storageKey) ?? 'null');
     // Views from the kind-tab layout were keyed by [section, collection, tab]; keep the All tab's view as the unfiltered one.
     if (raw?.views) for (const [key, view] of Object.entries(raw.views)) { const [section, collection, tab] = JSON.parse(key); if (tab === 'recent') raw.views[JSON.stringify([section, collection, ''])] ??= view; }
+    // Adopt the former global grouping once for existing views; new views start ungrouped.
+    let legacyGroup: GroupKey = 'none';
+    try { legacyGroup = groupSchema.parse(JSON.parse(localStorage.getItem('kiln-library-group') ?? 'null')); } catch { /* Default grouping. */ }
+    if (raw?.views) for (const view of Object.values(raw.views) as Record<string, unknown>[]) if (view && typeof view === 'object' && !Array.isArray(view) && view.group === undefined) view.group = legacyGroup;
     return memorySchema.parse(raw);
   } catch {
     const old = localStorage.getItem('kiln-section') ?? 'library';
@@ -48,7 +54,7 @@ export function useViewMemory() {
     /** A collection and a stage are two ways of narrowing the library; choosing one clears the other. */
     setCollection: (collection: string) => move(current => ({ ...current, collection, stage: collection ? '' : current.stage })),
     setStage: (stage: Stage) => move(current => ({ ...current, section: 'library', collection: '', stage })),
-    setSelected: set('selected'), setOpen: set('open'), setQuery: set('query'), setTokens: set('tokens'), setSort: set('sort'),
+    setSelected: set('selected'), setOpen: set('open'), setQuery: set('query'), setTokens: set('tokens'), setSort: set('sort'), setGroup: set('group'),
   };
 }
 
@@ -68,16 +74,14 @@ function useStored<T>(storage: string, schema: z.ZodType<T>, fallback: T) {
 }
 /** Machines' state chips, name filter, kind and columns (machines-filter.ts). */
 export const useMachinesFilter = () => useStored<MachinesFilter>('kiln-machines-filter', filterSchema, noFilter);
-/** How the library list is grouped, the same in every view. */
-export const useGroupBy = () => useStored<GroupKey>('kiln-library-group', z.enum(['none', 'collection', 'kind', 'status']), 'none');
-export type SavedView = { id: string; name: string; tokens: QueryToken[]; query: string };
-const savedSchema = z.array(z.object({ id: z.string(), name: z.string().trim().min(1).max(60), tokens: z.array(tokenSchema), query: z.string().max(500) })).max(40);
+export type SavedView = { id: string; name: string; tokens: QueryToken[]; query: string; sort?: Sort | 'relevance'; group?: GroupKey };
+const savedSchema = z.array(z.object({ id: z.string(), name: z.string().trim().min(1).max(60), tokens: z.array(tokenSchema), query: z.string().max(500), sort: z.union([sortSchema, z.literal('relevance')]).optional(), group: groupSchema.optional() })).max(40);
 /** Queries the user named with "Save this view", shown as pills under the query bar. */
 export function useSavedViews() {
   const [views, setViews] = useStored<SavedView[]>('kiln-saved-views', savedSchema, []);
   return {
     views,
-    save: (name: string, tokens: QueryToken[], query: string) => setViews([...views, { id: crypto.randomUUID(), name: name.trim().slice(0, 60) || 'My view', tokens, query: query.trim() }]),
+    save: (name: string, tokens: QueryToken[], query: string, sort: Sort | 'relevance', group: GroupKey) => { if (views.length < 40) setViews([...views, { id: crypto.randomUUID(), name: name.trim().slice(0, 60) || 'My view', tokens, query: query.trim(), sort, group }]); },
     remove: (id: string) => setViews(views.filter(v => v.id !== id)),
   };
 }

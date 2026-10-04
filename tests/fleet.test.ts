@@ -46,7 +46,8 @@ function fleet(fetchEveryMs = 0) {
       await m.router.gitQueue.idle();
     }));
     for (const m of clones) m.wb.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    // Yield while removing so Windows can finish closing the directory watchers.
+    await fs.promises.rm(root, { recursive: true, force: true });
   } };
 }
 
@@ -62,7 +63,30 @@ test('fleet fixture cleanup waits for an already queued report before removing m
   await reporting;
   await closing;
   try { assert.equal(fs.existsSync(f.root), false, 'completed background work cannot recreate a removed fixture'); }
-  finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+  finally { await fs.promises.rm(f.root, { recursive: true, force: true }); }
+});
+
+test('publisher idle waits for organisation metadata loading and the job it queues', async () => {
+  const f = fleet();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  try {
+    const { a } = f;
+    const item = a.wb.create({ title: 'Moved skill', kind: 'skill', content: skill('moved-skill') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    a.git('commit', '--allow-empty', '-m', 'Advance HEAD beyond the cached metadata');
+    const committed = a.router.publisher.committed, load = committed.load.bind(committed);
+    committed.load = async wb => { await gate; await load(wb); };
+    a.router.call('items.move', { ids: [item.id], collection: 'Reviews' });
+    a.router.flushOrganisation();
+    let settled = false;
+    const idle = a.router.publisher.idle().then(() => { settled = true; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(settled, false, 'metadata loading is still publishing work');
+    release(); await idle;
+    const published = JSON.parse(execFileSync('git', ['-C', f.origin, 'show', `main:workbench/items/${item.id}/item.json`], { encoding: 'utf8' }));
+    assert.equal(published.collection, 'Reviews', 'idle includes the job created by the metadata load');
+  } finally { release(); await f.close(); }
 });
 
 test('machines report through GitHub, mark each other remotely, and the owner keeps and installs what was marked', async () => {
