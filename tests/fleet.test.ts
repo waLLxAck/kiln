@@ -39,8 +39,31 @@ function fleet(fetchEveryMs = 0) {
   const clone = () => { const library = path.join(root, 'b', 'library'); execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', origin, library], { windowsHide: true }); return machine('b', library); };
   const onGitHub = (id: string) => machineReportSchema.parse(JSON.parse(execFileSync('git', ['-C', origin, 'show', `main:workbench/machines/${id}.json`], { encoding: 'utf8' })));
   const clones: ReturnType<typeof machine>[] = [a];
-  return { root, origin, a, clone: () => { const b = clone(); clones.push(b); return b; }, onGitHub, close() { for (const m of clones) { m.router.fleet.stop(); m.wb.close(); } fs.rmSync(root, { recursive: true, force: true }); } };
+  return { root, origin, a, clone: () => { const b = clone(); clones.push(b); return b; }, onGitHub, async close() {
+    for (const m of clones) { m.router.fleet.stop(); m.router.flushOrganisation(); }
+    await Promise.all(clones.map(async m => {
+      await Promise.all([m.router.fleet.idle(), m.router.publisher.idle()]);
+      await m.router.gitQueue.idle();
+    }));
+    for (const m of clones) m.wb.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  } };
 }
+
+test('fleet fixture cleanup waits for an already queued report before removing machine data', async () => {
+  const f = fleet();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  f.a.router.gitQueue.run(() => gate);
+  f.a.router.call('fleet.report');
+  const reporting = f.a.router.fleet.idle();
+  const closing = f.close();
+  release();
+  await reporting;
+  await closing;
+  try { assert.equal(fs.existsSync(f.root), false, 'completed background work cannot recreate a removed fixture'); }
+  finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
 
 test('machines report through GitHub, mark each other remotely, and the owner keeps and installs what was marked', async () => {
   const f = fleet();
@@ -114,7 +137,7 @@ test('machines report through GitHub, mark each other remotely, and the owner ke
     a.router.call('fleet.mark', { machineId: idB, itemId: item.id, location: 'claude', wanted: false }); await a.router.fleet.idle();
     assert.deepEqual(f.onGitHub(idB).wanted, {});
     assert.deepEqual(f.onGitHub(idB).copies[item.id], { claude: { revision: item.revision, state: 'installed' } }, 'unmarking removes nothing');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('sync on the owner fetches first, so a mark pushed from elsewhere after its last fetch installs without a pull', async () => {
@@ -135,7 +158,7 @@ test('sync on the owner fetches first, so a mark pushed from elsewhere after its
     const synced = await b.router.call('skills.sync') as { location?: string; result: string }[];
     assert.deepEqual(synced.map(r => [r.location, r.result]), [['agents', 'installed approved revision']]);
     assert.ok(fs.existsSync(path.join(b.home, '.agents', 'skills', 'careful-review', 'SKILL.md')));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('when this checkout and GitHub have both moved, reports and marks wait for the merge, then apply on the newer files', async () => {
@@ -173,7 +196,7 @@ test('when this checkout and GitHub have both moved, reports and marks wait for 
     // Marking needs an approval.
     const draft = a.wb.create({ title: 'Draft', kind: 'skill', content: skill('draft-skill') });
     assert.throws(() => a.router.call('fleet.mark', { machineId: idB, itemId: draft.id, location: 'claude', wanted: true }), /Approve this item/);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('Update all outdated uses the one update path: latest approval, drafts stay unapproved, edited copies are skipped and reported', async () => {
@@ -202,7 +225,7 @@ test('Update all outdated uses the one update path: latest approval, drafts stay
     assert.deepEqual(report.copies[item.id].agents, { revision: v2.revision, state: 'installed' });
     assert.ok(!a.wb.approvals().some(x => x.revision === v3.revision), 'the newer draft stays unapproved');
     assert.deepEqual(a.router.call('skills.updateOutdated'), [], 'nothing left to update');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a copy installed from an earlier revision with the same files is not outdated', async () => {
@@ -218,7 +241,7 @@ test('a copy installed from an earlier revision with the same files is not outda
     const report = a.router.call('fleet.live') as MachineReport;
     assert.deepEqual(report.copies[item.id].agents, { revision: v2.revision, state: 'installed' });
     assert.deepEqual(a.router.call('skills.updateOutdated'), []);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('location keys and cells: project names, duplicate folders, agent clients, approvals and marks', () => {
@@ -296,7 +319,7 @@ test('a report, an organisation commit, an approval and a background fetch and p
     assert.deepEqual(f.onGitHub((await a.view(false)).self.id).locations.map(l => l.key), ['agents'], 'this machine’s report');
     assert.deepEqual(f.onGitHub(idB).locations.map(l => l.key), ['claude'], 'the other machine’s report is kept');
     assert.equal(a.git('status', '--porcelain', '--', 'workbench/machines'), '');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a machine report rides a recent background fetch, and fetches again when GitHub has moved since', async () => {
@@ -324,7 +347,7 @@ test('a machine report rides a recent background fetch, and fetches again when G
     const self = (await a.view(false)).self.id;
     assert.deepEqual(f.onGitHub(self).locations.map(l => l.key), ['agents', 'claude']);
     assert.ok(execFileSync('git', ['-C', f.origin, 'show', `main:workbench/items/${theirs.id}/item.json`], { encoding: 'utf8' }), 'the laptop’s approval is still on GitHub');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 test('until reporting is started, nothing publishes a machine report: installs, identity, sync and pulls commit no machines file', async () => {
   // The desktop app never calls fleet.start while multi-machine is off (apps/desktop/src/features.ts).
@@ -350,5 +373,5 @@ test('until reporting is started, nothing publishes a machine report: installs, 
     assert.equal(execFileSync('git', ['-C', f.origin, 'ls-tree', '--name-only', 'main', 'workbench/machines/'], { encoding: 'utf8' }).trim(), '', 'no report on GitHub');
     for (const m of [a, b]) assert.equal(m.git('log', '--oneline', '--', 'workbench/machines'), '', 'no report committed');
     assert.equal(a.router.fleet.publishState().state, 'idle');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });

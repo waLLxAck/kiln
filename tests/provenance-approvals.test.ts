@@ -258,7 +258,7 @@ for (const action of ['approve', 'unapprove'] as const) test(`retrying a persist
     publisher.retry(job.id); await publisher.idle();
     assert.equal(publisher.list().find(j => j.id === job.id)!.status, 'done', publisher.list().find(j => j.id === job.id)!.error);
     const clone = path.join(f.root, 'fresh-checkout');
-    execFileSync('git', ['clone', origin, clone], { stdio: 'pipe' });
+    execFileSync('git', ['clone', '-c', 'core.autocrlf=false', origin, clone], { stdio: 'pipe' });
     assert.doesNotMatch(JSON.stringify(Object.values(sharedFiles(path.join(clone, 'workbench'))).map(bytes => Buffer.from(bytes, 'base64').toString('utf8'))), /PRIVATE-USER/);
     const other = new Workbench(clone, path.join(f.root, 'fresh-machine'));
     try {
@@ -303,7 +303,7 @@ test('publishing a migrated revision carries portable historical approvals and t
     await publisher.idle();
     assert.equal(publisher.list().find(j => j.id === job.id)!.status, 'done', publisher.list().find(j => j.id === job.id)!.error);
     const clone = path.join(f.root, 'fresh-checkout');
-    execFileSync('git', ['clone', origin, clone], { stdio: 'pipe' });
+    execFileSync('git', ['clone', '-c', 'core.autocrlf=false', origin, clone], { stdio: 'pipe' });
     assert.doesNotMatch(JSON.stringify(Object.values(sharedFiles(path.join(clone, 'workbench'))).map(bytes => Buffer.from(bytes, 'base64').toString('utf8'))), /PRIVATE-USER/);
     const other = new Workbench(clone, path.join(f.root, 'fresh-machine'));
     try {
@@ -365,11 +365,19 @@ test('provenance migration preserves existing deployment rollback and pending de
   } finally { wb.close(); fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('an interrupted provenance migration retries without losing the approved revision', () => {
+for (const oldCleanup of [false, true]) test(`an interrupted provenance migration retries without losing the approval of ${oldCleanup ? 'a draft left by the old cleanup' : 'an approved legacy revision'}`, () => {
   const f = fixture(); let wb: Workbench | undefined = new Workbench(f.library, f.local);
   const rename = fs.renameSync;
   try {
     const old = legacy(wb, 'local:/home/PRIVATE-USER/.agents/skills/research');
+    if (oldCleanup) {
+      const current: Revision = { ...old.revision, ...authoringSchema.parse(shareableAuthoring(old.revision)), hashVersion: 2, parent: old.revision.hash, summary: 'Moved private session data and machine provenance out of shared content' };
+      current.hash = revisionHash(current);
+      writeJson(path.join(wb.local, 'private-revisions', old.item.id, `${old.revision.hash}.json`), old.revision);
+      fs.unlinkSync(path.join(wb.itemDir(old.item.id), 'revisions', `${old.revision.hash}.json`));
+      writeJson(path.join(wb.itemDir(old.item.id), 'revisions', `${current.hash}.json`), current);
+      writeJson(path.join(wb.itemDir(old.item.id), 'item.json'), { ...old.item, source: current.source, revision: current.hash, status: 'captured' });
+    }
     const destination = path.join(wb.itemDir(old.item.id), 'item.json');
     wb.close(); wb = undefined;
     let failed = false;
@@ -378,8 +386,9 @@ test('an interrupted provenance migration retries without losing the approved re
       return rename(from, to);
     }) as typeof fs.renameSync;
     wb = new Workbench(f.library, f.local);
-    assert.ok(failed, 'failure reached the migration after its safe snapshot and approval were written');
+    assert.ok(failed, 'failure reached the migration after its safe snapshot was written');
     assert.ok(wb.warnings.some(warning => warning.includes('Injected migration interruption')));
+    assert.equal((readJson(path.join(wb.canonical, 'approvals', `${old.approval.id}.json`)) as Approval).revision, old.revision.hash, 'an interrupted item repair leaves its original approval reference intact for retry');
     fs.renameSync = rename;
     wb.close(); wb = undefined; wb = new Workbench(f.library, f.local);
     const item = wb.getItem(old.item.id), approval = wb.approvals().find(a => a.id === old.approval.id)!;
