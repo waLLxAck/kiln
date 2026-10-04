@@ -5,6 +5,7 @@ import type { McpCopy, McpReceipt, McpScan, McpScanEntry, McpStatus } from '../.
 import { mcpClientLabel, mcpClients, mcpCommandLine, nativeText, parseMcp, serialiseMcp, type McpClient, type McpServer } from '../../../packages/domain/mcp-format';
 import { api } from './api';
 import { InlineError, Modal } from './components';
+import { LoadError, useLoad, Waiting } from './Loading';
 import './mcp.css';
 
 /**
@@ -52,7 +53,8 @@ const glyph: Record<Cell, ReactNode> = { off: <Download size={12} />, on: <Check
  */
 export function McpInstalls({ item, valid, approved, perform, refresh, children }: { item: Item; /** The revision passes its content checks. */ valid: boolean; approved: boolean; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>; children: (count: string, tone: 'bad' | 'accent' | undefined, body: ReactNode) => ReactNode }) {
   const [status, setStatus] = useState<McpStatus | null>(null), [error, setError] = useState(''), [open, setOpen] = useState<McpCopy | null>(null), [extra, setExtra] = useState('');
-  const load = useCallback(() => { if (!valid) { setStatus(null); return; } api<McpStatus>('mcp.status', { itemId: item.id, ...(extra ? { project: extra } : {}) }).then(value => { setStatus(value); setError(''); }).catch(e => setError(e instanceof Error ? e.message : String(e))); }, [item.id, item.revision, valid, extra]);
+  const [since, setSince] = useState<number | null>(null);
+  const load = useCallback(() => { if (!valid) { setStatus(null); return; } setSince(Date.now()); api<McpStatus>('mcp.status', { itemId: item.id, ...(extra ? { project: extra } : {}) }).then(value => { setStatus(value); setError(''); }).catch(e => setError(e instanceof Error ? e.message : String(e))).finally(() => setSince(null)); }, [item.id, item.revision, valid, extra]);
   useEffect(load, [load]);
   const copies = status?.copies ?? [];
   const drifted = copies.filter(c => c.state === 'drifted').length, outdated = copies.filter(c => c.outdated).length, installed = copies.filter(c => c.state === 'installed').length;
@@ -65,7 +67,7 @@ export function McpInstalls({ item, valid, approved, perform, refresh, children 
     const root = await api<string | null>('desktop.chooseDirectory').catch(() => null); if (root) setExtra(root);
   };
   const body = !valid ? <p className="rail-note">Fix the definition first; only a valid server can be installed.</p> : <>
-    <InlineError error={error} />
+    {error ? <LoadError error={error} onRetry={load} /> : !status && <Waiting since={since} label="Reading client configs" />}
     {status && <table className="mcp-matrix" aria-label="Installed for"><thead><tr><th />{mcpClients.map(client => <th key={client} scope="col" title={mcpClientLabel[client]}>{short[client]}</th>)}</tr></thead>
       <tbody>{rows.map(row => <tr key={row.key}><th scope="row" title={row.title}>{row.label}</th>{mcpClients.map(client => {
         const copy = current.find(c => c.client === client && c.project === row.key);
@@ -85,9 +87,9 @@ export function McpInstalls({ item, valid, approved, perform, refresh, children 
 type Preview = { file: string; name: string; exists: boolean; hash: string | null; current: unknown; proposed: unknown; receipt: McpReceipt | null; unsupported?: string };
 /** What a cell does, shown before it does it: the entry in the file beside the entry Kiln writes, then one action per outcome. */
 export function McpInstallDialog({ item, copy, approved, onClose, onDone }: { item: Item; copy: McpCopy; approved: boolean; onClose: () => void; onDone: (message: string) => void }) {
-  const [preview, setPreview] = useState<Preview | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const args = { itemId: item.id, client: copy.client, ...(copy.project ? { project: copy.project } : {}), ...(copy.renamed ? { name: copy.name } : {}) };
-  useEffect(() => { void api<Preview>('mcp.preview', args).then(setPreview).catch(e => setError(e instanceof Error ? e.message : String(e))); }, [item.id, copy.client, copy.project, copy.name]);
+  const reading = useLoad(() => api<Preview>('mcp.preview', args), [item.id, copy.client, copy.project, copy.name]), preview = reading.data;
   const cell = cellOf(copy), label = where(copy);
   const run = async (method: string, extra: Record<string, unknown>, message: string) => {
     setBusy(true); setError('');
@@ -110,6 +112,7 @@ export function McpInstallDialog({ item, copy, approved, onClose, onDone }: { it
       : <p>The file already has a different server called “{copy.name}”. Import it from Settings to keep it in the library, or replace it with the library version (the old entry is kept so it can be put back).</p>}
     {preview && (preview.current !== null && preview.proposed !== null && cell !== 'on' && cell !== 'found' ? <div className="mcp-compare"><div><h4>In the file</h4>{entry(preview.current)}</div><div><h4>Kiln writes</h4>{entry(preview.proposed)}</div></div>
       : preview.current !== null ? entry(preview.current) : preview.proposed !== null && entry(preview.proposed))}
+    {!preview && (reading.error ? <LoadError error={reading.error} onRetry={reading.retry} /> : <Waiting since={reading.since} label="Reading the config file" />)}
     <InlineError error={error || preview?.unsupported || ''} />
     <div className="modal-actions">
       {receipt && <button className="button" disabled={busy} title={receipt.previous === null ? 'Remove the entry this install added' : 'Put back the entry this install replaced'} onClick={undo}><Undo2 size={14} />Undo last install</button>}
@@ -131,8 +134,8 @@ const summary = (server: McpServer) => `${server.transport} · ${mcpCommandLine(
  * servers are imported as drafts; the configs are not touched. Servers the library already holds are counted, not listed.
  */
 export function McpImportDialog({ onClose, onDone }: { onClose: () => void; /** `id`: a server added by hand, to open. */ onDone: (message: string, id?: string) => void }) {
-  const [scan, setScan] = useState<McpScan | null>(null), [error, setError] = useState(''), [picked, setPicked] = useState<Set<string>>(new Set()), [shown, setShown] = useState(''), [busy, setBusy] = useState(false);
-  useEffect(() => { void api<McpScan>('mcp.scan').then(result => { setScan(result); setPicked(new Set(result.servers.filter(s => !s.itemId).map(s => s.key))); }).catch(e => setError(e instanceof Error ? e.message : String(e))); }, []);
+  const [error, setError] = useState(''), [picked, setPicked] = useState<Set<string>>(new Set()), [shown, setShown] = useState(''), [busy, setBusy] = useState(false);
+  const scanning = useLoad(async () => { const result = await api<McpScan>('mcp.scan'); setPicked(new Set(result.servers.filter(s => !s.itemId).map(s => s.key))); return result; }, []), scan = scanning.data;
   const fresh = scan?.servers.filter(s => !s.itemId) ?? [], known = (scan?.servers.length ?? 0) - fresh.length, broken = scan?.files.filter(f => f.error) ?? [];
   const toggle = (key: string) => setPicked(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const importPicked = async () => {
@@ -148,7 +151,7 @@ export function McpImportDialog({ onClose, onDone }: { onClose: () => void; /** 
   };
   return <Modal title="Find MCP servers not in the library" subtitle="Claude Code, Codex, Copilot CLI, VS Code and Cursor configs, personal and in your projects" onClose={onClose} wide>
     <InlineError error={error} />
-    {!scan ? <p className="muted">Reading configs…</p> : !fresh.length ? <p className="empty-inline">No new MCP servers found{known ? `; ${known} already in the library` : ''}.</p> : <div className="mcp-found" role="list">
+    {!scan ? scanning.error ? <LoadError error={scanning.error} onRetry={scanning.retry} /> : <Waiting since={scanning.since} label="Reading configs">Reading configs…</Waiting> : !fresh.length ? <p className="empty-inline">No new MCP servers found{known ? `; ${known} already in the library` : ''}.</p> : <div className="mcp-found" role="list">
       {fresh.map(entry => <div key={entry.key} role="listitem" className={`mcp-found-row ${shown === entry.key ? 'open' : ''}`}>
         <input type="checkbox" aria-label={`Import ${entry.name}`} checked={picked.has(entry.key)} onChange={() => toggle(entry.key)} />
         <button type="button" className="mcp-found-name" aria-expanded={shown === entry.key} onClick={() => setShown(shown === entry.key ? '' : entry.key)}><b>{entry.name}</b><span className="muted" title={summary(entry.server)}>{summary(entry.server)}</span></button>

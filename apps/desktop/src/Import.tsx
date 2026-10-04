@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { FolderOpen, Github, Link2, TriangleAlert } from 'lucide-react';
 import { api } from './api';
 import { Badge, Field, InlineError, Modal } from './components';
+import { LoadError, useLoad, Waiting } from './Loading';
 import type { AgentFile } from '../../../packages/domain/agents-import';
 import type { LocalSkill } from '../../../packages/domain/skills-import';
 import type { MigrationEntry } from '../../../packages/git/migration';
@@ -14,9 +15,9 @@ type Repo = { nameWithOwner: string; url: string; isPrivate: boolean; descriptio
 
 /** Skills already installed for Codex or Claude Code on this machine, offered for import as drafts. `onDone` also gets the folders that were imported or were already in the library. */
 export function LocalSkillsDialog({ onClose, onDone }: { onClose: () => void; onDone: (summary: string, sources: string[]) => void | Promise<void> }) {
-  const [scan, setScan] = useState<{ roots: string[]; entries: LocalSkill[] } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
-  useEffect(() => { void api<{ roots: string[]; entries: LocalSkill[] }>('skills.scanLocal').then(result => { setScan(result); setChosen(new Set(result.entries.filter(e => e.hasSkillFile && !e.imported && !e.error).map(e => e.path))); }).catch(e => setError(short(String(e)))); }, []);
+  const scanning = useLoad(() => api<{ roots: string[]; entries: LocalSkill[] }>('skills.scanLocal').then(result => { setChosen(new Set(result.entries.filter(e => e.hasSkillFile && !e.imported && !e.error).map(e => e.path))); return result; }), []), scan = scanning.data;
   const toggle = (entryPath: string) => setChosen(set => { const next = new Set(set); if (next.has(entryPath)) next.delete(entryPath); else next.add(entryPath); return next; });
   const importable = scan?.entries.filter(e => e.hasSkillFile && !e.error) ?? [];
   const run = async () => {
@@ -30,7 +31,7 @@ export function LocalSkillsDialog({ onClose, onDone }: { onClose: () => void; on
   return <Modal title="Import my installed skills" subtitle="Skills your agents already use on this machine, copied into the library as drafts. The folders stay where they are." onClose={() => { if (!busy) onClose(); }} wide>
     {scan && <p className="muted small">Looked in {scan.roots.map(r => <code key={r}>{r}</code>).reduce<ReactNode[]>((all, node, i) => i ? [...all, ', ', node] : [node], [])}.</p>}
     <InlineError error={error} />
-    {!scan ? <p className="muted">Reading skill folders…</p> : !scan.entries.length ? <p className="empty-inline">No skill folders found in those locations.</p> : <div className="inventory-list">{scan.entries.map(entry => <div key={entry.path}><label className="check-row"><input type="checkbox" disabled={!entry.hasSkillFile || Boolean(entry.error) || busy} checked={chosen.has(entry.path)} onChange={() => toggle(entry.path)} /><span><b>{entry.name}</b>{entry.linked && <Link2 size={12} className="muted" />}<code className="path-text">{entry.linked ? `${entry.path} → ${entry.realPath}` : entry.path}</code>{entry.error && <p className="error-box">{entry.error}</p>}{!entry.error && !entry.hasSkillFile && <p className="small muted">No SKILL.md inside; skipped.</p>}{entry.validation.length > 0 && <p className="small muted"><TriangleAlert size={11} /> {entry.validation[0]}</p>}</span></label>{entry.imported ? <Badge status="imported" /> : entry.hasSkillFile && !entry.error ? <span className="muted small">{entry.fileCount} file{entry.fileCount === 1 ? '' : 's'}</span> : null}</div>)}</div>}
+    {!scan ? scanning.error ? <LoadError error={scanning.error} onRetry={scanning.retry} /> : <Waiting since={scanning.since} label="Reading skill folders">Reading skill folders…</Waiting> : !scan.entries.length ? <p className="empty-inline">No skill folders found in those locations.</p> : <div className="inventory-list">{scan.entries.map(entry => <div key={entry.path}><label className="check-row"><input type="checkbox" disabled={!entry.hasSkillFile || Boolean(entry.error) || busy} checked={chosen.has(entry.path)} onChange={() => toggle(entry.path)} /><span><b>{entry.name}</b>{entry.linked && <Link2 size={12} className="muted" />}<code className="path-text">{entry.linked ? `${entry.path} → ${entry.realPath}` : entry.path}</code>{entry.error && <p className="error-box">{entry.error}</p>}{!entry.error && !entry.hasSkillFile && <p className="small muted">No SKILL.md inside; skipped.</p>}{entry.validation.length > 0 && <p className="small muted"><TriangleAlert size={11} /> {entry.validation[0]}</p>}</span></label>{entry.imported ? <Badge status="imported" /> : entry.hasSkillFile && !entry.error ? <span className="muted small">{entry.fileCount} file{entry.fileCount === 1 ? '' : 's'}</span> : null}</div>)}</div>}
     <div className="modal-actions"><span className="muted small">{scan ? `${chosen.size} of ${importable.length} selected` : ''}</span><button className="button" onClick={() => setChosen(new Set(importable.map(e => e.path)))} disabled={!importable.length || busy}>Select all</button><button className="button" disabled={busy} onClick={() => setChosen(new Set())}>Clear selection</button><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={!chosen.size || busy} onClick={() => void run()}>{busy ? 'Importing…' : `Import ${chosen.size || ''}`}</button></div>
   </Modal>;
 }
@@ -79,10 +80,10 @@ export function RepositorySkillsDialog({ initialSource = '', onClose, onDone }: 
 
 /** Native agent definitions are imported in their provider's format, as drafts. */
 export function LocalAgentsDialog({ onClose, onDone }: { onClose: () => void; onDone: (summary: string) => void | Promise<void> }) {
-  const [entries, setEntries] = useState<AgentFile[] | null>(null), [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const key = (entry: AgentFile) => `${entry.provider}:${entry.path}`;
-  useEffect(() => { void api<AgentFile[]>('agents.scan').then(found => { setEntries(found); setChosen(new Set(found.filter(e => !e.imported && !e.error).map(key))); }).catch(e => setError(short(String(e)))); }, []);
+  const scanning = useLoad(() => api<AgentFile[]>('agents.scan').then(found => { setChosen(new Set(found.filter(e => !e.imported && !e.error).map(key))); return found; }), []), entries = scanning.data;
   const run = async () => {
     setBusy(true); setError('');
     try {
@@ -93,7 +94,7 @@ export function LocalAgentsDialog({ onClose, onDone }: { onClose: () => void; on
   };
   return <Modal title="Import my agents" subtitle="Discover Codex, Claude Code and Copilot definitions in personal and configured folders. Copies enter the library as drafts; originals stay in place." onClose={() => { if (!busy) onClose(); }} wide>
     <InlineError error={error} />
-    {!entries ? <p>Reading agent folders…</p> : !entries.length ? <p>No agent definitions found.</p> : <div className="inventory-list">{entries.map(entry => <div key={key(entry)}><label className="check-row"><input type="checkbox" disabled={busy || Boolean(entry.error)} checked={chosen.has(key(entry))} onChange={() => setChosen(current => { const next = new Set(current); if (next.has(key(entry))) next.delete(key(entry)); else next.add(key(entry)); return next; })} /><span><b>{entry.name}</b><small> · {entry.provider}</small><code className="path-text">{entry.path}</code>{entry.error && <p className="error-box">{entry.error}</p>}{entry.validation.length > 0 && <p className="small muted">{entry.validation[0]}</p>}</span></label>{entry.imported && <Badge status="imported" />}</div>)}</div>}
+    {!entries ? scanning.error ? <LoadError error={scanning.error} onRetry={scanning.retry} /> : <Waiting since={scanning.since} label="Reading agent folders">Reading agent folders…</Waiting> : !entries.length ? <p>No agent definitions found.</p> : <div className="inventory-list">{entries.map(entry => <div key={key(entry)}><label className="check-row"><input type="checkbox" disabled={busy || Boolean(entry.error)} checked={chosen.has(key(entry))} onChange={() => setChosen(current => { const next = new Set(current); if (next.has(key(entry))) next.delete(key(entry)); else next.add(key(entry)); return next; })} /><span><b>{entry.name}</b><small> · {entry.provider}</small><code className="path-text">{entry.path}</code>{entry.error && <p className="error-box">{entry.error}</p>}{entry.validation.length > 0 && <p className="small muted">{entry.validation[0]}</p>}</span></label>{entry.imported && <Badge status="imported" />}</div>)}</div>}
     <div className="modal-actions"><span>{chosen.size} selected</span><button className="button" disabled={busy || !entries?.length} onClick={() => setChosen(new Set(entries?.filter(e => !e.error).map(key)))}>Select all</button><button className="button" disabled={busy} onClick={() => setChosen(new Set())}>Clear selection</button><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !chosen.size} onClick={() => void run()}>{busy ? 'Importing…' : `Import ${chosen.size}`}</button></div>
   </Modal>;
 }

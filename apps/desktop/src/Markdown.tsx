@@ -1,7 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from './api';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 
 type Node = { type: string; value?: string; children?: Node[]; data?: Record<string, unknown> };
 /**
@@ -21,7 +21,8 @@ function remarkVariables() {
   return (tree: Node) => walk(tree);
 }
 
-export function Markdown({ children, variables = false }: { children: string; /** Highlights {{variables}}. */ variables?: boolean }) {
+/** Rendered Markdown. Memoised on its text: parsing is the costly part, and the item page renders on every poll. */
+export const Markdown = memo(function Markdown({ children, variables = false }: { children: string; /** Highlights {{variables}}. */ variables?: boolean }) {
   const [error, setError] = useState('');
   return <div className="markdown-content"><ReactMarkdown remarkPlugins={variables ? [remarkGfm, remarkVariables] : [remarkGfm]} components={{
     a: ({ href, children }) => /^https?:\/\//i.test(href ?? '')
@@ -29,4 +30,4 @@ export function Markdown({ children, variables = false }: { children: string; /*
       : <span>{children}</span>,
     img: ({ alt }) => <span className="muted">{alt ? `[Image: ${alt}]` : '[Image]'}</span>,
   }}>{children}</ReactMarkdown>{error && <p role="alert" className="error-box">{error}</p>}</div>;
-}
+});

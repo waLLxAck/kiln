@@ -10,6 +10,7 @@ import { ProviderSelect, useStart } from './AgentPanel';
 import { ExperimentProject } from './ExperimentProject';
 import { LineDiff } from './Diff';
 import { Markdown } from './Markdown';
+import { LoadError, useLoad, Waiting } from './Loading';
 import { askAgent } from './TrialLoop';
 import { applyMessage, scoreStale, scoreTone, sortedImprovements } from './score-model';
 import './score.css';
@@ -92,13 +93,13 @@ function TuneFileView({ file }: { file: TuneFile }) {
 }
 /** What a Tune run proposes, file by file against the revision it started from, with its report. Accept saves one draft revision. */
 export function TuneReview({ jobId, onClose, onAccepted }: { jobId: string; onClose: () => void; onAccepted: () => void }) {
-  const [data, setData] = useState<Proposal | null>(null), [error, setError] = useState(''), [open, setOpen] = useState<string | null>(null), [busy, setBusy] = useState(false), [summary, setSummary] = useState('');
-  useEffect(() => { void api<Proposal>('agent.tuneProposal', { id: jobId }).then(p => { setData(p); setSummary(`Tuned: ${p.summary}`.slice(0, 500)); setOpen(p.files.find(f => f.status !== 'same')?.path ?? null); }).catch(e => setError(e instanceof Error ? e.message : String(e))); }, [jobId]);
+  const [error, setError] = useState(''), [open, setOpen] = useState<string | null>(null), [busy, setBusy] = useState(false), [summary, setSummary] = useState('');
+  const reading = useLoad(async () => { const p = await api<Proposal>('agent.tuneProposal', { id: jobId }); setSummary(`Tuned: ${p.summary}`.slice(0, 500)); setOpen(p.files.find(f => f.status !== 'same')?.path ?? null); return p; }, [jobId]), data = reading.data;
   const act = (method: 'agent.tuneAccept' | 'agent.tuneDiscard') => { setBusy(true); setError(''); void api(method, { id: jobId, ...(method === 'agent.tuneAccept' ? { summary } : {}) }).then(() => { if (method === 'agent.tuneAccept') onAccepted(); onClose(); }).catch(e => { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }); };
   const differing = data?.files.filter(f => f.status !== 'same') ?? [];
   return <Modal title="Review Tune changes" subtitle={data ? `From revision ${shortHash(data.revision)}` : undefined} onClose={onClose} wide>
     <InlineError error={error} />
-    {!data ? !error && <p className="muted">Reading the tuned skill…</p> : <>
+    {!data ? reading.error ? <LoadError error={reading.error} onRetry={reading.retry} /> : <Waiting since={reading.since} label="Reading the tuned skill">Reading the tuned skill…</Waiting> : <>
       <div className="compare-summary"><b>{differing.length ? `${differing.length} of ${data.files.length} file${data.files.length === 1 ? '' : 's'} changed` : 'Nothing changed'}</b>{data.skipped.length > 0 && <span title={data.skipped.join('\n')}>{data.skipped.length} left out</span>}</div>
       <ul className="compare-files">{data.files.map(file => <li key={file.path} className={file.status}><button className={`compare-file ${open === file.path ? 'open' : ''}`} onClick={() => setOpen(open === file.path ? null : file.path)}><FileDiff size={13} /><code>{file.path}</code><span className={`badge ${fileBadge[file.status]}`}>{fileLabel[file.status]}</span></button>{open === file.path && <TuneFileView file={file} />}</li>)}</ul>
       <details className="tune-report"><summary>Run report</summary><Markdown>{data.report}</Markdown></details>

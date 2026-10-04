@@ -85,7 +85,9 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drift, setDrift] = useState<(Receipt & { drifted: boolean; checkedAt: string; error?: string })[]>([]);
   const fetched = useRef(false);
-  const load = useCallback(async (fetch = false) => { if (!multiMachine) return; try { setView(await api<FleetView>('fleet.view', { fetch })); } catch (error) { onMessage(error instanceof Error ? error.message : String(error)); } }, [onMessage]);
+  // A failed read says so on the share line, with Retry, instead of leaving "Reading machines…" up.
+  const [viewError, setViewError] = useState('');
+  const load = useCallback(async (fetch = false) => { if (!multiMachine) return; try { setView(await api<FleetView>('fleet.view', { fetch })); setViewError(''); } catch (error) { setViewError(error instanceof Error ? error.message : String(error)); } }, []);
   // Fetch from GitHub when the view opens (the backend throttles it); re-read locally whenever the snapshot changes.
   useEffect(() => { void load(!fetched.current); fetched.current = true; }, [snapshot, load]);
   useEffect(() => { if (!multiMachine) void api<MachineIdentity>('fleet.identity').then(setIdentity).catch(() => {}); }, []);
@@ -149,7 +151,7 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
   const rename = (name: string) => void perform(async () => { await api('fleet.rename', { name }); setRenaming(null); await load(); }, 'Machine renamed');
 
   const publish = view?.publish;
-  const publishLine = !view ? 'Reading machines…' : !view.ready ? 'Not shared: this library has no GitHub remote. Finish the GitHub setup in Settings.'
+  const publishLine = !view ? viewError ? `Couldn’t read machines: ${viewError}` : 'Reading machines…' : !view.ready ? 'Not shared: this library has no GitHub remote. Finish the GitHub setup in Settings.'
     : publish?.state === 'queued' ? 'Sharing with GitHub…'
     : publish?.state === 'behind' ? 'Pull from GitHub to share this machine’s state.'
     : publish?.state === 'failed' ? `Not shared: ${publish.error ?? 'the push failed'}`
@@ -175,7 +177,8 @@ export function MachinesView({ snapshot, installations, providers, perform, refr
       <div className={`fleet-machine ${selected === 'all' ? 'active' : ''}`}><button role="tab" aria-selected={selected === 'all'} className="fleet-machine-button" onClick={() => { setSelected('all'); setOpen(null); }}><span className="fleet-machine-icon"><Layers3 size={16} /></span><span className="fleet-machine-text"><b>All machines</b><small>{machines.length} machine{machines.length === 1 ? '' : 's'}</small></span></button></div>
       <span className="fleet-grow" />
       <div className="fleet-share">
-        <span className={`fleet-share-state ${publish?.state === 'behind' || publish?.state === 'failed' ? 'warn' : ''}`} role="status"><Share2 size={13} />{publishLine}</span>
+        <span className={`fleet-share-state ${publish?.state === 'behind' || publish?.state === 'failed' || (!view && viewError) ? 'warn' : ''}`} role="status"><Share2 size={13} />{publishLine}</span>
+        {!view && viewError && <button className="text-button" onClick={() => void load()}>Retry</button>}
         {(publish?.state === 'behind' || (view && !view.ready)) && <button className="text-button" onClick={onSettings}>Open Settings</button>}
         <button className="button" disabled={!view?.ready || publish?.state === 'queued'} title="Share this machine’s installs with your other machines now" onClick={() => void perform(async () => { await api('fleet.report'); await load(); })}><RefreshCw size={14} />Report now</button>
       </div>

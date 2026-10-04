@@ -9,10 +9,10 @@ const chips: Purpose[] = ['instructions', 'settings', 'hooks', 'mcp'];
 const shortDate = (value: string) => { const when = new Date(value); return when.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(when.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) }); };
 function stored(key: string): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(key) ?? '[]')); } catch { return new Set(); } }
 
-type Props = { files: HomeList | null; selected: string; onSelect: (key: string) => void; onCreate: (file: HomeFile) => void; hasDraft: (key: string) => boolean; onRefresh: () => void; onAddProject: () => void; onAddFile: () => void };
+type Props = { files: HomeList | null; /** Reading the list failed; the main pane says why and offers Retry. */ failed?: boolean; selected: string; onSelect: (key: string) => void; onCreate: (file: HomeFile) => void; hasDraft: (key: string) => boolean; onRefresh: () => void; onAddProject: () => void; onAddFile: () => void };
 
 /** The Config files tree: agent → scope → file, one line each. Files that do not exist yet fold into "N not created" per agent. */
-export function ConfigTree({ files, selected, onSelect, onCreate, hasDraft, onRefresh, onAddProject, onAddFile }: Props) {
+export function ConfigTree({ files, failed = false, selected, onSelect, onCreate, hasDraft, onRefresh, onAddProject, onAddFile }: Props) {
   const [query, setQuery] = useState('');
   const [purpose, setPurpose] = useState<Purpose | null>(null);
   const [collapsed, setCollapsed] = useState(() => stored('kiln-config-collapsed'));
@@ -82,7 +82,7 @@ export function ConfigTree({ files, selected, onSelect, onCreate, hasDraft, onRe
         </div>;
       })}
       {files && !visible.length && <div className="cfg-none">{all.length ? 'No files match this filter.' : 'No files found.'}</div>}
-      {!files && <div className="cfg-none">Reading your home folder…</div>}
+      {!files && !failed && <div className="cfg-none">Reading your home folder…</div>}
     </div>
     <div className="cfg-treefoot">
       <button className="button" onClick={onAddProject} title="Lists a project's CLAUDE.md, AGENTS.md, settings, hooks and MCP files"><FolderPlus size={14} />Add project folder</button>

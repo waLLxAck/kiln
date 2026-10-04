@@ -8,6 +8,8 @@ import './session-start.css';
 
 type Props = {
   snapshot: Snapshot; installations: Installation[];
+  /** Changes when installed copies may have changed (App.tsx); the breakdown is asked for again then, and on opening it. */
+  stamp: unknown;
   onOpenItem: (id: string) => void; onInvocation: (item: Item, model: boolean) => void;
 };
 const projectKey = 'kiln-session-project';
@@ -24,11 +26,11 @@ const shown = (h: HarnessContext) => h.present || h.skills.rows.length > 0 || h.
  * "Session start" in the status bar: roughly what each harness hands the model when a new session starts here (skill
  * descriptions, instruction files), with what cannot be sized listed beside it (hooks, MCP servers, the system prompt). The
  * breakdown opens above it; skill rows open the item and carry the model-invocation switch, so turning one off shows the drop.
- * Asked again whenever the library or its installs change; the backend re-reads only files that changed.
+ * Asked again once per change of the installs (`stamp`) and when the breakdown is opened; the backend re-reads only files that changed.
  */
-export function SessionStartStatus({ snapshot, installations, onOpenItem, onInvocation }: Props) {
+export function SessionStartStatus({ snapshot, installations, stamp, onOpenItem, onInvocation }: Props) {
   const [data, setData] = useState<SessionStart | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false), [asked, setAsked] = useState(0);
   const [tab, setTab] = useState<Harness>('claude');
   const [project, setProject] = useState(() => localStorage.getItem(projectKey) ?? '');
   const box = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
@@ -38,7 +40,8 @@ export function SessionStartStatus({ snapshot, installations, onOpenItem, onInvo
       // A remembered project that has gone: fall back to personal files only.
       .catch(() => { if (active && project) { localStorage.removeItem(projectKey); setProject(''); } }), 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [snapshot, installations, project]);
+  }, [stamp, project, asked]);
+  useEffect(() => { if (open) setAsked(n => n + 1); }, [open]);
   useEffect(() => {
     if (!open) return;
     const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); };

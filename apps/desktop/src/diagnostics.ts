@@ -1,5 +1,5 @@
 import { api } from './api';
-const report = (event: string, fields: Record<string, unknown> = {}) => { void api('desktop.telemetry', { event, ...fields }).catch(() => {}); };
+export const report = (event: string, fields: Record<string, unknown> = {}) => { void api('desktop.telemetry', { event, ...fields }).catch(() => {}); };
 export function startDiagnostics() {
   let previous = performance.now();
   setInterval(() => { const current = performance.now(); if (!document.hidden && current - previous > 1500) report('renderer.stall', { durationMs: Math.round(current - previous - 1000) }); previous = current; }, 1000);
