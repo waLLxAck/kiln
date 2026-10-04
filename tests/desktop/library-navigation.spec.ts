@@ -127,3 +127,28 @@ test('existing grouping and saved filters survive the view-memory upgrade', asyn
     await expect(f.page.getByRole('button', { name: /^Group by:/ })).toContainText('Type');
   } finally { await f.close(); }
 });
+
+test('recently added and every named grouping preserve the complete library', async () => {
+  const f = await fixture();
+  try {
+    const original = await titles(f.page).allTextContents();
+    const quick = f.page.getByRole('group', { name: 'Quick sort' });
+    await quick.getByRole('button', { name: 'Title A–Z', exact: true }).click();
+    await expect(titles(f.page)).toHaveText(['API reference', 'Code review', 'Release checklist', 'Research outline']);
+    await quick.getByRole('button', { name: 'Recently added', exact: true }).click();
+    await expect(titles(f.page)).toHaveText(original);
+    for (const [name, labels] of [
+      ['Collection', ['Research', 'Tooling']],
+      ['Type', ['Sources', 'Prompts', 'Skills']],
+      ['Status', ['Approved', 'Drafts']],
+    ] as const) {
+      await groupBy(f.page, name);
+      await expect(f.page.locator('.lib-group .ellipsis')).toHaveText([...labels]);
+      await expect(titles(f.page)).toHaveCount(4);
+      await f.page.getByRole('button', { name: 'Collapse all', exact: true }).click();
+      await expect(titles(f.page)).toHaveCount(0);
+      await f.page.getByRole('button', { name: 'Expand all', exact: true }).click();
+      await expect(titles(f.page)).toHaveCount(4);
+    }
+  } finally { await f.close(); }
+});

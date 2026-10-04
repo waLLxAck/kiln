@@ -54,7 +54,7 @@ export class Backend {
   private markOpened!: () => void;
   private markFailed!: (error: Error) => void;
   /** Settles once a worker has opened the library, or with the reason Kiln cannot start after the restarts ran out. */
-  readonly opened = new Promise<void>((resolve, reject) => { this.markOpened = resolve; this.markFailed = reject; });
+  opened = new Promise<void>((resolve, reject) => { this.markOpened = resolve; this.markFailed = reject; });
   /** `cli` tells the agent service where Kiln's own CLI can be run from, so a chat agent can change the library through it. */
   constructor(private root: string, private local: string, private log: (event: string, fields?: Record<string, unknown>) => void, private cli: { node: string; script: string }, options: BackendOptions = {}) {
     this.workerFile = options.workerFile ?? path.join(__dirname, 'backend-worker.cjs');
@@ -163,6 +163,15 @@ export class Backend {
       this.pending.set(id, entry);
       if (entry.posted) this.worker.postMessage(entry.message);
     });
+  }
+  /** An explicit startup Retry gets a new opening attempt after automatic restarts are exhausted. */
+  retryOpening(): boolean {
+    if (!this.failure || this.readyAt || this.closing) return false;
+    this.failure = undefined; this.restarts = [];
+    this.opened = new Promise<void>((resolve, reject) => { this.markOpened = resolve; this.markFailed = reject; });
+    this.opened.catch(() => {});
+    this.spawn();
+    return true;
   }
   close() { this.closing = true; clearInterval(this.timer); clearTimeout(this.restartTimer); this.stopAgents(); void this.worker.terminate(); }
 }
