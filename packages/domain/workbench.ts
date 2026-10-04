@@ -1,4 +1,5 @@
 import { privateAttachment, shareableAuthoring, shareableTrial } from './privacy';
+import { migrateProvenance } from './provenance';
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -255,9 +256,15 @@ export class Workbench {
     this.completeSave(journal, updated, record);
     return updated;
   }
-  /** Old snapshots remain available locally; current private attachments become a clean, unapproved draft. */
+  /** Provenance-only cleanup preserves decisions; removing private attachments creates an unapproved draft. */
   private cleanPrivateContent() {
     this.mutate(() => {
+      try {
+        for (const id of migrateProvenance(this)) { this.itemCache.delete(id); this.fingerprints.delete(id); }
+      } catch (error) {
+        this.itemCache.clear(); this.fingerprints.clear();
+        this.warnings.push(`Provenance cleanup could not finish and will retry next time: ${String(error)}`); return;
+      }
       for (const item of this.listItems(true)) {
         try {
           const revision = this.getRevision(item.id), safe = shareableAuthoring(revision);
