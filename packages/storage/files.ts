@@ -67,10 +67,12 @@ export const writeJson = (file: string, value: unknown) => atomicWrite(file, JSO
 export const readJson = (file: string): unknown => JSON.parse(fs.readFileSync(file, 'utf8'));
 export function readRecords<T>(dir: string, parse: (value: unknown) => T, warnings?: string[]): T[] {
   if (!fs.existsSync(dir)) return [];
-  // The folder's ancestry is checked once; each record then needs a single lstat rather than a walk from the drive root.
+  // The folder's ancestry is checked once; each record's own type comes with the listing, so no file needs a walk or an lstat.
+  // Callers that read the same folder often keep a RecordFolder (records.ts) instead.
   noLinks(dir);
-  return fs.readdirSync(dir).filter(f => f.endsWith('.json')).flatMap(f => {
-    try { const file = path.join(dir, f); invariant(!fs.lstatSync(file).isSymbolicLink(), 'SYMLINK_REJECTED', `Linked record: ${f}`); return [parse(readJson(file))]; }
+  return fs.readdirSync(dir, { withFileTypes: true }).filter(entry => entry.name.endsWith('.json')).flatMap(entry => {
+    const f = entry.name;
+    try { invariant(!entry.isSymbolicLink(), 'SYMLINK_REJECTED', `Linked record: ${f}`); return [parse(readJson(path.join(dir, f)))]; }
     catch (error) { warnings?.push(`${f}: ${error instanceof Error ? error.message : error}`); return []; }
   });
 }
