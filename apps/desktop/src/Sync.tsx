@@ -84,7 +84,7 @@ export function RepoStatus({ snapshot, refresh, perform, onMessage, onConflicts,
     await refresh();
     const unpushed = result.pushError ? `; couldn’t push this machine’s commits: ${result.pushError}` : '';
     if (result.status === 'pulled') onMessage(`Pulled ${plural(result.count, 'change')} from GitHub${unpushed}`);
-    else if (result.status === 'merged') onMessage(`Merged ${plural(result.count, 'change')} from GitHub${unpushed || ' and pushed this machine’s'}`);
+    else if (result.status === 'merged') onMessage(`Merged ${plural(result.count, 'change')} from GitHub${unpushed || ' and pushed this machine’s commits'}`);
     else if (result.status === 'current') onMessage(unpushed ? `Already up to date with GitHub${unpushed}` : 'Up to date with GitHub');
     else if (result.status === 'blocked') setProblem({ kind: 'blocked', items: result.items, paths: result.paths });
     else setProblem({ kind: 'diverged', ahead: result.ahead, behind: result.behind });

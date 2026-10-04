@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import type { Workbench } from '../domain/workbench';
@@ -147,8 +148,8 @@ const manifests = (wb: Workbench) => { const { prefix } = itemPaths(wb), library
 const later = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' ? (a > b ? a : b) : a ?? b;
 /**
  * Kiln's JSON files that both HEAD and `ref` changed since they parted (manifests, item.json), merged key by key: a line-by-line
- * merge of JSON can succeed and still be wrong, such as one key added twice. `unresolved` are item.json files whose sides
- * really disagree (a different revision on each), and files one side deleted; those are left to Git and the user.
+ * merge of JSON can succeed and still be wrong, such as one key added twice. `unresolved` are item.json files where both sides
+ * changed more than organisation (content, revision, status), and files one side deleted; those are left to Git and the user.
  */
 export function mergeJsonFiles(wb: Workbench, ref: string) {
   const { split } = itemPaths(wb), shared = manifests(wb), isItem = (file: string) => { const part = split(file); return Boolean(part && uuid.test(part.id) && part.rest === 'item.json'); };
@@ -160,7 +161,9 @@ export function mergeJsonFiles(wb: Workbench, ref: string) {
     try {
       let before: unknown = {}; try { before = read(parted, file); } catch { /* Added on both sides. */ }
       const mine = read('HEAD', file), theirs = read(ref, file), merged = mergeJson(before, mine, theirs);
-      if (isItem(file) && merged.clashes.some(key => !organisation.has(key))) { unresolved.push(file); continue; }
+      // An item's content, revision or status changed on both sides needs the user, even when no single key clashes: a withdrawn
+      // approval of one revision must not land on the newer revision the other machine approved.
+      if (isItem(file) && (!isRecord(before) || !isRecord(mine) || !isRecord(theirs) || (withoutOrganisation(mine) !== withoutOrganisation(before) && withoutOrganisation(theirs) !== withoutOrganisation(before)))) { unresolved.push(file); continue; }
       if (isItem(file) && isRecord(merged.value) && isRecord(mine) && isRecord(theirs)) merged.value.updatedAt = later(mine.updatedAt, theirs.updatedAt);
       files[file] = JSON.stringify(merged.value, null, 2) + '\n';
     } catch { unresolved.push(file); }
@@ -222,7 +225,7 @@ function mergeCommit(wb: Workbench, ref: string) {
   if (unresolved.length || [...conflictedPaths(entries)].some(file => !(file in files))) return null;
   let merged = tree;
   if (Object.keys(files).length) {
-    const index = path.join(wb.canonical, `.git-index-merge-${process.pid}`);
+    const index = path.join(wb.canonical, `.git-index-merge-${process.pid}-${randomUUID()}`);
     const run = (args: string[], input?: string) => execFileSync('git', [...base, '-C', wb.root, ...args], { encoding: 'utf8', input, windowsHide: true, timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GIT_INDEX_FILE: index } }).trim();
     try {
       run(['read-tree', tree]);
@@ -335,6 +338,10 @@ export function pullFetched(wb: Workbench): PullResult {
   // New and changed items show at once rather than when the folder watcher catches up.
   if (result.status === 'pulled' || result.status === 'merged') wb.refresh();
   return result;
+}
+/** Whether GitHub's commits, as of the last fetch, change anything in the item's folder that this machine has not got. */
+export function changedOnGitHub(wb: Workbench, itemId: string) {
+  try { return Boolean(git(wb.root, ['diff', '--name-only', 'HEAD...@{upstream}', '--', `${itemPaths(wb).prefix}${itemId}`]).trim()); } catch { return false; }
 }
 /** Whether GitHub, as of the last fetch, has `commit`. */
 export function onGitHub(root: string, commit: string) {

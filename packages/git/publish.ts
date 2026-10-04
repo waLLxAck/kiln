@@ -12,7 +12,7 @@ import { revisionHash } from '../domain/content';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
 import type { PublishAction, PublishJob } from '../protocol/schema';
 import { organisationPlan } from './organise';
-import { BackgroundFetch, mergeInProgress, onGitHub, pullFetched, pushToGitHub } from './sync';
+import { BackgroundFetch, changedOnGitHub, mergeInProgress, onGitHub, pullFetched, pushToGitHub } from './sync';
 import { GitQueue } from './queue';
 export type { PublishAction, PublishJob, PublishStatus } from '../protocol/schema';
 export type ComposeInput = { action: PublishAction; title: string; kind: string; summary: string; diff: string; revision: string; model: string; effort: string; folder: string; signal: AbortSignal };
@@ -105,10 +105,13 @@ export class Publisher {
   /**
    * When the last fetch found GitHub ahead and this machine has nothing of its own waiting, the commit is built on GitHub's
    * commits, so history stays a line. Anything in the way is left for the push, which merges when it has to.
+   * Not when GitHub changed the job's own item: the snapshot was taken before, and committing it on top would replace GitHub's
+   * version unseen. Built on the older commit instead, the push is refused and the merge stops on that item for the user.
    */
-  private catchUp() {
+  private catchUp(itemId = '') {
     const state = gitStatus(this.wb.root);
     if (!state.behind || state.ahead || mergeInProgress(this.wb.root)) return;
+    if (itemId && changedOnGitHub(this.wb, itemId)) { this.log('publish.catchUp', { status: 'skipped', itemId }); return; }
     try { const result = pullFetched(this.wb); this.log('publish.catchUp', { status: result.status }); }
     catch (error) { this.log('publish.catchUp.failed', { message: error instanceof Error ? error.message : String(error) }); }
   }
@@ -226,7 +229,7 @@ export class Publisher {
   private async commitAndPush(job: PublishJob) {
     const snapshotFile = path.join(this.folder, 'snapshots', `${job.id}.json`);
     if (!fs.existsSync(snapshotFile)) this.snapshot(job);
-    this.catchUp();
+    this.catchUp(job.itemId);
     if (job.action === 'approve') invariant(this.wb.approvals().some(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approval was withdrawn before publishing.');
     const snapshot = readJson(snapshotFile) as { files: Record<string, string>; replace: string[]; install?: { path: string; providers: string[] } };
     // Merge this item's captured intent into the latest published manifest, so queued items cannot erase each other.

@@ -171,6 +171,22 @@ test('an approval whose push GitHub refuses fetches, merges and pushes again by 
   } finally { w.close(); }
 });
 
+test('a waiting approval never replaces a newer version of its item that another machine pushed', async () => {
+  const w = world();
+  try {
+    const shared = await publish(w.a, 'Shared', 'shared-skill');
+    await catchUp(w.b);
+    const theirs = await edit(w.b, w.b.wb.getItem(shared.id), '\nImproved on the laptop.');
+    w.b.router.approve(approveArgs(theirs)); await w.b.router.publisher.idle();
+    await w.a.router.fetcher.fetch();
+    // This machine withdraws its approval of the older revision, knowing GitHub has a newer one of the same item.
+    w.a.router.unapprove({ id: shared.id, revision: shared.revision, reason: 'Withdrawn' }); await w.a.router.publisher.idle();
+    const published = JSON.parse(run(w.origin, 'show', `HEAD:workbench/items/${shared.id}/item.json`)) as Item;
+    assert.equal(published.revision, theirs.revision, 'GitHub keeps the laptop’s revision');
+    assert.equal(published.status, 'approved');
+  } finally { w.close(); }
+});
+
 test('desired installs and collections changed on both machines are merged, not called drafts', async () => {
   const w = world();
   try {
@@ -210,6 +226,7 @@ test('Merge from GitHub merges manifests by itself and leaves only the contested
     await w.a.router.call('git.finishMerge');
     assert.equal(run(w.origin, 'rev-parse', 'HEAD'), w.a.git('rev-parse', 'HEAD'), 'the finished merge is pushed');
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.a.wb.canonical, 'installs.json'), 'utf8'))[id], ['claude', 'codex'], 'GitHub’s install and the one waiting here');
+    assert.deepEqual(JSON.parse(w.a.git('show', 'HEAD:workbench/installs.json'))[id], ['claude'], 'the one waiting here is not in the merge commit');
   } finally { w.close(); }
 });
 
