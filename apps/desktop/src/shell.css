@@ -109,6 +109,12 @@ body:has(.app-shell > .toast) .run-toast { bottom: 80px; }
 .item-bar-pos { font-variant-numeric: tabular-nums; margin-right: 2px; }
 .item-bar .icon-button { width: 26px; height: 26px; }
 .item-bar-esc { margin-left: auto; }
-.item-loading { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.item-loading { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 24px; font-size: 13px; color: var(--muted); text-align: center; }
+/* Loading.tsx: a load that is taking a while, and one that failed, with Retry. */
+.load-wait { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.load-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; color: var(--text-2); }
+.load-error.block { flex-direction: column; }
+.load-error-text { display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.load-error-text svg { flex-shrink: 0; color: var(--warn); }
 
 @media (max-width: 1100px) { .top-search span { display: none; } .top-search { flex: 0 0 auto; min-width: 0; } }

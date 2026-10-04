@@ -13,6 +13,8 @@ import { noteDraft, useDraftMark } from './code-editor-state';
 import './editor.css';
 
 type Perform = (action: () => Promise<unknown>, message?: string) => Promise<void>;
+/** How long after the last edit the private draft is written. */
+const DRAFT_WRITE_MS = 400;
 
 /**
  * The item page's one edit flow: content, fields and bundled text files, kept together in the item's private draft
@@ -49,12 +51,22 @@ export function useItemDraft(detail: ItemDetail, perform: Perform, refresh: () =
     const previous = seen.current; seen.current = revision;
     if (!editing || (content === previous.content && !Object.keys(files).length && base === previous.hash)) { setContent(revision.content); setBase(revision.hash); }
   }, [revision.hash]);
+  // The draft is written a moment after typing stops, not per keystroke (serialising a skill with its files is not free); a
+  // write still waiting goes out at once when the page closes, another item opens or the window unloads.
+  const pendingWrite = useRef<{ id: string; write: () => void } | null>(null);
+  const flushDraft = () => { const pending = pendingWrite.current; pendingWrite.current = null; pending?.write(); };
   useEffect(() => {
-    if (!editing) return;
-    if (!changed) { localStorage.removeItem(draftKey(item.id)); noteDraft(item.id, false); setStorageFull(false); return; }
-    try { localStorage.setItem(draftKey(item.id), serialiseDraft({ content, base, meta, files })); noteDraft(item.id, true); setStorageFull(false); }
-    catch { setStorageFull(true); }
+    if (pendingWrite.current && pendingWrite.current.id !== item.id) flushDraft();
+    if (!editing) { pendingWrite.current = null; return; }
+    if (!changed) { pendingWrite.current = null; localStorage.removeItem(draftKey(item.id)); noteDraft(item.id, false); setStorageFull(false); return; }
+    noteDraft(item.id, true);
+    const id = item.id, text = { content, base, meta, files };
+    const write = () => { try { localStorage.setItem(draftKey(id), serialiseDraft(text)); setStorageFull(false); } catch { setStorageFull(true); } };
+    pendingWrite.current = { id, write };
+    const timer = setTimeout(flushDraft, DRAFT_WRITE_MS);
+    return () => clearTimeout(timer);
   }, [editing, changed, content, base, meta, files, item.id]);
+  useEffect(() => { window.addEventListener('pagehide', flushDraft); return () => { window.removeEventListener('pagehide', flushDraft); flushDraft(); }; }, []);
 
   // Decoded once per revision: the text of each bundled file that can be edited, or null when it is kept as it is.
   const texts = useMemo(() => Object.fromEntries(Object.entries(revision.files).map(([name, data]) => [name, editableText(data)])) as Record<string, string | null>, [revision.hash]);
@@ -76,7 +88,7 @@ export function useItemDraft(detail: ItemDetail, perform: Perform, refresh: () =
     if (!editing) { setContent(revision.content); setBase(revision.hash); setMeta({}); setFiles({}); setEditing(true); }
     if (file !== undefined) setOpen(file);
   };
-  const clear = () => { localStorage.removeItem(draftKey(item.id)); noteDraft(item.id, false); setEditing(false); setMeta({}); setFiles({}); setOpen(null); setStorageFull(false); setContent(revision.content); setBase(revision.hash); };
+  const clear = () => { pendingWrite.current = null; localStorage.removeItem(draftKey(item.id)); noteDraft(item.id, false); setEditing(false); setMeta({}); setFiles({}); setOpen(null); setStorageFull(false); setContent(revision.content); setBase(revision.hash); };
   return {
     editing, content, base, values, files, texts, names, open, checks, storageFull,
     /** Unsaved edits, or a base the item has moved past. */ dirty: changed || base !== item.revision,

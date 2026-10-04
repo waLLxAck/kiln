@@ -12,6 +12,7 @@ import { commitUrl, parseGitHubRepo, repoName, repoSourceOf, type GitHubRepoLink
 import { detectLayout, folderLicence, type RepoLayout } from './repo-layout';
 import { contentKey, skillBundle } from './skills-import';
 import type { Workbench } from './workbench';
+import { factsCache } from './revision-facts';
 
 /** How a found skill or agent compares with the library: not there, the same bytes as an item (its current or approved revision), or a different version of one. */
 export type RepoEntryStatus = 'new' | 'identical' | 'differs';
@@ -87,23 +88,28 @@ export class RepoImports {
     this.fetched.set(key, { at: Date.now(), checkout }); checkout.catch(() => this.fetched.delete(key));
     return checkout;
   }
-  /** Library skills and agents by content (current and approved revision), by the repository path they were imported from, and by name. */
+  /**
+   * Library skills and agents by content (current and approved revision), by the repository path they were imported from, and by
+   * name. Content keys come from the revision facts cache (revision-facts.ts), so a scan reads no library revision it read before.
+   */
   private library() {
+    const facts = factsCache(this.wb);
     const approvedAt = new Map<string, { revision: string; at: string }>();
     for (const a of this.wb.approvals()) if (a.trust === 'local' && (approvedAt.get(a.itemId)?.at ?? '') < a.createdAt) approvedAt.set(a.itemId, { revision: a.revision, at: a.createdAt });
     const byContent = new Map<string, { item: Item; against: 'approved' | 'current' }>(), byOrigin = new Map<string, Item>(), byName = new Map<string, Item>();
     const keyOf = (kind: Item['kind'], value: Authoring) => kind === 'skill' ? `skill:${contentKey(value)}` : `agent:${agentKey(value)}`;
     for (const item of this.wb.listItems().filter(i => i.kind === 'skill' || i.kind === 'agent')) {
       try {
-        const current = this.wb.getRevision(item.id), approved = approvedAt.get(item.id)?.revision;
-        byContent.set(keyOf(item.kind, current), { item, against: approved === current.hash ? 'approved' : 'current' });
-        if (approved && approved !== current.hash) byContent.set(keyOf(item.kind, this.wb.getRevision(item.id, approved)), { item, against: 'approved' });
+        const current = facts.get(item), approved = approvedAt.get(item.id)?.revision;
+        byContent.set(`${item.kind}:${current.key}`, { item, against: approved === item.revision ? 'approved' : 'current' });
+        if (approved && approved !== item.revision) byContent.set(`${item.kind}:${facts.get(item, approved).key}`, { item, against: 'approved' });
         const origin = parseGitHubRepo(item.source);
         if (origin?.rest) byOrigin.set(`${item.kind}:${repoName(origin).toLowerCase()}:${origin.rest.split('/').slice(1).join('/')}`, item);
         if (!byName.has(`${item.kind}:${item.title.toLowerCase()}`)) byName.set(`${item.kind}:${item.title.toLowerCase()}`, item);
       } catch { /* A damaged item cannot be matched; it is reported elsewhere. */ }
     }
-    return { byContent, byOrigin, byName, keyOf, approvedAt };
+    facts.save();
+    return { byContent, byOrigin, byName, keyOf, approvedAt, facts };
   }
   /** Reads every found skill and agent from the checkout as a draft bundle and compares it with the library. */
   private found(link: GitHubRepoLink, checkout: Checkout, layout: RepoLayout, collection: string): Found[] {
@@ -114,7 +120,7 @@ export class RepoImports {
       const origin = lib.byOrigin.get(`${kind}:${repoName(link).toLowerCase()}:${relative}`), other = origin ?? lib.byName.get(`${kind}:${bundle.title.toLowerCase()}`);
       if (!other) return { status: 'new' as const, match: null };
       // Imported and untouched since: the first revision, or one an earlier import of this path wrote.
-      let edited = true; try { const current = this.wb.getRevision(other.id); edited = !(current.parent === null || current.summary.startsWith('Updated from ')); } catch { /* unreadable: treat as edited */ }
+      let edited = true; try { const current = lib.facts.get(other); edited = !(current.parent === null || current.summary.startsWith('Updated from ')); } catch { /* unreadable: treat as edited */ }
       return { status: 'differs' as const, match: { itemId: other.id, title: other.title, against: lib.approvedAt.has(other.id) ? 'approved' as const : 'current' as const, sameSource: Boolean(origin), edited: Boolean(origin) && edited } };
     };
     const skills = layout.skills.map((skill): Found => {

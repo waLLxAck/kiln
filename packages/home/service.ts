@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { invariant } from '../domain/errors';
 import { atomicWrite, digest, hash, noLinks, now, readJson, writeJson } from '../storage/files';
 import { configCatalog } from './catalog';
+import { linkGuard } from './link-guard';
+import { RACY_MS } from '../deployment/copies';
 import { parse as parseToml } from 'smol-toml';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser/lib/esm/main';
 
@@ -39,6 +41,8 @@ export class HomeFiles {
   private readonly platform: NodeJS.Platform;
   private readonly probe: NonNullable<Options['probe']>;
   private profiles?: Promise<Profiles>;
+  /** Hash of each listed file by its size and modification time, so listing again (every window focus) reads only what changed. */
+  private hashes = new Map<string, { stamp: string; hash: string }>();
   /** Where client folders are looked up (CLAUDE_CONFIG_DIR, CODEX_HOME, COPILOT_HOME): not the real environment when a home folder is given. */
   readonly env: NodeJS.ProcessEnv;
   constructor(private options: Options = {}) {
@@ -79,8 +83,8 @@ export class HomeFiles {
     })();
     return this.profiles;
   }
-  private async entries(): Promise<Omit<HomeFile, 'exists' | 'size' | 'modifiedAt' | 'hash' | 'error'>[]> {
-    const fixed = configCatalog(this.home, this.projects(), this.env, this.platform);
+  private async entries(guard: (file: string) => void = noLinks): Promise<Omit<HomeFile, 'exists' | 'size' | 'modifiedAt' | 'hash' | 'error'>[]> {
+    const fixed = configCatalog(this.home, this.projects(), this.env, this.platform, guard);
     const profiles = await this.shellProfiles();
     const shells = (Object.entries(profiles) as [Shell, { host: string; all: string }][]).flatMap(([shell, paths]) => [
       { key: `${shell}-host`, kind: 'powershell' as const, label: `${shellLabel[shell]} profile`, description: `Runs every time ${shellLabel[shell]} starts in the console: aliases, functions, prompt and PATH changes.`, path: paths.host, removable: false },
@@ -90,16 +94,23 @@ export class HomeFiles {
     const extras = this.extras().map(file => ({ key: `custom-${digest(file.toLowerCase()).slice(0, 16)}`, kind: 'custom' as const, label: path.basename(file), description: path.dirname(file), path: file, removable: true }));
     return [...fixed, ...shells, ...extras];
   }
-  private stat(file: string): Pick<HomeFile, 'exists' | 'size' | 'modifiedAt' | 'hash' | 'error'> {
+  private stat(file: string, guard: (file: string) => void = noLinks): Pick<HomeFile, 'exists' | 'size' | 'modifiedAt' | 'hash' | 'error'> {
     try {
-      noLinks(file);
-      if (!fs.existsSync(file)) return { exists: false, size: 0, modifiedAt: null, hash: null };
-      const stat = fs.statSync(file); invariant(stat.isFile(), 'INVALID_FILE', 'This path is not a regular file.');
+      guard(file);
+      // The guard found no link on the way, so following the path (stat) sees the file itself.
+      const stat = fs.statSync(file, { throwIfNoEntry: false });
+      if (!stat) { this.hashes.delete(file); return { exists: false, size: 0, modifiedAt: null, hash: null }; }
+      invariant(stat.isFile(), 'INVALID_FILE', 'This path is not a regular file.');
       invariant(stat.size <= LIMIT, 'FILE_TOO_LARGE', 'Files over 2 MB are not edited in Kiln.');
-      return { exists: true, size: stat.size, modifiedAt: stat.mtime.toISOString(), hash: hash(fs.readFileSync(file)) };
+      const stamp = `${stat.size}:${stat.mtimeMs}:${stat.ino}`, known = this.hashes.get(file);
+      const value = known?.stamp === stamp ? known.hash : hash(fs.readFileSync(file));
+      // A file changed a moment ago is read again next time too: a coarse clock may not show a second change (RACY_MS).
+      if (stat.mtimeMs <= Date.now() - RACY_MS) this.hashes.set(file, { stamp, hash: value }); else this.hashes.delete(file);
+      return { exists: true, size: stat.size, modifiedAt: stat.mtime.toISOString(), hash: value };
     } catch (error) { return { exists: false, size: 0, modifiedAt: null, hash: null, error: error instanceof Error ? error.message : String(error) }; }
   }
-  async list(): Promise<HomeList> { return { home: this.home, files: (await this.entries()).map(entry => ({ ...entry, ...this.stat(entry.path) })) }; }
+  /** Every file with what is on disk. Folders on the way are checked for links once per call, and unchanged files are not re-read. */
+  async list(): Promise<HomeList> { const guard = linkGuard(); return { home: this.home, files: (await this.entries(guard)).map(entry => ({ ...entry, ...this.stat(entry.path, guard) })) }; }
   private async entry(key: string) { const found = (await this.entries()).find(e => e.key === keySchema.parse(key)); invariant(found, 'FILE_UNKNOWN', 'This file is not in the list. Refresh and try again.'); return found; }
   private decode(bytes: Buffer) {
     const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;

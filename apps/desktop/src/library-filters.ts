@@ -131,3 +131,22 @@ export const stages: { id: Stage; label: string; hint: string }[] = [
 ];
 export const inStage = (item: Item, stage: Stage | '', copies: Installation[]) => !stage
   || (stage === 'drafts' ? item.status === 'captured' : stage === 'testing' ? item.status === 'testing' : stage === 'approved' ? item.status === 'approved' : installable(item) && copies.some(c => c.itemId === item.id));
+
+/** The rail's numbers (Rail.tsx): the library, Unfiled, Archive, Trash, each stage and each collection with its subfolders. */
+export type RailCounts = { library: number; unfiled: number; archive: number; trash: number; stages: Partial<Record<Stage, number>>; collections: Map<string, number> };
+/**
+ * Counts everything in one pass over the items, so the rail costs the same however many collections there are. Archived and
+ * rejected items (`hidden`) count only under Archive; `inStage` says whether an item is in a stage.
+ */
+export function railCounts(items: Item[], hidden: (item: Item) => boolean, inStage: (item: Item, stage: Stage) => boolean): RailCounts {
+  const counts: RailCounts = { library: 0, unfiled: 0, archive: 0, trash: 0, stages: {}, collections: new Map() };
+  for (const item of items) {
+    if (item.deletedAt) { counts.trash++; continue; }
+    if (hidden(item)) { counts.archive++; continue; }
+    counts.library++;
+    if (!item.collection) counts.unfiled++;
+    else { const parts = item.collection.split('/'); for (let n = 1; n <= parts.length; n++) { const name = parts.slice(0, n).join('/'); counts.collections.set(name, (counts.collections.get(name) ?? 0) + 1); } }
+    for (const s of stages) if (inStage(item, s.id)) counts.stages[s.id] = (counts.stages[s.id] ?? 0) + 1;
+  }
+  return counts;
+}

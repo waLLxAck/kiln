@@ -3,6 +3,7 @@ import { ArrowLeft, Eye, Github, Loader2, Lock, Plus, Sparkles, TriangleAlert, X
 import { api } from './api';
 import { agentStarted } from './AgentPanel';
 import { InlineError, Modal, providerName } from './components';
+import { LoadError, useLoad, Waiting } from './Loading';
 import { Markdown } from './Markdown';
 import { parseGitHubRepo } from '../../../packages/domain/github-url';
 import type { Registry, RepoEntry, RepoImportResult, RepoScan } from '../../../packages/domain/repo-import';
@@ -54,13 +55,9 @@ export function RepositoriesDialog({ start, provider, onClose, onDone }: { start
 }
 
 function Review({ url, provider, onBack, onClose, onDone }: { url: string; provider?: RunProviderId; onBack?: () => void; onClose: () => void; onDone: (summary: string, sourceId?: string) => void | Promise<void> }) {
-  const [scan, setScan] = useState<RepoScan | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState<'' | 'import' | 'dig'>('');
+  const [error, setError] = useState(''), [busy, setBusy] = useState<'' | 'import' | 'dig'>('');
   const [chosen, setChosen] = useState<Set<string>>(new Set()), [collection, setCollection] = useState(''), [open, setOpen] = useState(''), [previews, setPreviews] = useState<Record<string, Preview>>({});
-  useEffect(() => {
-    let live = true;
-    void api<RepoScan>('repos.scan', { url }).then(result => { if (!live) return; setScan(result); setCollection(result.collection); setChosen(new Set(entries(result).filter(e => e.selected).map(e => e.key))); }).catch(e => { if (live) setError(short(e)); });
-    return () => { live = false; };
-  }, [url]);
+  const scanning = useLoad(async () => { const result = await api<RepoScan>('repos.scan', { url }); setCollection(result.collection); setChosen(new Set(entries(result).filter(e => e.selected).map(e => e.key))); return result; }, [url]), scan = scanning.data;
   const all = scan ? entries(scan) : [], offered = all.filter(e => !e.error && e.status !== 'identical');
   const toggle = (key: string) => setChosen(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const preview = (entry: RepoEntry) => {
@@ -101,7 +98,7 @@ function Review({ url, provider, onBack, onClose, onDone }: { url: string; provi
   const facts = scan ? [scan.scope || scan.ref, scan.licence === 'Unknown' ? 'No licence found' : scan.licence, `at ${scan.commit.slice(0, 7)}`].filter(Boolean).join(' · ') : 'Fetching the latest commit…';
   return <Modal title={scan?.name ?? label(url)} subtitle={facts} onClose={() => { if (!busy) onClose(); }} wide>
     <InlineError error={error} />
-    {!scan ? !error && <p className="muted repo-loading"><Loader2 size={14} className="spin" />Scanning the repository. Nothing is imported until you choose.</p> : <>
+    {!scan ? scanning.error ? <LoadError error={scanning.error} onRetry={scanning.retry} /> : <Waiting since={scanning.since} label="Scanning the repository">Scanning the repository. Nothing is imported until you choose.</Waiting> : <>
       <p className="repo-found"><b>{plural(scan.skills.length, 'skill')}, {plural(scan.agents.length, 'agent')} found</b>{scan.instructions.length > 0 && <span className="muted"> · also {scan.instructions.slice(0, 3).join(', ')}{scan.instructions.length > 3 ? ` and ${scan.instructions.length - 3} more` : ''}</span>}{scan.truncated && <span className="muted"> · very large, scan stopped early</span>}</p>
       {all.length > 0 && <div className="repo-list">{rows(scan.skills, 'Skills')}{rows(scan.agents, 'Agents')}</div>}
       <label className="repo-collection"><span>Collection</span><input value={collection} disabled={Boolean(busy)} onChange={e => setCollection(e.target.value)} aria-label="Collection" /></label>
@@ -118,13 +115,13 @@ function Review({ url, provider, onBack, onClose, onDone }: { url: string; provi
 }
 
 function Browse({ onScan, onMine, onClose }: { onScan: (url: string) => void; onMine: () => void; onClose: () => void }) {
-  const [list, setList] = useState<Registry[] | null>(null), [adding, setAdding] = useState(''), [error, setError] = useState('');
-  useEffect(() => { void api<Registry[]>('repos.registries').then(setList).catch(e => setError(short(e))); }, []);
+  const [adding, setAdding] = useState(''), [error, setError] = useState('');
+  const reading = useLoad(() => api<Registry[]>('repos.registries'), []), list = reading.data, setList = reading.setData;
   const save = (next: Registry[]) => api<Registry[]>('repos.saveRegistries', { repositories: next }).then(saved => { setList(saved); setError(''); return true; }).catch(e => { setError(short(e)); return false; });
   const add = () => { const url = adding.trim(); if (!parseGitHubRepo(url)) { setError('Paste a GitHub repository link such as https://github.com/owner/repo.'); return; } void save([...(list ?? []), { url, description: '' }]).then(ok => { if (ok) setAdding(''); }); };
   return <Modal title="Browse skill repositories" subtitle="Well-known public repositories of skills. Scan one to review and preview its skills before importing any." onClose={onClose} wide>
     <InlineError error={error} />
-    {!list ? <p className="muted">Reading the list…</p> : <div className="repo-list">{list.map(r => <div key={r.url} className="repo-row">
+    {!list ? reading.error ? <LoadError error={reading.error} onRetry={reading.retry} /> : <Waiting since={reading.since} label="Reading the list">Reading the list…</Waiting> : <div className="repo-list">{list.map(r => <div key={r.url} className="repo-row">
       <button type="button" className="repo-title repo-link" title={r.url} onClick={() => onScan(r.url)}>{label(r.url)}</button>
       <span className="repo-desc" title={r.description}>{r.description}</span>
       <button type="button" className="button small" onClick={() => onScan(r.url)}>Scan</button>
@@ -136,8 +133,9 @@ function Browse({ onScan, onMine, onClose }: { onScan: (url: string) => void; on
 }
 
 function MyRepositories({ state, setState, onReview, onBack, onClose }: { state: Mine; setState: (update: (current: Mine) => Mine) => void; onReview: (url: string) => void; onBack?: () => void; onClose: () => void }) {
-  const [error, setError] = useState(''), [scanning, setScanning] = useState(false);
-  useEffect(() => { if (!state.repos) void api<Repo[]>('repos.mine').then(repos => setState(current => ({ ...current, repos }))).catch(e => setError(short(e))); }, []);
+  const [error, setError] = useState(''), [scanning, setScanning] = useState(false), [since, setSince] = useState<number | null>(null);
+  const readRepos = () => { setError(''); setSince(Date.now()); void api<Repo[]>('repos.mine').then(repos => setState(current => ({ ...current, repos }))).catch(e => setError(short(e))).finally(() => setSince(null)); };
+  useEffect(() => { if (!state.repos) readRepos(); }, []);
   const words = state.filter.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = (state.repos ?? []).filter(r => words.every(w => `${r.nameWithOwner} ${r.description ?? ''}`.toLowerCase().includes(w)));
   const toggle = (name: string) => setState(current => { const chosen = new Set(current.chosen); if (chosen.has(name)) chosen.delete(name); else chosen.add(name); return { ...current, chosen }; });
@@ -150,9 +148,8 @@ function MyRepositories({ state, setState, onReview, onBack, onClose }: { state:
   };
   const allShown = shown.length > 0 && shown.every(r => state.chosen.has(r.nameWithOwner));
   return <Modal title="Scan my GitHub repositories" subtitle="Your repositories, scanned one commit at a time. Each shows which skills are new, already in the library, or differ from a library item." onClose={() => { if (!scanning) onClose(); }} wide>
-    <InlineError error={error} />
     <input className="setup-filter" placeholder="Filter repositories" value={state.filter} onChange={e => { const filter = e.target.value; setState(current => ({ ...current, filter })); }} aria-label="Filter repositories" />
-    {!state.repos ? !error && <p className="muted repo-loading"><Loader2 size={14} className="spin" />Reading your repositories…</p> : <div className="repo-list">{shown.map(repo => { const found = state.results[repo.nameWithOwner]; return <div key={repo.nameWithOwner} className="repo-row">
+    {!state.repos ? error ? <LoadError error={error} onRetry={readRepos} /> : <Waiting since={since} label="Reading your repositories">Reading your repositories…</Waiting> : <div className="repo-list">{shown.map(repo => { const found = state.results[repo.nameWithOwner]; return <div key={repo.nameWithOwner} className="repo-row">
       <label className="repo-check" title={repo.description || repo.url}><input type="checkbox" disabled={scanning} checked={state.chosen.has(repo.nameWithOwner)} onChange={() => toggle(repo.nameWithOwner)} /><span className="repo-title">{repo.nameWithOwner}</span>{repo.isPrivate && <Lock size={11} className="muted" aria-label="Private" />}</label>
       <span className="repo-desc">{found === null ? <><Loader2 size={12} className="spin" /> Scanning…</> : typeof found === 'string' ? <span className="repo-error" title={found}>{found}</span> : found ? tally(found) : ''}</span>
       {found && typeof found === 'object' && <button type="button" className="button small" onClick={() => onReview(`https://github.com/${repo.nameWithOwner}`)}>Review</button>}

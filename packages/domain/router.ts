@@ -24,7 +24,7 @@ import { ProjectInstalls } from '../deployment/projects';
 import { RepoImports } from './repo-import';
 import { McpServers } from '../deployment/mcp';
 import { UsageService, type LibraryView } from '../usage/service';
-import { skillName } from './content';
+import { factsCache } from './revision-facts';
 
 import { BackgroundFetch, pullFetched, pushToGitHub, type PullResult } from '../git/sync';
 import { GitQueue } from '../git/queue';
@@ -54,6 +54,8 @@ export class Router {
   private organiseTimer?: ReturnType<typeof setTimeout>;
   /** Items whose desired installs changed since the last organisation job was queued. */
   private installsChanged = new Set<string>();
+  /** What organising calls touched since the last organisation job was considered (see `noteOrganised`). */
+  private organiseHint: { ids: Set<string>; all?: boolean; distinct?: boolean } = { ids: new Set() };
   readonly home: HomeFiles;
   /** What each harness loads when a session starts on this machine (home/session-start.ts); caches file reads between calls. */
   readonly sessionStart: SessionStartMeter;
@@ -104,21 +106,41 @@ export class Router {
     const watch = organisingMethods.has(method) && this.autoSyncReady();
     const before = watch ? this.wb.installs() : null;
     const result = this.route(method, args);
-    const settled = () => {
+    const settled = (value: unknown) => {
       if (before) {
         const after = this.wb.installs();
         for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
+        this.noteOrganised(method, args, value);
         this.organiseSoon();
       }
       if (reportTriggers.has(method)) this.fleet.changed();
       if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull' || method === 'sync.push') this.fleet.afterPull();
     };
     // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
-    if (result instanceof Promise) return result.then(value => { settled(); return value; });
-    settled();
+    if (result instanceof Promise) return result.then(value => { settled(value); return value; });
+    settled(result);
     return result;
   }
   private autoSyncReady() { return this.wb.repositoryState().ready; }
+  /**
+   * Which items an organising call touched, from its input and result, so deciding whether to publish looks at those alone (see
+   * `Publisher.organise`). Collection changes can rename the collection of any item, so they ask for every published item.
+   */
+  private noteOrganised(method: string, args: unknown, result: unknown) {
+    if (method.startsWith('collections.')) { this.organiseHint.all = true; return; }
+    if (method === 'items.distinct' || method === 'items.consolidate' || method === 'items.unconsolidate') this.organiseHint.distinct = true;
+    const add = (value: unknown) => {
+      if (typeof value === 'string') this.organiseHint.ids.add(value);
+      else if (Array.isArray(value)) value.forEach(add);
+      else if (value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string') this.organiseHint.ids.add((value as { id: string }).id);
+    };
+    for (const source of [args, result]) {
+      if (Array.isArray(source)) { add(source); continue; }
+      if (!source || typeof source !== 'object') continue;
+      const record = source as Record<string, unknown>;
+      for (const key of ['id', 'ids', 'itemId', 'itemIds', 'keep', 'kept', 'merged', 'restored', 'moved', 'items']) add(record[key]);
+    }
+  }
   /** Organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
   private organiseSoon() {
     clearTimeout(this.organiseTimer);
@@ -128,8 +150,8 @@ export class Router {
   /** Queues the organisation job now instead of after the pause. Returns it, or null when nothing needs publishing. */
   flushOrganisation() {
     clearTimeout(this.organiseTimer); this.organiseTimer = undefined;
-    const installIds = [...this.installsChanged]; this.installsChanged.clear();
-    try { return this.autoSyncReady() ? this.publisher.organise(installIds) : null; }
+    const installIds = [...this.installsChanged], hint = this.organiseHint; this.installsChanged.clear(); this.organiseHint = { ids: new Set() };
+    try { return this.autoSyncReady() ? this.publisher.organise(installIds, hint) : null; }
     catch (error) { this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) }); return null; }
   }
   /**
@@ -137,20 +159,20 @@ export class Router {
    * (approvals whose push GitHub refused, a merge just made). A push that fails is reported beside the pull, which still happened.
    */
   private async pull(): Promise<PullResult & { pushError?: string }> {
-    const result = pullFetched(this.wb);
+    const result = await pullFetched(this.wb);
     if (result.status === 'pulled' || result.status === 'merged') this.log('sync.pulled', { status: result.status, count: result.count });
-    if (result.status === 'blocked' || result.status === 'diverged' || !gitStatus(this.wb.root).ahead) { this.publisher.settle(); return result; }
+    if (result.status === 'blocked' || result.status === 'diverged' || !(await gitStatus(this.wb.root)).ahead) { await this.publisher.settle(); return result; }
     try { await this.pushWaiting(); return result; }
     catch (error) { const pushError = error instanceof Error ? error.message : String(error); this.log('sync.push.failed', { message: pushError }); return { ...result, pushError }; }
   }
   /** Pushes this machine's commits, merging GitHub's first when it has moved on, and marks failed approvals that went with them done. */
   private async pushWaiting() {
     try { return await pushToGitHub(this.wb, this.fetcher); }
-    finally { this.wb.invalidateGit(); this.publisher.settle(); }
+    finally { await this.wb.refreshGit(); await this.publisher.settle(); }
   }
   private route(method: string, args: unknown) {
     switch (method) {
-      case 'snapshot': return { ...this.wb.snapshot(), publish: this.publisher.list() };
+      case 'snapshot': { const snapshot = this.wb.snapshot(); return { ...snapshot, publish: this.publisher.list(), stamps: { installations: this.deployments.installationsStamp(snapshot) } }; }
       case 'publish.jobs': return this.publisher.list();
       case 'publish.retry': return this.publisher.retry(z.object({ id: idSchema }).parse(args).id);
       case 'settings.distill': return this.wb.saveDistillTypes(args);
@@ -275,7 +297,7 @@ export class Router {
       case 'git.merge': return this.gitQueue.run(() => mergeFetched(this.wb));
       case 'git.resolve': return resolveItemConflict(this.wb, args);
       case 'git.finishMerge': return this.gitQueue.run(async () => {
-        const commit = finishMerge(this.wb); this.wb.invalidateGit();
+        const commit = finishMerge(this.wb); await this.wb.refreshGit();
         // The merge is what lets this machine's commits reach GitHub, so they go now; Push now remains if this fails.
         try { await this.pushWaiting(); } catch (error) { this.log('sync.push.failed', { message: error instanceof Error ? error.message : String(error) }); }
         return commit;
@@ -349,24 +371,28 @@ export class Router {
    */
   async usageReport(args: unknown) {
     const { scan } = z.object({ scan: z.boolean().default(true) }).passthrough().parse(args ?? {});
-    if (scan) await this.usage.scan();
-    return this.usage.report(args, this.usageLibrary(true));
+    const status = scan ? await this.usage.scan() : undefined;
+    return this.usage.report(args, this.usageLibrary(true), status);
   }
-  /** Live skills with the names they install and are invoked as (folder name, SKILL.md name, title), Kiln's receipts and, for the report, this machine's copies. */
+  /**
+   * Live skills with the names they install and are invoked as (folder name, SKILL.md name, title), Kiln's receipts and, for the
+   * report, where this machine has copies of them: found as the installations list finds them, but without reading any copy.
+   */
   usageLibrary(withCopies: boolean): LibraryView {
-    const items = this.wb.listItems(), skills: LibraryView['skills'] = [];
+    const items = this.wb.listItems(), skills: LibraryView['skills'] = [], facts = factsCache(this.wb);
     for (const item of items) {
       if (item.kind !== 'skill' || item.deletedAt) continue;
       let names = this.usageNames.get(item.revision);
       if (!names) {
         // Imported skills remember their folder (`local:<folder>`) or file (`…/<name>/SKILL.md`) as the source.
         names = [item.title, item.source.match(/[\\/]([^\\/]+)[\\/]SKILL\.md$/)?.[1] ?? (item.source.startsWith('local:') ? path.basename(item.source.slice(6)) : '')];
-        try { names.unshift(skillName(this.wb.getRevision(item.id))); } catch { /* A damaged revision still matches by title. */ }
+        try { names.unshift(facts.get(item).name); } catch { /* A damaged revision still matches by title. */ }
         this.usageNames.set(item.revision, names = [...new Set(names.filter(Boolean))]);
       }
       skills.push({ id: item.id, title: item.title, status: item.status, names });
     }
-    return { skills, titles: Object.fromEntries(items.map(i => [i.id, i.title])), receipts: this.deployments.receipts(), ...(withCopies ? { copies: () => this.deployments.installations(skills.map(s => s.id)) } : {}) };
+    facts.save();
+    return { skills, titles: Object.fromEntries(items.map(i => [i.id, i.title])), receipts: this.deployments.receipts(), ...(withCopies ? { copies: () => this.deployments.locate(skills.map(s => s.id)) } : {}) };
   }
   /** Installing an unapproved revision approves it first, so the same push to GitHub happens as with an explicit Approve. */
   installSkill(args: unknown) {

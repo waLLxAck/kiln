@@ -6,7 +6,7 @@ import { parseGitHubRepo } from '../../../packages/domain/github-url';
 import { api, variablesIn } from './api';
 import { agentStarted } from './AgentPanel';
 import { youtubeId } from '../../../packages/agent/video-link';
-import type { AgentJob, AgentKind } from '../../../packages/agent/service';
+import type { AgentJobSummary, AgentKind } from '../../../packages/agent/service';
 import { entryTypeList, type EntryType } from '../../../packages/agent/distill';
 import { ContextMenu, KindIcon, Lightbox, providerName } from './components';
 import type { Item, Provider, RunProviderId } from '../../../packages/protocol/schema';
@@ -38,7 +38,7 @@ const detect = (text: string, files: File[]): Detected => files.length ? 'files'
 const detectedLabel: Record<Detected, string> = { empty: '', video: 'YouTube video', repo: 'GitHub repository', link: 'Web page', text: 'Text', files: 'Files' };
 const detectedIcon: Record<Detected, ReactNode> = { empty: <Plus size={16} />, video: <Clapperboard size={16} />, repo: <Github size={16} />, link: <Globe size={16} />, text: <Type size={16} />, files: <Paperclip size={16} /> };
 
-type Props = { request?: CaptureRequest; provider: RunProviderId; /** Entry types Settings asks distillation for, named in the analyze buttons' tooltips. */ entryTypes: EntryType[]; providers: Provider[]; jobs: AgentJob[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void; /** Opens the repository review for a GitHub repository link; without it such a link is only saved. */ onRepository?: (url: string) => void };
+type Props = { request?: CaptureRequest; provider: RunProviderId; /** Entry types Settings asks distillation for, named in the analyze buttons' tooltips. */ entryTypes: EntryType[]; providers: Provider[]; jobs: AgentJobSummary[]; items: Item[]; onSaved: (id: string, analyzing: boolean) => void; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void; /** Opens the repository review for a GitHub repository link; without it such a link is only saved. */ onRepository?: (url: string) => void };
 
 /**
  * Capture as a dialog over whatever is on screen. It opens from the Capture button, Ctrl+N, the palette, or a paste or drop on
@@ -177,7 +177,7 @@ export function CaptureDialog({ request, provider, entryTypes, providers, jobs, 
 }
 
 /** Analyses running now, and those that finished in the last half hour, newest first. Hidden when there are none. */
-function RecentCaptures({ jobs, items, onOpenItem, onOpenCollection }: { jobs: AgentJob[]; items: Item[]; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void }) {
+function RecentCaptures({ jobs, items, onOpenItem, onOpenCollection }: { jobs: AgentJobSummary[]; items: Item[]; onOpenItem: (id: string) => void; onOpenCollection: (name: string) => void }) {
   const [now, setNow] = useState(Date.now()), [dismissed, setDismissed] = useState<string[]>([]);
   const recent = jobs.filter(j => (j.kind === 'distill' || j.kind === 'distill-repo' || j.kind === 'capture') && !dismissed.includes(j.id) && (activeRun(j) || now - new Date(j.finishedAt ?? j.startedAt).getTime() < 30 * 60_000)).slice(0, 4);
   const running = recent.some(activeRun);

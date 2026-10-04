@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, CircleSlash, Clock, Copy, FileText, FlaskConical, FolderOpen, Hand, Loader2, MessageSquare, Play, Plus, RotateCcw, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserX, X, XCircle } from 'lucide-react';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJob, AgentJobSummary } from '../../../packages/agent/service';
 import { activeRun } from '../../../packages/agent/run-notice';
 import type { ItemDetail, Provider, RunProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
@@ -8,10 +8,11 @@ import { agentStarted, ProviderSelect, retryJob, Steps, tokens, useElapsed, useS
 import { ContextMenu, providerName, type MenuEntry } from './components';
 import { askAgent, experimentsOf, improveMessage, reviews } from './TrialLoop';
 import { useKnownProjects } from './KnownProjects';
+import { useAgentJobRead } from './agent-job';
 import './experiments.css';
 
 export type ExperimentsGridProps = {
-  detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; jobs: AgentJob[];
+  detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; jobs: AgentJobSummary[];
   perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>;
   /** The item page's actions: 'approve', 'trial' (the full run dialog), 'manual-trial', 'result' (record a manual result), 'delete-trial'. */
   onAction: (name: string, trial?: Trial) => void;
@@ -27,19 +28,19 @@ type Column = { key: string; kind: 'project' | 'isolated' | 'manual' | 'unknown'
  * One experiment: its canonical trial, the job that ran it when that was on this machine (a job can arrive before the trial
  * is refreshed), and the user's own verdict on it when there is one.
  */
-export type Run = { id: string; trial?: Trial; job?: AgentJob; review?: Trial; revision: string; column: string; at: string };
+export type Run = { id: string; trial?: Trial; job?: AgentJobSummary; review?: Trial; revision: string; column: string; at: string };
 
 const isolated: Column = { key: 'isolated', kind: 'isolated', label: 'Isolated example' };
 const manual: Column = { key: 'manual', kind: 'manual', label: 'Manual' };
 const unknown: Column = { key: 'unknown', kind: 'unknown', label: 'Unknown project' };
 const projectColumn = (path: string): Column => ({ key: `path:${path}`, kind: 'project', label: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path, path });
-const columnOf = (trial: Trial | undefined, job: AgentJob | undefined) => job ? job.workspace ? projectColumn(job.workspace) : isolated : trial?.mode === 'manual' ? manual : unknown;
+const columnOf = (trial: Trial | undefined, job: AgentJobSummary | undefined) => job ? job.workspace ? projectColumn(job.workspace) : isolated : trial?.mode === 'manual' ? manual : unknown;
 const cellKey = (revision: string, column: string) => `${revision}|${column}`;
 
 const verdictLabel: Record<Verdict, string> = { pass: 'Pass', fail: 'Fail', uncertain: 'Uncertain' };
 const VerdictIcon = ({ verdict, size = 14 }: { verdict: Verdict; size?: number }) => verdict === 'pass' ? <CheckCircle2 size={size} /> : verdict === 'fail' ? <XCircle size={size} /> : <CircleHelp size={size} />;
 /** The run's own verdict: the agent's assessment, or the recorded result of a manual handoff. */
-const verdictOf = (run: Run): Verdict | null => run.trial?.judgement ?? (run.job?.result && 'judgement' in run.job.result ? run.job.result.judgement : null);
+const verdictOf = (run: Run): Verdict | null => run.trial?.judgement ?? run.job?.result?.judgement ?? null;
 /** The verdict that counts for approval and the Experiments filter: yours when you gave one, else the run's own. */
 export const countedVerdict = (run: Run): Verdict | null => run.review?.judgement ?? verdictOf(run);
 /** Running now, or waiting for one of the two run slots. */
@@ -53,7 +54,7 @@ const stopped = (run: Run) => run.job && ['failed', 'cancelled', 'interrupted'].
 /** "Sep 27" for grid cells, where the full date and time would not fit; the full one is in the tooltip and the panel. */
 const day = (value: string) => new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const firstLine = (text: string) => text.split('\n')[0].slice(0, 90);
-const seconds = (job: AgentJob) => { const s = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000)); return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; };
+const seconds = (job: AgentJobSummary) => { const s = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000)); return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; };
 
 /** Highlights file:line references such as src/screens/Levels.tsx:4 so evidence stands out in an assessment. */
 function withRefs(text: string): ReactNode[] {
@@ -231,7 +232,7 @@ function Cell({ revision, column, runs, current, selected, armed, blocked, onSel
   return <td className={`exp-cell ${selected ? 'exp-active' : ''}`}>
     <button onClick={onSelect} aria-pressed={selected} aria-label={`${where}: ${label}${yours}`}>
       {queued(latest) ? <><span className="exp-running queued"><Clock size={13} />Queued</span><span className="exp-step">Starts when a run slot is free</span></>
-        : live(latest) ? <><span className="exp-running"><Loader2 size={13} className="spin" />Running</span><span className="exp-step">{job!.steps.at(-1) ? firstLine(job!.steps.at(-1)!.text) : job!.phase}</span></>
+        : live(latest) ? <><span className="exp-running"><Loader2 size={13} className="spin" />Running</span><span className="exp-step">{job!.lastStep ? firstLine(job!.lastStep.text) : job!.phase}</span></>
         : <><CellChip run={latest} /><span className="exp-cell-meta">{who}{who && ' · '}<span title={date(latest.at)}>{day(latest.at)}</span>{runs.length > 1 && <span className="exp-more" title={`${runs.length} runs in this cell`}>+{runs.length - 1}</span>}</span></>}
     </button>
   </td>;
@@ -271,15 +272,17 @@ function RunBar({ free, closable, revision, current, column, columns, providers,
 }
 
 /** The selected cell's result, verdicts first; how it ran is folded away under Run details. */
-function Result({ run, others, column, detail, approved, active, perform, refresh, onAction, onPick }: { run: Run; others: Run[]; column?: Column; detail: ItemDetail; approved: boolean; /** This item's running or queued experiment, which blocks starting another. */ active?: AgentJob; perform: ExperimentsGridProps['perform']; refresh: ExperimentsGridProps['refresh']; onAction: ExperimentsGridProps['onAction']; onPick: (id: string) => void }) {
+function Result({ run, others, column, detail, approved, active, perform, refresh, onAction, onPick }: { run: Run; others: Run[]; column?: Column; detail: ItemDetail; approved: boolean; /** This item's running or queued experiment, which blocks starting another. */ active?: AgentJobSummary; perform: ExperimentsGridProps['perform']; refresh: ExperimentsGridProps['refresh']; onAction: ExperimentsGridProps['onAction']; onPick: (id: string) => void }) {
   const { trial, job, review } = run;
   const { item } = detail, current = item.revision;
   const verdict = verdictOf(run), isManual = trial?.mode === 'manual', ended = stopped(run);
   const [output, setOutput] = useState<{ output: string; reference: string } | null>(null), [error, setError] = useState('');
-  const inline = job?.result && 'output' in job.result ? job.result.output : '';
+  // The run's own record carries its output and note; the list only has its verdict.
+  const { full, settled } = useAgentJobRead(job), waitingForJob = Boolean(job?.result) && !settled;
+  const inline = full?.result && 'output' in full.result ? full.result.output : '';
   // The output is read from this machine's run folder when the cell is opened, not for every cell in the grid.
-  useEffect(() => { if (inline || !trial || trial.status !== 'completed') return; let live = true; void api<{ output: string; reference: string }>('desktop.trialOutput', { id: trial.id }).then(value => { if (live) setOutput(value); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [trial?.id, trial?.status, inline]);
-  const note = trial?.note || (job?.result && 'note' in job.result ? job.result.note : '');
+  useEffect(() => { if (inline || waitingForJob || !trial || trial.status !== 'completed') return; let live = true; void api<{ output: string; reference: string }>('desktop.trialOutput', { id: trial.id }).then(value => { if (live) setOutput(value); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [trial?.id, trial?.status, inline, waitingForJob]);
+  const note = trial?.note || (full?.result && 'note' in full.result ? full.result.note : '');
   const where = <div className="exp-result-where"><strong title={column?.path}>{column?.label ?? 'Unknown project'}</strong><code className="muted">{shortHash(run.revision)}</code>{run.revision === current && <span className="exp-pill accent">Current</span>}<span className="exp-grow" /><span className="muted small">{date(run.at)}</span></div>;
   const history = others.length > 1 && <div className="exp-others"><span className="eyebrow">Runs in this cell</span>{others.map(other => <button key={other.id} className={other.id === run.id ? 'active' : ''} aria-pressed={other.id === run.id} onClick={() => onPick(other.id)}><CellChip run={other} /><span className="muted small">{date(other.at)}</span></button>)}</div>;
   const remove = trial && <button className="button danger-text" onClick={() => onAction('delete-trial', trial)}><Trash2 size={14} />Delete experiment</button>;
@@ -289,7 +292,7 @@ function Result({ run, others, column, detail, approved, active, perform, refres
     <div className="eyebrow">{queued(run) ? 'Agent run queued' : 'Agent run in progress'}</div>
     <RunningHeadline job={job!} />
     <p className="muted small" role="status">{job!.phase}{job!.context ? ` · asked to try “${job!.context}”` : ''}</p>
-    {!queued(run) && <Steps job={job!} />}
+    {!queued(run) && <Steps job={job!} steps={full?.steps ?? []} />}
     <div className="exp-actions"><button className="button" onClick={() => void api('agent.cancel', { id: job!.id }).catch(e => setError(String(e)))}><X size={14} />Cancel run</button></div>
     {error && <p role="alert" className="error-box">{error}</p>}
     <p className="muted small">Read-only: the agent can’t change files in {column?.label ?? 'the project'}.</p>
@@ -326,22 +329,22 @@ function Result({ run, others, column, detail, approved, active, perform, refres
       {waiting(run) && <><button className="button primary" onClick={() => onAction('result', trial)}>Record result</button><button className="button" onClick={() => void perform(() => api('desktop.copyTrial', { id: trial!.id }), 'Handoff copied')}><Copy size={14} />Copy handoff</button></>}
       {agentRun && earlier && <button className="button" disabled={Boolean(active)} title={blocked ?? `Same agent${job ? ', project and context' : ''}, on the current revision ${shortHash(current)}`} onClick={retest}><RotateCcw size={14} />Re-test current revision</button>}
       {job && <button className="button" disabled={Boolean(active)} onClick={() => void retryJob(job).catch(e => setError(String(e)))} title={blocked ?? `Same agent, project, context and revision${earlier ? ` (${shortHash(run.revision)}, as it was)` : ''}`}><RotateCcw size={14} />{ended ? `Retry with ${providerName[job.provider]}` : 'Run again'}</button>}
-      {trial?.status === 'completed' && <button className="button" title="Open the chat with a message about this result, ready to edit and send" onClick={() => askAgent(item.id, improveMessage(trial, item, job, review))}><MessageSquare size={14} />Improve with agent</button>}
+      {trial?.status === 'completed' && <button className="button" title="Open the chat with a message about this result, ready to edit and send" onClick={() => askAgent(item.id, improveMessage(trial, item, full ?? job, review))}><MessageSquare size={14} />Improve with agent</button>}
       {remove}
     </div>
     {error && <p role="alert" className="error-box">{error}</p>}
     {verdict && <section className="exp-output"><div className="eyebrow">{isManual ? 'Output' : 'Agent’s output'}</div>
       {inline || output ? <pre className="prompt-preview">{inline || output!.output || output!.reference || 'No output on this machine.'}</pre> : !error && <p className="muted small"><Loader2 size={12} className="spin" /> Loading output…</p>}</section>}
-    <RunDetails run={run} perform={perform} />
+    <RunDetails run={run} full={full} perform={perform} />
     {history}
   </div>;
 }
-function RunningHeadline({ job }: { job: AgentJob }) {
+function RunningHeadline({ job }: { job: AgentJobSummary }) {
   const elapsed = useElapsed(job);
   return job.status === 'queued' ? <p className="exp-bigrunning queued"><Clock size={20} />Queued for {providerName[job.provider]}<span className="muted small">{elapsed}</span></p>
     : <p className="exp-bigrunning"><Loader2 size={20} className="spin" />Running with {providerName[job.provider]}<span className="muted small">{elapsed}</span></p>;
 }
-function RunDetails({ run, perform }: { run: Run; perform: ExperimentsGridProps['perform'] }) {
+function RunDetails({ run, full, perform }: { run: Run; full?: AgentJob; perform: ExperimentsGridProps['perform'] }) {
   const { trial, job } = run;
   const provider = job ? providerName[job.provider] : trial?.provider === 'manual' ? 'Another agent (manual)' : trial ? `${providerName[trial.provider]}${trial.mode === 'manual' ? ' (manual)' : ''}` : '';
   const model = job?.model || (trial && trial.model !== 'reported by official client' ? trial.model : '');
@@ -352,7 +355,7 @@ function RunDetails({ run, perform }: { run: Run; perform: ExperimentsGridProps[
       {job?.effort && <><dt>Effort</dt><dd>{job.effort} reasoning</dd></>}
       {job && <><dt>Elapsed</dt><dd>{seconds(job)}</dd></>}
       {job?.usage && <><dt>Tokens</dt><dd title={`Input ${job.usage.input.toLocaleString()} (cached ${job.usage.cached.toLocaleString()}) · output ${job.usage.output.toLocaleString()}`}>{tokens(job.usage.input)} in · {tokens(job.usage.output)} out</dd></>}
-      {job && job.steps.length > 0 && <><dt>Steps</dt><dd>{job.steps.length}</dd></>}
+      {job && job.stepCount > 0 && <><dt>Steps</dt><dd>{job.stepCount}</dd></>}
       {job?.threadId && <><dt>Session</dt><dd><code>{job.threadId.slice(0, 8)}</code>{job.session ? ' · transcript saved' : ''}</dd></>}
       {trial && <><dt>Case</dt><dd>{trial.case === 'typical' ? 'Typical case' : 'Boundary case'}</dd></>}
       {trial && trial.rubric.length > 0 && <><dt>Rubric</dt><dd><ul>{trial.rubric.map(r => <li key={r}>{r}</li>)}</ul></dd></>}
@@ -361,6 +364,6 @@ function RunDetails({ run, perform }: { run: Run; perform: ExperimentsGridProps[
         {trial && <button className="text-button" onClick={() => void perform(() => api('desktop.openRun', { id: trial.id }))}>Trial folder</button>}
       </dd>
     </dl>
-    {job && job.steps.length > 0 && <Steps job={job} />}
+    {job && job.stepCount > 0 && <Steps job={job} steps={full?.steps ?? []} />}
   </details>;
 }

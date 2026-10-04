@@ -8,6 +8,7 @@ import { applyEdits, findNodeAtLocation, modify, parse as parseJsonc, parseTree,
 import type { Workbench } from '../domain/workbench';
 import type { HomeFiles } from '../home/service';
 import { editorConfigRoot } from '../home/catalog';
+import { linkGuard } from '../home/link-guard';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { validateContent } from '../domain/content';
 import { fromNative, MCP_NAME, mcpClientLabel, mcpClients, mcpIdentity, McpTranslationError, parseMcp, scrubSecrets, serialiseMcp, tomlTable, toNative, type McpClient, type McpServer } from '../domain/mcp-format';
@@ -377,7 +378,12 @@ export class McpServers {
     const claude = this.location('claude')!;
     let claudeProjects: string[] = [], claudeState: Record<string, unknown> = {};
     try { claudeState = this.load(claude).data; claudeProjects = isRecord(claudeState.projects) ? Object.keys(claudeState.projects) : []; } catch { /* Reported when the file itself is read below. */ }
-    const projectRoots = [...new Set([...this.projects().map(p => p.root), ...claudeProjects.filter(p => path.isAbsolute(p)).map(p => path.resolve(p))])].filter(root => { try { return fs.statSync(root).isDirectory(); } catch { return false; } }).slice(0, 300);
+    // At most 300 project folders, checked in order until that many exist: ~/.claude.json can list hundreds of old folders.
+    const projectRoots: string[] = [];
+    for (const root of new Set([...this.projects().map(p => p.root), ...claudeProjects.filter(p => path.isAbsolute(p)).map(p => path.resolve(p))])) {
+      if (projectRoots.length >= 300) break;
+      try { if (fs.statSync(root).isDirectory()) projectRoots.push(root); } catch { /* Gone: skipped. */ }
+    }
     const add = (found: McpFound, name: string, value: unknown) => {
       if (this.latest(found.file, name, receipts)?.status === 'applied' && found.scope !== 'local') return;
       const read = fromNative(found.client, MCP_NAME.test(name) ? name : name.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^[^A-Za-z0-9]+/, '').slice(0, 64) || 'server', value); if (!read) return;
@@ -397,7 +403,17 @@ export class McpServers {
       const servers = isRecord(state) ? state.mcpServers : undefined;
       if (isRecord(servers)) for (const [name, value] of Object.entries(servers)) add({ client: 'claude', scope: 'local', project: path.resolve(project), file: claude.file }, name, value);
     }
-    for (const root of projectRoots) for (const client of mcpClients) read(this.location(client, root)!);
+    // Most project folders hold none of the five configs. One listing of the folder tells which could, so the others need no
+    // link check and stat each; a folder that is itself reached through a link is read as before, which reports it.
+    const guard = linkGuard(), folds = process.platform === 'win32' || process.platform === 'darwin';
+    for (const root of projectRoots) {
+      let names: Set<string> | null = null;
+      try { guard(root); names = new Set(fs.readdirSync(root).map(name => folds ? name.toLowerCase() : name)); } catch { /* Read each config the slow way. */ }
+      for (const client of mcpClients) {
+        const first = projectFile[client].split('/')[0];
+        if (!names || names.has(folds ? first.toLowerCase() : first)) read(this.location(client, root)!);
+      }
+    }
     const servers = [...groups.values()].sort((a, b) => Number(Boolean(a.itemId)) - Number(Boolean(b.itemId)) || a.name.localeCompare(b.name));
     return { servers, files };
   }

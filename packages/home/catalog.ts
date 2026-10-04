@@ -10,7 +10,8 @@ export function editorConfigRoot(home: string, env: NodeJS.ProcessEnv, platform:
   if (platform === 'darwin') return path.join(home, 'Library', 'Application Support');
   return env.XDG_CONFIG_HOME || path.join(home, '.config');
 }
-export function configCatalog(home: string, projects: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): ConfigEntry[] {
+/** `guard` refuses linked folders; `list` passes one that checks each folder once for the whole listing (link-guard.ts). */
+export function configCatalog(home: string, projects: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform, guard: (folder: string) => void = noLinks): ConfigEntry[] {
   const entries: ConfigEntry[] = [];
   const add = (key: string, kind: ConfigKind, root: string, relative: string, description: string, scope = 'Personal', template?: string) => {
     const file = path.join(root, relative), instruction = file.endsWith('.md');
@@ -19,7 +20,7 @@ export function configCatalog(home: string, projects: string[], env: NodeJS.Proc
   const discover = (kind: ConfigKind, root: string, relative: string, suffix: RegExp, description: string, scope: string) => {
     const folder = path.join(root, relative);
     try {
-      noLinks(folder);
+      guard(folder);
       if (!fs.existsSync(folder)) return;
       for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
         if (entry.isFile() && suffix.test(entry.name)) add(`file-${digest(path.join(folder, entry.name)).slice(0, 24)}`, kind, folder, entry.name, description, scope);

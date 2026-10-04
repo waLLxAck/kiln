@@ -3,7 +3,7 @@ import { trialPlaces } from './trial-place';
 import { Markdown } from './Markdown';
 import { useScrollMemory } from './view-memory';
 import { AgentPanel, AgentStatus, AnalysisRecord, agentStarted } from './AgentPanel';
-import type { AgentJob, AgentKind } from '../../../packages/agent/service';
+import type { AgentJobSummary, AgentKind } from '../../../packages/agent/service';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, FilePlus2, Files, FlaskConical, Folder, Gauge, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, WandSparkles, X, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
@@ -34,7 +34,7 @@ import './item.css';
 import './consolidate.css';
 
 type Props = {
-  jobs: AgentJob[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
+  jobs: AgentJobSummary[]; detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; /** Where this item came from, when another item has the same title. */ sameTitle?: { label: string; full: string }; installations: Installation[]; onAction: (name: string, trial?: Trial) => void; onToggleInstall: (provider: ProviderId, targetId?: string) => void; refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; onSelect: (id: string) => void; onSetup: () => void; onCollection: (name: string) => void; /** Shows the library filtered to what was made from a source. */ onMadeFrom: (sourceId: string) => void;
   /** Opens the agent chat about this item. */ onAsk?: () => void;
   /** Instruction items: opens Config files on the chosen file with the snippet added as an unsaved edit. */ onAddToInstructions?: (append: InstructionAppend) => void;
   /** Shows the Machines section, for copies on other machines. */ onMachines?: () => void;

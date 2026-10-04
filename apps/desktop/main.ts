@@ -333,14 +333,14 @@ if (singleInstance) void app.whenReady().then(async () => {
   process.env.KILN_APP_VERSION = app.getVersion();
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
-  ({ local, canonical } = await backend.call('paths'));
+  // The window opens while the worker opens the library. Its calls wait for this, apart from `backend.status`, which says what Kiln is doing.
+  const opening = backend.opened.then(() => backend.call<{ local: string; canonical: string }>('paths')).then(paths => { ({ local, canonical } = paths); });
   // The worker reports each finished run; a notification shows when Kiln is not in front, and opens the result.
   backend.onAgentFinished = event => void notifyRunFinished(event, { window: () => main, log, open: async finished => {
     if (main.isMinimized()) main.restore(); main.show(); main.focus();
     try { await backend.call('rpc', 'items.read', { id: finished.itemId }); } catch { return; }
     await main.webContents.executeJavaScript(openRunScript(finished));
   } });
-  syncUpdateTimer();
   log('app.started', { version: app.getVersion(), pid: process.pid });
   let tick = Date.now();
   setInterval(() => { const elapsed = Date.now() - tick; tick = Date.now(); if (elapsed > 1500) log('main.stall', { durationMs: elapsed - 1000 }); }, 1000).unref();
@@ -361,8 +361,11 @@ if (singleInstance) void app.whenReady().then(async () => {
       invariant(sender && (sender === main || sender === palette) && event.senderFrame === event.sender.mainFrame, 'INVALID_SENDER', 'Unknown request sender.');
       const url = new URL(event.senderFrame.url);
       invariant(devUrl ? url.origin === new URL(devUrl).origin : url.protocol === 'kiln:' && url.host === 'app', 'INVALID_ORIGIN', 'Request from an untrusted page.');
-      const name = z.string().max(100).parse(method); operation = name;
-      if (name !== 'desktop.telemetry') log('request.started', { requestId, method: name });
+      const name = z.string().max(100).parse(method);
+      // Answered here, never by the worker, so it works while the worker is busy, opening the library or restarting; polled, so not logged.
+      if (name === 'backend.status') return { ok: true, data: backend.status() };
+      operation = name;
+      if (name !== 'desktop.telemetry') { log('request.started', { requestId, method: name }); await opening; }
       return { ok: true, data: await desktopCall(name, args ?? {}, sender) };
     } catch (error) {
       log('request.failed', { requestId, method: operation, code: error instanceof WorkbenchError ? error.code : 'OPERATION_FAILED' });
@@ -376,6 +379,8 @@ if (singleInstance) void app.whenReady().then(async () => {
   tray = new Tray(icon); tray.setToolTip('Kiln · Prompt & Skill Workbench');
   tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Kiln', click: () => main.show() }, { label: 'Quick search', click: openPalette }, { type: 'separator' }, { label: 'Quit Kiln', click: () => app.quit() }]));
   tray.on('double-click', () => main.show());
-  try { await registerShortcut((await backend.call('settings')).shortcut); } catch (error) { log('shortcut.failed'); }
   app.on('activate', () => main.show());
+  await opening;
+  syncUpdateTimer();
+  try { await registerShortcut((await backend.call('settings')).shortcut); } catch (error) { log('shortcut.failed'); }
 }).catch(error => { console.error('Kiln startup failed:', error); dialog.showErrorBox('Kiln could not start', String(error)); app.quit(); });

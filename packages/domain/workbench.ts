@@ -1,5 +1,5 @@
 import { privateAttachment, shareableAuthoring, shareableTrial } from './privacy';
-import { migrateProvenance } from './provenance';
+import { migrateProvenance, unmigratedArchives } from './provenance';
 import { MAX_ATTACHMENT_BYTES } from '../protocol/limits';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,23 +7,31 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { analysisSchema, scoreSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
-import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
+import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, safeRelative, withLock, writeJson } from '../storage/files';
+import { RecordFolder } from '../storage/records';
 import { SearchIndex } from '../storage/search';
-import { gitStatus, isDedicated } from '../git/service';
+import { gitStatus, gitStatusSync, isDedicated, isDedicatedAsync, type GitState } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
 import { closeMatches } from './fuzzy';
-import { resolveVariables, revisionHash, skillName, validateContent } from './content';
+import { checkedBundle, resolveVariables, revisionHash, skillName, validateContent } from './content';
+import { keepLibraryLf, sameBytes, sameText } from './line-endings';
 import { readFiles, writeWorkingFiles } from '../storage/bundles';
 import { collectionPath, collectionTree, isWithin, leafOf, parentOf, placeCollection, relocate } from './collections';
 import { defaultTags, distinctKeys, duplicateGroups, signature, type Signature } from './duplicates';
 import { flagOnlyChange, listingChars, readInvocation } from './invocation';
 import { entryTypes } from '../agent/distill';
 
-/** Cheap identity of an item's working files: the current revision plus size and mtime of content.md and everything under files/. Stats only, no reads. */
+/**
+ * Cheap identity of an item's working files: the current revision plus size, mtime and ctime (which a tool that restores an mtime
+ * still changes) of its revision file, content.md and everything under files/. Stats only, no reads. `newest` is the latest of those times: a match recorded moments after it could
+ * miss a later edit that kept the size and landed in the same timestamp tick, so such a match is checked again by reading.
+ */
 function workingFingerprint(dir: string, revision: string) {
-  const parts: string[] = [revision];
-  const stat = (file: string) => { try { const s = fs.statSync(file); return `${s.size}:${Math.round(s.mtimeMs)}`; } catch { return 'missing'; } };
+  const parts: string[] = [revision]; let newest = 0;
+  const stat = (file: string) => { try { const s = fs.statSync(file); newest = Math.max(newest, s.mtimeMs, s.ctimeMs); return `${s.size}:${Math.round(s.mtimeMs)}:${Math.round(s.ctimeMs)}`; } catch { return 'missing'; } };
   parts.push(stat(path.join(dir, 'content.md')));
+  // The revision file too: one changed on disk is verified again rather than trusted from an earlier look.
+  parts.push(stat(path.join(dir, 'revisions', `${revision}.json`)));
   const walk = (folder: string, prefix: string) => {
     let entries: fs.Dirent[]; try { entries = fs.readdirSync(folder, { withFileTypes: true }); } catch { parts.push(`${prefix}:missing`); return; }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -32,8 +40,41 @@ function workingFingerprint(dir: string, revision: string) {
     }
   };
   walk(path.join(dir, 'files'), '');
-  return parts.join('|');
+  return { value: parts.join('|'), newest };
 }
+/** How long after a file's last change a size-and-time match still needs reading to be sure (coarse file system clocks). */
+const SETTLE_MS = 2000;
+/** A snapshot reconciles external edits for at most this long; the rest wait for the next call, so other requests get a turn. */
+const RECONCILE_BUDGET_MS = 1000;
+/** Bytes of recently read revisions kept parsed (by file size). Revisions with large attachments are read again when needed. */
+const REVISION_CACHE_BYTES = 32_000_000;
+/** Bump when what `cleanPrivateContent` treats as private changes, so every revision is looked at again. */
+const PRIVACY_CHECK = 2;
+/**
+ * What this machine knows about the library without reading it (library-cache.json in the private folder): parsed item.json by
+ * size and time, working-file fingerprints that matched their revision, and the per-revision summaries that duplicates and
+ * invocation need. Revisions never change under their hash, so those summaries stay valid; bump `schemaVersion` when one of them
+ * is computed differently.
+ */
+const machineCacheSchema = z.object({
+  schemaVersion: z.literal(1),
+  items: z.record(z.string(), z.object({ key: z.string(), item: itemSchema })),
+  fingerprints: z.record(z.string(), z.string()),
+  signatures: z.record(z.string(), z.object({ text: z.string(), files: z.string(), names: z.array(z.string()), sketch: z.array(z.number()), length: z.number() })),
+  invocations: z.record(z.string(), z.object({ claude: z.boolean(), codex: z.boolean(), chars: z.number() })),
+});
+/** Library list order: favourites, then the saved order, then the most recently changed. */
+const itemOrder = (a: Item, b: Item) => Number(b.favourite) - Number(a.favourite) || a.order - b.order || b.updatedAt.localeCompare(a.updatedAt);
+/** Authored values equal field by field, so their revision identities are equal without hashing. False only means "hash to be sure". */
+function sameAuthoring(a: Authoring, b: Authoring) {
+  const names = Object.keys(a.files), tags = [...a.tags].sort(), other = [...b.tags].sort();
+  return a.title === b.title && a.kind === b.kind && a.source === b.source && a.licence === b.licence && a.content === b.content
+    && tags.length === other.length && tags.every((tag, i) => tag === other[i])
+    && names.length === Object.keys(b.files).length && names.every(name => Object.hasOwn(b.files, name) && b.files[name] === a.files[name])
+    && (a.kind !== 'agent' || (a.agent?.provider === b.agent?.provider && a.agent?.filename === b.agent?.filename));
+}
+/** A revision handed out from the cache: its own top-level object and tags, sharing the frozen, already checked bundle. */
+const copyRevision = (value: Revision): Revision => ({ ...value, tags: [...value.tags], ...(value.agent ? { agent: { ...value.agent } } : {}) });
 /** Summary a revision carries until a generated description replaces it. */
 export const PENDING_SUMMARY = 'Edited';
 /** Managed trials store `mode: 'codex'` for every provider (the schema predates Claude Code runs), so activity names the provider the trial records instead. */
@@ -42,8 +83,16 @@ export class Workbench {
   readonly canonical: string;
   readonly local: string;
   readonly index: SearchIndex;
+  /** Kiln changed items itself, so the listing must be taken again. */
   private dirty = true;
-  private gitCache?: { at: number; value: ReturnType<typeof gitStatus>; dedicated: boolean };
+  /** Whether the next read needs a refresh pass: Kiln's own changes, or folders the watcher reported. */
+  private get stale() { return this.dirty || this.changedItems === null || this.changedItems.size > 0; }
+  /** Items a time-limited pass left for later. Only a new request takes them up, not the later steps of the one that left them. */
+  private deferred = new Set<string>();
+  private gitCache?: { at: number; value: GitState; dedicated: boolean };
+  /** A background re-read of the Git state, while one runs; `gitGeneration` drops results that an invalidation overtook. */
+  private gitRefresh?: Promise<void>;
+  private gitGeneration = 0;
   private watcher?: fs.FSWatcher;
   private indexedItems: Item[] = [];
   private indexedAllItems: Item[] = [];
@@ -52,16 +101,32 @@ export class Workbench {
   /** Bumped by every refresh, so cached duplicate groups know when the items changed. */
   private generation = 0;
   private duplicateCache?: { key: string; groups: DuplicateGroup[] };
-  /** Per item: size and mtime of its working files at the last reconciliation. Unchanged files mean nothing to re-read. */
-  private fingerprints = new Map<string, string>();
+  /**
+   * Per item: size and mtime of its working files when they last matched its revision. Unchanged files mean nothing to re-read.
+   * `settled` is false for a match recorded moments after the files changed, which the next look checks by reading.
+   */
+  private fingerprints = new Map<string, { value: string; settled: boolean }>();
+  /** Whether fingerprints, items or revision summaries changed since library-cache.json was written. */
+  private cacheChanged = false;
+  private cacheRestored = false;
+  private persistTimer?: ReturnType<typeof setTimeout>;
   /** Items whose folders the watcher saw change since the last reconciliation; null means every item (first run, or an event without a path). */
   private changedItems: Set<string> | null = null;
   /** Duplicate-detection summary per revision hash; revisions never change, so each is read for this once. */
   private signatures = new Map<string, Signature>();
   /** Model-invocation switches per skill revision hash (invocation.ts), read once per revision like the signatures. */
   private invocations = new Map<string, SkillListing>();
-  /** Usage counts from the observations folder; dropped when an observation is written and on a full refresh, which also picks up other processes' writes. */
-  private usageCache?: Usage;
+  /** Usage counts from the observations folder, recomputed when that folder's records change. */
+  private usageCache?: { version: number; value: Usage };
+  /** Parsed record folders (records.ts): canonical ones by folder name, which is what the watcher reports, machine-private ones as `local:<name>`. */
+  private folders = new Map<string, RecordFolder<unknown>>();
+  /** Per record folder: its records grouped by item, as of a folder version. */
+  private grouped = new WeakMap<RecordFolder<unknown>, { version: number; byItem: Map<string, unknown[]> }>();
+  /** Revision files known to match their hash, by path: size and mtime when verified. Verifying decodes and hashes every attachment. */
+  private verified = new Map<string, string>();
+  /** Recently read revisions by path, least recently used first, up to REVISION_CACHE_BYTES of file size. */
+  private parsedRevisions = new Map<string, { key: string; bytes: number; value: Revision }>();
+  private parsedBytes = 0;
   warnings: string[] = [];
   constructor(readonly root: string, localRoot = path.join(os.homedir(), '.kiln')) {
     invariant(path.isAbsolute(root), 'INVALID_PATH', 'Library root must be absolute.');
@@ -77,20 +142,53 @@ export class Workbench {
     const ignore = path.join(this.canonical, '.gitignore');
     if (!fs.existsSync(ignore)) atomicWrite(ignore, '.mutation.lock\n.git-index-*\n*.tmp\n.transactions/\n');
     else if (!fs.readFileSync(ignore, 'utf8').includes('.transactions/')) atomicWrite(ignore, fs.readFileSync(ignore, 'utf8') + '\n.transactions/\n');
+    keepLibraryLf(root);
     const config = readJson(marker) as { schemaVersion: number };
     invariant(config.schemaVersion === 1, 'SCHEMA_UNSUPPORTED', 'This library was created by a newer version of Kiln.');
     this.index = new SearchIndex(path.join(this.local, 'search.sqlite'));
     this.refresh();
-    this.cleanPrivateContent();
-    this.fileEntriesByKind();
-    this.fileSources();
-    this.watcher = fs.watch(this.canonical, { recursive: true }, (_event, filename) => {
-      const name = filename?.toString().replaceAll('\\', '/') ?? '';
-      if (!filename) { this.dirty = true; this.changedItems = null; return; } // Unknown path: reconcile everything next time.
-      if (name.startsWith('items/') && !name.endsWith('.tmp')) { this.dirty = true; const id = name.split('/')[1]; if (id) this.changedItems?.add(id); }
-    });
+    // One-time tidy-ups retry on the next start; a library they cannot finish (held by another process, a damaged file) still opens.
+    for (const tidy of [() => this.cleanPrivateContent(), () => this.fileEntriesByKind(), () => this.fileSources()]) {
+      try { tidy(); } catch (error) { this.warnings.push(`A start-up tidy-up was skipped and runs next time: ${error instanceof Error ? error.message : error}`); }
+    }
+    this.watch();
   }
-  close() { this.watcher?.close(); this.index.close(); }
+  /** Where the desktop worker logs what the library cannot report through a call (the folder watcher failing). */
+  diagnostics?: (event: string, fields?: Record<string, unknown>) => void;
+  private closed = false;
+  private watchFailures = 0;
+  private watch() {
+    try {
+      this.watcher = fs.watch(this.canonical, { recursive: true }, (event, filename) => {
+        this.noticed(filename?.toString().replaceAll('\\', '/') ?? '', event);
+      });
+      this.watchFailures = 0;
+      // Windows reports EPERM when the watched folder goes away; without a listener that would end the worker.
+      this.watcher.on('error', error => { this.diagnostics?.('workbench.watcherFailed', { code: (error as NodeJS.ErrnoException).code, message: error.message }); this.watcher?.close(); this.rewatch(); });
+    } catch (error) { this.diagnostics?.('workbench.watcherFailed', { code: (error as NodeJS.ErrnoException).code, message: error instanceof Error ? error.message : String(error) }); this.rewatch(); }
+  }
+  /** Changes made while nothing watched are unknown, so everything is reconciled next time. Retries back off to a minute. */
+  private rewatch() {
+    this.watcher = undefined; this.dirty = true; this.changedItems = null;
+    for (const folder of this.folders.values()) folder.forget();
+    const delay = Math.min(2000 * 2 ** this.watchFailures++, 60_000);
+    if (!this.closed) setTimeout(() => { if (!this.closed && !this.watcher) this.watch(); }, delay).unref();
+  }
+  close() { this.closed = true; this.persist(); this.watcher?.close(); this.index.close(); }
+  /**
+   * One change the library watcher saw. A path under items/ queues that item for reconciliation; whether anything really changed
+   * is decided there, from item.json and the working-file fingerprint, so the echo of Kiln's own save costs a few stats. A record
+   * file is re-checked in its folder's cache. An event without a path re-checks everything.
+   */
+  private noticed(name: string, event: string = 'rename') {
+    if (!name) { this.changedItems = null; for (const folder of this.folders.values()) folder.forget(); return; }
+    if (name.endsWith('.tmp')) return;
+    const [top, entry] = name.split('/');
+    // Windows also reports a 'change' of the items folder itself whenever something inside it changes; the entry that changed is
+    // reported on its own, so only a rename of the folder (recreated, moved) means everything must be listed again.
+    if (top === 'items') { if (!entry) { if (event !== 'change') this.changedItems = null; } else this.changedItems?.add(entry); return; }
+    this.folders.get(top)?.forget(entry);
+  }
   /**
    * One-time tidy-up for libraries distilled before entry types became item kinds: an entry derived from a video that still carries
    * its type as a tag (tool, technique, resource, insight) is re-filed under that kind, tag dropped. Skipped when another process
@@ -142,30 +240,60 @@ export class Workbench {
   }
   itemDir(id: string) { return path.join(this.canonical, 'items', idSchema.parse(id)); }
   private itemFile(id: string) { return path.join(this.itemDir(id), 'item.json'); }
-  /** Symlink guard for a path under the canonical folder. The folders above it were checked once when the library opened. */
-  private guard(file: string) {
+  /**
+   * Symlink guard for a path under the canonical folder. The folders above it were checked once when the library opened.
+   * Returns the path's own lstat, or nothing when it (or a folder on the way) does not exist.
+   */
+  private guard(file: string): fs.Stats | undefined {
     const relative = path.relative(this.canonical, file);
     invariant(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'INVALID_PATH', 'Path escapes the library.');
-    let current = this.canonical;
-    for (const part of relative.split(path.sep)) { current = path.join(current, part); let stat: fs.Stats; try { stat = fs.lstatSync(current); } catch { return; } invariant(!stat.isSymbolicLink(), 'SYMLINK_REJECTED', `Linked path must be handled by its existing manager: ${current}`); }
+    let current = this.canonical, stat: fs.Stats | undefined;
+    for (const part of relative.split(path.sep)) { current = path.join(current, part); try { stat = fs.lstatSync(current); } catch { return undefined; } invariant(!stat.isSymbolicLink(), 'SYMLINK_REJECTED', `Linked path must be handled by its existing manager: ${current}`); }
+    return stat;
   }
   /** item.json parsed once per size and mtime; every snapshot reads every item, so this is the difference between a stat and a read plus parse. */
   private itemCache = new Map<string, { key: string; item: Item }>();
-  getItem(id: string): Item {
-    const file = this.itemFile(id); this.guard(file);
-    let stat: fs.Stats; try { stat = fs.statSync(file); } catch { throw new WorkbenchError('ITEM_NOT_FOUND', 'This item no longer exists.'); }
+  getItem(id: string): Item { const file = this.itemFile(id); return this.readItem(id, file, this.guard(file)); }
+  /** `stat` is item.json's own lstat, from `guard` or, when listing, from a folder already known not to be a link. */
+  private readItem(id: string, file: string, stat: fs.Stats | undefined): Item {
+    if (!stat?.isFile()) { invariant(!stat?.isSymbolicLink(), 'SYMLINK_REJECTED', `Linked path must be handled by its existing manager: ${file}`); throw new WorkbenchError('ITEM_NOT_FOUND', 'This item no longer exists.'); }
     const key = `${stat.size}:${stat.mtimeMs}`;
     const cached = this.itemCache.get(id); if (cached?.key === key) return cached.item;
-    const item = itemSchema.parse(readJson(file)); this.itemCache.set(id, { key, item }); return item;
+    const item = itemSchema.parse(readJson(file)); this.itemCache.set(id, { key, item }); this.cacheChanged = true; return item;
   }
   getRevision(id: string, revision?: string): Revision {
     const item = this.getItem(id); const hash = hashSchema.parse(revision ?? item.revision);
-    let file = path.join(this.itemDir(id), 'revisions', `${hash}.json`); this.guard(file);
-    if (!fs.existsSync(file)) { file = path.join(this.local, 'private-revisions', id, `${hash}.json`); noLinks(file); }
-    invariant(fs.existsSync(file), 'REVISION_NOT_FOUND', 'This revision is not available.');
-    const value = revisionSchema.parse(readJson(file)); bundleFiles(value.files);
-    invariant(value.itemId === id && value.hash === hash && revisionHash(value) === hash, 'BUNDLE_TAMPERED', 'Revision content does not match its recorded hash. Restore it from history.');
-    return value;
+    let file = path.join(this.itemDir(id), 'revisions', `${hash}.json`), stat = this.guard(file);
+    if (!stat) { file = path.join(this.local, 'private-revisions', id, `${hash}.json`); noLinks(file); try { stat = fs.statSync(file); } catch { /* Reported below. */ } }
+    invariant(stat, 'REVISION_NOT_FOUND', 'This revision is not available.');
+    return this.readRevision(file, stat, { id, hash });
+  }
+  /**
+   * A revision file, parsed once per size and times while it stays in the recent-revisions cache. With `expect`, its identity is
+   * checked and its hash verified, once per size, mtime and ctime (restoring an mtime after an edit still changes the ctime): that means decoding and hashing every attachment, which a snapshot,
+   * an item page and every installed-copy check would otherwise repeat on each call.
+   */
+  private readRevision(file: string, stat: fs.Stats, expect?: { id: string; hash: string }): Revision {
+    const key = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    let entry = this.parsedRevisions.get(file);
+    if (entry?.key === key) { this.parsedRevisions.delete(file); this.parsedRevisions.set(file, entry); }
+    else {
+      if (entry) { this.parsedRevisions.delete(file); this.parsedBytes -= entry.bytes; }
+      const value = revisionSchema.parse(readJson(file));
+      entry = { key, bytes: stat.size, value };
+      if (stat.size <= REVISION_CACHE_BYTES / 4) {
+        this.parsedRevisions.set(file, entry); this.parsedBytes += stat.size;
+        for (const [name, old] of this.parsedRevisions) { if (this.parsedBytes <= REVISION_CACHE_BYTES) break; this.parsedRevisions.delete(name); this.parsedBytes -= old.bytes; }
+      }
+    }
+    const value = entry.value;
+    if (expect) {
+      const verified = this.verified.get(file) === key;
+      if (!verified) bundleFiles(value.files);
+      invariant(value.itemId === expect.id && value.hash === expect.hash && (verified || revisionHash(value) === expect.hash), 'BUNDLE_TAMPERED', 'Revision content does not match its recorded hash. Restore it from history.');
+      if (!verified) { this.verified.set(file, key); checkedBundle(value.files); }
+    }
+    return copyRevision(value);
   }
   /**
    * The current revision's values with the collection the item is filed in now. Moving an item between collections changes only
@@ -176,30 +304,84 @@ export class Workbench {
   }
   /** Whether authored values still match a revision. The collection is left out: it is organisation, kept on the item, and moving never makes a revision. */
   private matches(next: Authoring, revision: Revision) {
-    return revisionHash({ ...next, collection: revision.collection }, revision.hashVersion ?? 1) === revision.hash && next.description === revision.description;
+    if (next.description !== revision.description) return false;
+    return sameAuthoring(next, revision) || revisionHash({ ...next, collection: revision.collection }, revision.hashVersion ?? 1) === revision.hash;
   }
   listItems(includeDeleted = false) {
-    return fs.readdirSync(path.join(this.canonical, 'items'), { withFileTypes: true }).filter(d => d.isDirectory()).flatMap(d => {
-      try { const item = this.getItem(d.name); return includeDeleted || !item.deletedAt ? [item] : []; }
-      catch (error) { this.warnings.push(`${d.name}: ${error instanceof Error ? error.message : error}`); return []; }
-    }).sort((a, b) => Number(b.favourite) - Number(a.favourite) || a.order - b.order || b.updatedAt.localeCompare(a.updatedAt));
+    const folder = path.join(this.canonical, 'items'); this.guard(folder);
+    // Each listed folder is a real one (a link is not a directory entry here), so item.json needs only its own lstat.
+    return fs.readdirSync(folder, { withFileTypes: true }).filter(d => d.isDirectory()).flatMap(d => {
+      try {
+        const file = this.itemFile(d.name); let stat: fs.Stats | undefined; try { stat = fs.lstatSync(file); } catch { /* Reported as not found. */ }
+        const item = this.readItem(d.name, file, stat); return includeDeleted || !item.deletedAt ? [item] : [];
+      } catch (error) { this.warnings.push(`${d.name}: ${error instanceof Error ? error.message : error}`); return []; }
+    }).sort(itemOrder);
+  }
+  /** A record folder's cache, made on first use. */
+  private records<T>(name: string, local: boolean, parse: (value: unknown) => T, rewritten = false): RecordFolder<T> {
+    const key = local ? `local:${name}` : name;
+    let folder = this.folders.get(key) as RecordFolder<T> | undefined;
+    if (!folder) {
+      folder = new RecordFolder(path.join(local ? this.local : this.canonical, name), parse, rewritten); this.folders.set(key, folder as RecordFolder<unknown>);
+      // What an earlier process read. Machine-private records written once (observations) are trusted by name; the rest are checked by size and time.
+      const saved = this.savedRecords()[key];
+      if (saved) { folder.restore(saved, local && !rewritten); this.persistedVersions.set(key, folder.version); }
+    }
+    return folder;
+  }
+  /** Parsed records from records-cache.json in the private folder, read once; an unreadable file is an empty cache. */
+  private savedRecords() {
+    if (!this.restoredRecords) {
+      this.restoredRecords = {};
+      try {
+        const data = z.object({ schemaVersion: z.literal(1), folders: z.record(z.string(), z.record(z.string(), z.object({ key: z.string(), mtimeMs: z.number(), value: z.unknown() }))) }).parse(readJson(path.join(this.local, 'records-cache.json')));
+        this.restoredRecords = data.folders as typeof this.restoredRecords;
+      } catch { /* None yet. */ }
+    }
+    return this.restoredRecords;
+  }
+  private restoredRecords?: Record<string, Record<string, { key: string; mtimeMs: number; value: unknown }>>;
+  /** Folder versions as last written to records-cache.json. */
+  private persistedVersions = new Map<string, number>();
+  private recordsChanged() { return [...this.folders].some(([key, folder]) => this.persistedVersions.get(key) !== folder.version); }
+  private get approvalRecords() { return this.records('approvals', false, value => approvalSchema.parse(value), true); }
+  private get trialRecords() { return this.records('experiments', false, value => trialSchema.parse(value), true); }
+  private get activityRecords() { return this.records('activity', false, value => value as Activity); }
+  private get analysisRecords() { return this.records('analyses', false, value => analysisSchema.parse(value)); }
+  private get scoreRecords() { return this.records('scores', false, value => scoreSchema.parse(value)); }
+  private get targetRecords() { return this.records('targets', true, value => targetSchema.parse(value)); }
+  private get observationRecords() { return this.records('observations', true, value => observationSchema.parse(value)); }
+  private get receiptRecords() { return this.records('receipts', true, value => value as Snapshot['receipts'][number], true); }
+  /** Writes one record and has its folder look at it again, also where the file system keeps the folder's time. */
+  private writeRecord(folder: RecordFolder<unknown>, id: string, value: unknown) { writeJson(path.join(folder.dir, `${id}.json`), value); folder.forget(`${id}.json`); }
+  private removeRecord(folder: RecordFolder<unknown>, id: string) { fs.rmSync(path.join(folder.dir, `${id}.json`), { force: true }); folder.forget(`${id}.json`); }
+  /** One item's records in a folder, from an index rebuilt only when the folder's records change. */
+  private forItem<T extends { itemId: string | null }>(folder: RecordFolder<T>, id: string): T[] {
+    const all = folder.all(this.warnings);
+    let index = this.grouped.get(folder as RecordFolder<unknown>);
+    if (index?.version !== folder.version) {
+      const byItem = new Map<string, unknown[]>();
+      for (const value of all) if (value.itemId) { const list = byItem.get(value.itemId); if (list) list.push(value); else byItem.set(value.itemId, [value]); }
+      index = { version: folder.version, byItem }; this.grouped.set(folder as RecordFolder<unknown>, index);
+    }
+    return [...(index.byItem.get(id) ?? [])] as T[];
   }
   /** Recorded analyses, newest first; one item's when `itemId` is given. */
-  analyses(itemId?: string) { return readRecords(path.join(this.canonical, 'analyses'), value => analysisSchema.parse(value), this.warnings).filter(a => !itemId || a.itemId === itemId).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)); }
+  analyses(itemId?: string) { return (itemId ? this.forItem(this.analysisRecords, itemId) : this.analysisRecords.all(this.warnings)).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)); }
   /** Keeps what an analysis produced beside the library. Written once per run; the record never changes afterwards. */
   recordAnalysis(input: Analysis) {
     const analysis = analysisSchema.parse(input); this.getItem(analysis.itemId);
     const file = path.join(this.canonical, 'analyses', `${analysis.id}.json`);
-    if (!fs.existsSync(file)) writeJson(file, analysis);
+    if (!fs.existsSync(file)) this.writeRecord(this.analysisRecords, analysis.id, analysis);
     return analysis;
   }
   /** Recorded scores, newest first; one item's when `itemId` is given. */
-  scores(itemId?: string) { return readRecords(path.join(this.canonical, 'scores'), value => scoreSchema.parse(value), this.warnings).filter(s => !itemId || s.itemId === itemId).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)); }
+  scores(itemId?: string) { return (itemId ? this.forItem(this.scoreRecords, itemId) : this.scoreRecords.all(this.warnings)).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)); }
   /** Keeps one score of an exact revision beside the library. Written once per run; the record never changes afterwards. */
   recordScore(input: Score) {
     const score = scoreSchema.parse(input); this.getItem(score.itemId); this.getRevision(score.itemId, score.revision);
     const file = path.join(this.canonical, 'scores', `${score.id}.json`);
-    if (!fs.existsSync(file)) writeJson(file, score);
+    if (!fs.existsSync(file)) this.writeRecord(this.scoreRecords, score.id, score);
     return score;
   }
   /** The newest score of every live item, for the library's Score column and badges. */
@@ -210,13 +392,15 @@ export class Workbench {
   }
   /** Items made directly from this one: entries distilled from a source, skills shaped from a prompt, chat additions. Trash excluded. */
   madeFrom(id: string) { return this.listItems().filter(i => i.origin?.itemId === id); }
-  approvals(includeRevoked = false) { return readRecords(path.join(this.canonical, 'approvals'), value => approvalSchema.parse(value), this.warnings).filter(a => includeRevoked || !a.revokedAt); }
-  trials(includeDeleted = false) { return readRecords(path.join(this.canonical, 'experiments'), value => trialSchema.parse(value), this.warnings).filter(t => includeDeleted || !t.deletedAt); }
-  targets() { return readRecords(path.join(this.local, 'targets'), value => targetSchema.parse(value), this.warnings); }
-  observations() { return readRecords(path.join(this.local, 'observations'), value => observationSchema.parse(value), this.warnings); }
-  /** Every snapshot carries these counts; reading every observation file each time would grow with use, so they are cached. */
+  approvals(includeRevoked = false) { return this.approvalRecords.all(this.warnings).filter(a => includeRevoked || !a.revokedAt); }
+  trials(includeDeleted = false) { return this.trialRecords.all(this.warnings).filter(t => includeDeleted || !t.deletedAt); }
+  targets() { return this.targetRecords.all(this.warnings); }
+  observations() { return this.observationRecords.all(this.warnings); }
+  /** Every snapshot carries these counts; they are counted again only when the observations folder's records change. */
   usage(): Usage {
-    return this.usageCache ??= this.observations().reduce<Usage>((acc, o) => { if (o.itemId) { const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++; } return acc; }, {});
+    const folder = this.observationRecords;
+    if (this.usageCache?.version !== folder.check()) this.usageCache = { value: this.observations().reduce<Usage>((acc, o) => { if (o.itemId) { const n = acc[o.itemId] ??= { copied: 0, used: 0 }; n.used++; if (o.kind === 'copied') n.copied++; } return acc; }, {}), version: folder.version };
+    return this.usageCache.value;
   }
   /** Usage with each merged copy's counts added to the item it was merged into (they stay on the copy too, for the trash). */
   private foldedUsage(): Usage {
@@ -226,10 +410,12 @@ export class Workbench {
     for (const item of merged) { const target = this.mergedTarget(item.id); if (!target) continue; const n = folded[target] ??= { copied: 0, used: 0 }; n.copied += usage[item.id].copied; n.used += usage[item.id].used; }
     return folded;
   }
-  activity() { return readRecords(path.join(this.canonical, 'activity'), value => value as Activity, this.warnings).sort((a, b) => b.at.localeCompare(a.at)); }
+  activity() { return this.activityRecords.all(this.warnings).sort((a, b) => b.at.localeCompare(a.at)); }
+  /** The newest activity, as the snapshot shows it, without reading the older records of a long history (records.ts). */
+  recentActivity(count = 300) { return this.activityRecords.newest(count, event => event.at, this.warnings); }
   record(kind: string, message: string, itemId: string | null = null, revision?: string) {
     const event: Activity = { id: randomUUID(), at: now(), itemId, kind, message, ...(revision ? { revision } : {}) };
-    writeJson(path.join(this.canonical, 'activity', `${event.id}.json`), event);
+    this.writeRecord(this.activityRecords, event.id, event);
   }
   private mutate<T>(action: () => T, key?: string, itemsChanged = true): T {
     if (itemsChanged) this.dirty = true;
@@ -248,6 +434,8 @@ export class Workbench {
     if (JSON.stringify(original) !== JSON.stringify(data)) writeJson(path.join(this.local, 'private-sources', item.id, `${revisionHash(original)}.json`), { source: original.source, description: original.description, files: Object.fromEntries(Object.entries(original.files).filter(([name]) => privateAttachment(name))) });
     const revision = revisionHash(data);
     const record: Revision = { schemaVersion: 1, hashVersion: 2, itemId: item.id, hash: revision, parent: item.revision === revision ? null : item.revision, author: os.userInfo().username, createdAt: now(), summary, ...data };
+    // Saved from shareable values, so the start-up privacy check has nothing to look at in it.
+    this.cleanSaved.add(`${item.id}:${revision}`); this.persistSoon();
     const { content: _content, files: _files, ...metadata } = data;
     const updated: Item = { ...item, ...metadata, revision, status: item.revision === revision ? item.status : 'captured', updatedAt: now() };
     // The durable intent comes first. Recovery completes exactly this save before reconciling external edits.
@@ -256,28 +444,64 @@ export class Workbench {
     this.completeSave(journal, updated, record);
     return updated;
   }
-  /** Provenance-only cleanup preserves decisions; removing private attachments creates an unapproved draft. */
+  private checkedFile() { return path.join(this.local, 'revisions-checked.json'); }
+  private checkedRevisions(): string[] {
+    try { return z.object({ version: z.literal(PRIVACY_CHECK), revisions: z.array(z.string()) }).parse(readJson(this.checkedFile())).revisions; } catch { return []; /* None yet, or from another check: look at everything. */ }
+  }
+  /** Revisions this process saved, to be recorded as checked. */
+  private cleanSaved = new Set<string>();
+  /** After provenance repair rewrote items and records in place: what was read of them is read again. */
+  private forgetMigrated(ids: string[] | null) {
+    if (ids) for (const id of ids) { this.itemCache.delete(id); this.fingerprints.delete(id); }
+    else { this.itemCache.clear(); this.fingerprints.clear(); }
+    // Approvals, trials, analyses, scores, activity and receipts may point at re-keyed revisions now.
+    for (const folder of this.folders.values()) folder.forget();
+    this.cacheChanged = true;
+  }
+  /**
+   * Provenance-only cleanup preserves decisions (provenance.ts); removing private attachments creates an unapproved draft, and old
+   * snapshots with them remain available locally. Each revision is looked at once per machine (revisions-checked.json):
+   * revisions never change under their hash, and reading a whole history means parsing every revision with its attachments.
+   * Provenance repair reads only items with something not yet looked at. The lock is taken only when something is left.
+   */
   private cleanPrivateContent() {
-    this.mutate(() => {
+    const checkedFile = this.checkedFile(), stored = this.checkedRevisions();
+    const checked = new Set([...stored, ...this.cleanSaved]); this.cleanSaved.clear();
+    const clean = (value: Revision) => JSON.stringify(shareableAuthoring(value)) === JSON.stringify(value);
+    const files = (id: string) => { try { return fs.readdirSync(path.join(this.itemDir(id), 'revisions')).filter(name => name.endsWith('.json')); } catch { return []; } };
+    const items = this.listItems(true), ids = new Set(items.map(item => item.id));
+    const unchecked = (id: string, revision: string) => !checked.has(`${id}:${revision}`) || files(id).some(name => !checked.has(`${id}:${name.slice(0, -5)}`));
+    const pending = items.filter(item => unchecked(item.id, item.revision));
+    // A revision checked as clean has no provenance to repair, so only these items' histories are read for it.
+    const migrating = new Set([...pending.map(item => item.id), ...unmigratedArchives(this, ids)]);
+    if (migrating.size) this.mutate(() => {
       try {
-        for (const id of migrateProvenance(this)) { this.itemCache.delete(id); this.fingerprints.delete(id); }
+        const changed = migrateProvenance(this, migrating);
+        if (changed.length) this.forgetMigrated(changed);
       } catch (error) {
-        this.itemCache.clear(); this.fingerprints.clear();
+        this.forgetMigrated(null);
         this.warnings.push(`Provenance cleanup could not finish and will retry next time: ${String(error)}`); return;
       }
-      for (const item of this.listItems(true)) {
+      for (const listed of items.filter(item => migrating.has(item.id))) {
         try {
-          const revision = this.getRevision(item.id), safe = shareableAuthoring(revision);
-          if (JSON.stringify(safe) !== JSON.stringify(revision)) this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection }), 'Moved private session data and machine provenance out of shared content');
-          for (const old of readRecords(path.join(this.itemDir(item.id), 'revisions'), value => revisionSchema.parse(value))) {
-            if (JSON.stringify(shareableAuthoring(old)) === JSON.stringify(old)) continue;
+          const item = this.getItem(listed.id), revision = this.getRevision(item.id);
+          if (!clean(revision)) this.saveRevision(item, authoringSchema.parse({ ...revision, collection: item.collection }), 'Moved private session data and machine provenance out of shared content');
+          else checked.add(`${item.id}:${item.revision}`);
+          for (const name of files(item.id)) {
+            const hash = name.slice(0, -5); if (checked.has(`${item.id}:${hash}`)) continue;
+            const file = path.join(this.itemDir(item.id), 'revisions', name);
+            let old: Revision; try { old = revisionSchema.parse(readJson(file)); } catch { continue; }
+            if (clean(old)) { checked.add(`${item.id}:${hash}`); continue; }
             invariant(revisionHash(old) === old.hash, 'BUNDLE_TAMPERED', 'Cannot archive a modified revision.');
             writeJson(path.join(this.local, 'private-revisions', item.id, `${old.hash}.json`), old);
-            fs.unlinkSync(path.join(this.itemDir(item.id), 'revisions', `${old.hash}.json`));
+            fs.unlinkSync(file);
           }
-        } catch (error) { this.warnings.push(`${item.title}: ${String(error)}`); }
+        } catch (error) { this.warnings.push(`${listed.title}: ${String(error)}`); }
       }
     });
+    // Purged items drop out of the list.
+    const kept = [...checked].filter(key => ids.has(key.slice(0, key.indexOf(':'))));
+    if (kept.length !== stored.length || pending.length) writeJson(checkedFile, { version: PRIVACY_CHECK, revisions: kept });
   }
   private completeSave(journal: string, item: Item, revision: Revision) {
     invariant(item.id === revision.itemId && item.revision === revision.hash && revisionHash(revision) === revision.hash, 'INVALID_TRANSACTION', 'Invalid pending save.');
@@ -292,7 +516,19 @@ export class Workbench {
     writeWorkingFiles(working, revision.files);
     writeJson(this.itemFile(item.id), item);
     fs.unlinkSync(journal);
-    this.itemCache.delete(item.id); this.fingerprints.delete(item.id);
+    // Kiln wrote these files itself, so their sizes and times now stand for this revision. Recording that, rather than forgetting
+    // the item, keeps the watcher's echo of this save from reading and hashing the item all over again.
+    try {
+      const stat = fs.lstatSync(this.itemFile(item.id));
+      this.itemCache.set(item.id, { key: `${stat.size}:${stat.mtimeMs}`, item }); this.cacheChanged = true;
+      this.remember(item.id, workingFingerprint(dir, item.revision).value, true);
+    } catch { this.itemCache.delete(item.id); this.fingerprints.delete(item.id); }
+  }
+  /** Records that an item's working files matched its revision. `settled` false: look again by reading next time. */
+  private remember(id: string, fingerprint: string, settled: boolean) {
+    const known = this.fingerprints.get(id);
+    if (known?.value === fingerprint && known.settled === settled) return;
+    this.fingerprints.set(id, { value: fingerprint, settled }); this.cacheChanged = true;
   }
   private recoverSaves() {
     const folder = path.join(this.canonical, '.transactions');
@@ -304,15 +540,46 @@ export class Workbench {
       this.completeSave(file, pending.item, pending.revision);
     }
   }
+  /** Before a change to one item: its working files saved as a draft first when they were edited outside Kiln. */
   private reconcileItem(id: string) {
-    const item = this.getItem(id), previous = this.getRevision(id);
+    const item = this.getItem(id), print = workingFingerprint(this.itemDir(id), item.revision);
+    if (this.knownClean(id, print.value)) return item;
+    const previous = this.getRevision(id);
     const contentFile = path.join(this.itemDir(id), 'content.md'); this.guard(contentFile);
     invariant(fs.statSync(contentFile).size <= 2_000_000, 'CONTENT_TOO_LARGE', 'External text content exceeds 2 MB. Keep large data in a referenced file.');
     const filesDir = path.join(this.itemDir(id), 'files');
-    const next = authoringSchema.parse({ ...item, content: fs.readFileSync(contentFile, 'utf8'), files: fs.existsSync(filesDir) ? readFiles(filesDir) : previous.files });
-    if (this.matches(next, previous)) return item;
+    const next = this.workingAuthoring(item, previous, fs.existsSync(filesDir) ? readFiles(filesDir) : previous.files);
+    if (this.matches(next, previous)) { this.remember(id, print.value, Date.now() - print.newest > SETTLE_MS); return item; }
     validateContent(next); const updated = this.saveRevision(item, next, 'External file edit');
     this.record('external_edit', 'External changes saved as an unapproved revision', id, updated.revision); return updated;
+  }
+  /** Whether an item's working files are known to hold its revision: the same sizes and times as at a match that had settled. */
+  private knownClean(id: string, fingerprint: string) { const known = this.fingerprints.get(id); return known?.value === fingerprint && known.settled; }
+  /**
+   * An item's working files as authored values. Text that differs from the revision only in line endings (a Git for Windows
+   * checkout with core.autocrlf) counts as the revision's own, so it is no edit; a real edit in such a file is kept with LF
+   * when the revision had LF, so the next CRLF checkout does not differ again.
+   */
+  private workingAuthoring(item: Item, previous: Revision, files: Record<string, string>) {
+    const file = path.join(this.itemDir(item.id), 'content.md'); this.guard(file);
+    const raw = fs.readFileSync(file, 'utf8');
+    const content = sameText(raw, previous.content) ? previous.content : previous.content.includes('\r') ? raw : raw.replaceAll('\r\n', '\n');
+    const kept = Object.fromEntries(Object.entries(files).map(([name, value]) => [name, Object.hasOwn(previous.files, name) && sameBytes(value, previous.files[name]) ? previous.files[name] : value]));
+    return authoringSchema.parse({ ...item, content, files: kept });
+  }
+  /** Reconciles one item during a refresh: unchanged files cost stats; edited ones become an unapproved draft. Returns the item as it is now. */
+  private reconcileWorking(item: Item): Item {
+    const dir = this.itemDir(item.id);
+    let print = workingFingerprint(dir, item.revision);
+    if (this.knownClean(item.id, print.value)) return item;
+    const previous = this.getRevision(item.id);
+    const working = path.join(dir, 'files');
+    if (!fs.existsSync(working)) { writeWorkingFiles(working, previous.files); print = workingFingerprint(dir, item.revision); }
+    const next = this.workingAuthoring(item, previous, readFiles(working));
+    if (this.matches(next, previous)) { this.remember(item.id, print.value, Date.now() - print.newest > SETTLE_MS); return item; }
+    validateContent(next); const updated = this.saveRevision(item, next, 'External file edit');
+    this.record('external_edit', 'External changes saved as an unapproved revision', item.id, updated.revision);
+    return updated;
   }
   /** `announce: false` skips the "Captured" activity row for callers that record a more specific event themselves (derived and distilled items). */
   create(input: unknown, key?: string, announce = true): Item {
@@ -349,55 +616,101 @@ export class Workbench {
       if (!fs.existsSync(file)) return;
       const record = revisionSchema.parse(readJson(file)); if (record.summary !== PENDING_SUMMARY) return;
       writeJson(file, { ...record, summary: text });
-      for (const event of this.activity()) if (event.itemId === id && event.revision === revision && event.kind === 'revised' && event.message === PENDING_SUMMARY) writeJson(path.join(this.canonical, 'activity', `${event.id}.json`), { ...event, message: text });
+      // The row was written with the revision or after it; older activity cannot hold it, so a long history is not read for this.
+      const since = Date.parse(record.createdAt) || 0;
+      for (const event of this.activityRecords.newest(Number.MAX_SAFE_INTEGER, e => e.at, undefined, since)) if (event.itemId === id && event.revision === revision && event.kind === 'revised' && event.message === PENDING_SUMMARY) this.writeRecord(this.activityRecords, event.id, { ...event, message: text });
     }, undefined, false);
   }
   /** Reconciles working files into revisions and rebuilds the index. A full pass looks at every item; the snapshot path passes false and trusts the folder watcher. */
   refresh(full = true) {
+    this.restoreCache();
+    // A full pass also has every record folder look at its files again, picking up other processes' rewrites in place.
+    if (full) for (const folder of this.folders.values()) folder.forget();
+    // Only folders the watcher reported (or everything, the first time) are looked at; a snapshot after a small change must not walk the whole library.
+    const changed = full || !this.changedItems ? null : new Set([...this.changedItems, ...this.deferred]); this.changedItems = new Set(); this.deferred.clear();
+    // The watcher's echo of a change Kiln made and has already taken in (its own save, a metadata write the last pass listed) changes nothing.
+    if (!this.dirty && changed && [...changed].every(id => this.unchanged(id))) return;
     this.warnings = [];
-    if (full) this.usageCache = undefined;
+    const started = Date.now(), saved = new Map<string, Item>();
+    let listed: Item[] | undefined;
     try {
-      this.mutate(() => {
-        // Only folders the watcher reported (or everything, the first time) are looked at; a snapshot after a small change must not walk the whole library.
-        const changed = full ? null : this.changedItems; this.changedItems = new Set();
-        const candidates = this.listItems(true).filter(item => !changed || changed.has(item.id));
-        for (const item of candidates) {
-          try {
-            // Reconciling means reading and hashing every bundled file; skip items whose working files have not changed on disk since last time.
-            const fingerprint = workingFingerprint(this.itemDir(item.id), item.revision);
-            if (this.fingerprints.get(item.id) === fingerprint) continue;
-            this.fingerprints.set(item.id, fingerprint);
-            const previous = this.getRevision(item.id);
-            const file = path.join(this.itemDir(item.id), 'content.md'); this.guard(file);
-            const content = fs.readFileSync(file, 'utf8');
-            const working = path.join(this.itemDir(item.id), 'files');
-            if (!fs.existsSync(working)) writeWorkingFiles(working, previous.files);
-            const next = authoringSchema.parse({ ...item, content, files: readFiles(working) });
-            if (!this.matches(next, previous)) {
-              validateContent(next); const updated = this.saveRevision(item, next, 'External file edit');
-              this.record('external_edit', 'External changes saved as an unapproved revision', item.id, updated.revision);
-            }
-          } catch (error) { this.warnings.push(`${item.title}: ${error instanceof Error ? error.message : error}`); }
+      // Nothing to reconcile after Kiln's own changes: the items are only listed again, without taking the lock.
+      if (!changed || changed.size) listed = this.mutate(() => {
+        const all = this.listItems(true), candidates = all.filter(item => !changed || changed.has(item.id));
+        for (const [n, item] of candidates.entries()) {
+          // A pass with hundreds of external edits (a large pull) is split across calls so other requests get a turn; a full refresh finishes.
+          if (!full && Date.now() - started > RECONCILE_BUDGET_MS) { for (const rest of candidates.slice(n)) this.deferred.add(rest.id); break; }
+          try { const current = this.reconcileWorking(item); if (current !== item) saved.set(item.id, current); }
+          catch (error) { this.warnings.push(`${item.title}: ${error instanceof Error ? error.message : error}`); }
         }
+        return all;
       });
     } catch (error) { this.warnings.push(error instanceof Error ? error.message : String(error)); }
-    this.indexedAllItems = this.listItems(true);
+    // The listing taken under the lock, with the drafts this pass saved, rather than a second walk over every item.
+    const all = listed ? listed.map(item => saved.get(item.id) ?? item) : this.listItems(true);
+    if (saved.size) all.sort(itemOrder);
+    this.indexedAllItems = all;
     this.indexedItems = this.indexedAllItems.filter(item => !item.deletedAt);
     this.indexedSignatures.clear();
     // Revisions are immutable, so a summary computed once per revision hash stays valid; the index loads only revisions it has not seen.
     this.index.rebuild(this.indexedItems.map(item => {
       let loaded: Revision | undefined; const load = () => loaded ??= this.getRevision(item.id);
       let summary = this.signatures.get(item.revision);
-      if (!summary) { try { summary = signature(load()); this.signatures.set(item.revision, summary); } catch { /* Reported by the library warnings. */ } }
+      if (!summary) { try { summary = signature(load()); this.signatures.set(item.revision, summary); this.cacheChanged = true; } catch { /* Reported by the library warnings. */ } }
       if (summary) this.indexedSignatures.set(item.id, summary);
-      if (item.kind === 'skill' && !this.invocations.has(item.revision)) { try { const revision = load(); this.invocations.set(item.revision, { ...readInvocation(revision), chars: listingChars(revision.content) }); } catch { /* Reported by the library warnings. */ } }
+      if (item.kind === 'skill' && !this.invocations.has(item.revision)) { try { const revision = load(); this.invocations.set(item.revision, { ...readInvocation(revision), chars: listingChars(revision.content) }); this.cacheChanged = true; } catch { /* Reported by the library warnings. */ } }
       return { item, load };
     }));
     this.generation++;
     this.dirty = false;
+    if (this.cacheChanged) this.persistSoon();
+  }
+  /** Whether a watched item is as the last pass left it: item.json unchanged and its working files known to hold its revision. */
+  private unchanged(id: string) {
+    const cached = this.itemCache.get(id);
+    if (!cached) return false;
+    let stat: fs.Stats; try { stat = fs.lstatSync(this.itemFile(id)); } catch { return false; }
+    return `${stat.size}:${stat.mtimeMs}` === cached.key && this.knownClean(id, workingFingerprint(this.itemDir(id), cached.item.revision).value);
+  }
+  /** Loads library-cache.json once, before the first pass. Anything unreadable or from another schema simply starts empty. */
+  private restoreCache() {
+    if (this.cacheRestored) return; this.cacheRestored = true;
+    let data: z.infer<typeof machineCacheSchema>;
+    try { data = machineCacheSchema.parse(readJson(path.join(this.local, 'library-cache.json'))); } catch { return; }
+    for (const [id, entry] of Object.entries(data.items)) if (!this.itemCache.has(id)) this.itemCache.set(id, entry);
+    for (const [id, value] of Object.entries(data.fingerprints)) if (!this.fingerprints.has(id)) this.fingerprints.set(id, { value, settled: true });
+    for (const [hash, value] of Object.entries(data.signatures)) if (!this.signatures.has(hash)) this.signatures.set(hash, value);
+    for (const [hash, value] of Object.entries(data.invocations)) if (!this.invocations.has(hash)) this.invocations.set(hash, value);
+  }
+  private persistSoon() {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => this.persist(), 3000); this.persistTimer.unref?.();
+  }
+  /** Writes what the cache knows about the items listed now; settled fingerprints only. Called a few seconds after a change and on close. */
+  private persist() {
+    clearTimeout(this.persistTimer); this.persistTimer = undefined;
+    if (this.cleanSaved.size) {
+      try { writeJson(this.checkedFile(), { version: PRIVACY_CHECK, revisions: [...new Set([...this.checkedRevisions(), ...this.cleanSaved])] }); this.cleanSaved.clear(); } catch { /* Checked again next start. */ }
+    }
+    if (this.recordsChanged()) {
+      const folders: Record<string, unknown> = {};
+      for (const [key, folder] of this.folders) { folders[key] = folder.saved(); this.persistedVersions.set(key, folder.version); }
+      // Folders this process never opened keep what an earlier one saved.
+      for (const [key, saved] of Object.entries(this.savedRecords())) if (!this.folders.has(key)) folders[key] = saved;
+      try { writeJson(path.join(this.local, 'records-cache.json'), { schemaVersion: 1, folders }); } catch { /* Only a cache. */ }
+    }
+    if (!this.cacheChanged) return; this.cacheChanged = false;
+    const data: z.infer<typeof machineCacheSchema> = { schemaVersion: 1, items: {}, fingerprints: {}, signatures: {}, invocations: {} };
+    for (const item of this.indexedAllItems) {
+      const cached = this.itemCache.get(item.id); if (cached) data.items[item.id] = cached;
+      const known = this.fingerprints.get(item.id); if (known?.settled) data.fingerprints[item.id] = known.value;
+      const summary = this.signatures.get(item.revision); if (summary) data.signatures[item.revision] = summary;
+      const listing = this.invocations.get(item.revision); if (listing) data.invocations[item.revision] = listing;
+    }
+    try { writeJson(path.join(this.local, 'library-cache.json'), data); } catch { /* Only a cache: the next start reads a little more. */ }
   }
   search(query: string, includeArchived = false) {
-    if (this.dirty) this.refresh();
+    if (this.stale || this.deferred.size) this.refresh(false);
     const ids = query.trim() ? new Set(this.index.search(query)) : null;
     return this.indexedItems.filter(item => (!ids || ids.has(item.id)) && (includeArchived || !['archived', 'rejected'].includes(item.status)));
   }
@@ -406,7 +719,7 @@ export class Workbench {
    * tags when nothing matches exactly (`close`), and `total` so a capped list can say how much it left out.
    */
   rankedSearch(query: string, options: { archived?: boolean; limit?: number } = {}) {
-    if (this.dirty) this.refresh();
+    if (this.stale || this.deferred.size) this.refresh(false);
     const shown = (item: Item) => options.archived || !['archived', 'rejected'].includes(item.status);
     let items: Item[], close = false;
     if (!query.trim()) items = this.indexedItems.filter(shown);
@@ -417,10 +730,15 @@ export class Workbench {
     }
     return { items: options.limit ? items.slice(0, options.limit) : items, total: items.length, close };
   }
+  /** Every revision of an item, newest first, through the recent-revisions cache: an open item page asks for this on every refresh. */
   private revisionHistory(id: string) {
-    return [...readRecords(path.join(this.itemDir(id), 'revisions'), value => revisionSchema.parse(value), this.warnings),
-      ...readRecords(path.join(this.local, 'private-revisions', id), value => revisionSchema.parse(value), this.warnings)]
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const read = (dir: string, present: boolean) => !present ? [] : fs.readdirSync(dir, { withFileTypes: true }).filter(entry => entry.name.endsWith('.json')).flatMap(entry => {
+      try { invariant(!entry.isSymbolicLink(), 'SYMLINK_REJECTED', `Linked record: ${entry.name}`); const file = path.join(dir, entry.name); return [this.readRevision(file, fs.statSync(file))]; }
+      catch (error) { this.warnings.push(`${entry.name}: ${error instanceof Error ? error.message : error}`); return []; }
+    });
+    const canonical = path.join(this.itemDir(id), 'revisions'), archived = path.join(this.local, 'private-revisions', id);
+    const legacy = fs.existsSync(archived); if (legacy) noLinks(archived);
+    return [...read(canonical, Boolean(this.guard(canonical))), ...read(archived, legacy)].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   /**
    * Where items came from on this machine. The shared source of an imported item is only its folder name (see privacy.ts), so
@@ -449,7 +767,9 @@ export class Workbench {
     const duplicates = (group?.ids ?? []).filter(other => other !== id).flatMap(other => byId.get(other) ?? []);
     // Copies merged into this item count toward its use, as they do in the snapshot's usage.
     const merged = new Set(this.indexedAllItems.filter(i => i.mergedInto && this.mergedTarget(i.id) === id).map(i => i.id));
-    return { analyses: this.analyses(id), scores: this.scores(id), item, revision, revisions: this.revisionHistory(id), approvals: this.approvals().filter(a => a.itemId === id), trials: this.trials().filter(t => t.itemId === id), observations: this.observations().filter(o => o.itemId === id || (o.itemId !== null && merged.has(o.itemId))), validation: validateContent(revision), duplicates };
+    // Records come from the per-item index of each cached folder: no record file is read unless it changed.
+    const observations = [id, ...merged].flatMap(owner => this.forItem(this.observationRecords, owner));
+    return { analyses: this.analyses(id), scores: this.scores(id), item, revision, revisions: this.revisionHistory(id), approvals: this.forItem(this.approvalRecords, id).filter(a => !a.revokedAt), trials: this.forItem(this.trialRecords, id).filter(t => !t.deletedAt), observations, validation: validateContent(revision), duplicates };
   }
   /** Where a copy merged by consolidation went, following later merges; null for anything not in the trash as a merged copy. */
   mergedTarget(id: string): string | null {
@@ -470,7 +790,7 @@ export class Workbench {
   }
   /** Likely duplicates among live items, from the cached revision summaries. Recomputed only when items or distinct pairs change. */
   duplicateGroups(): DuplicateGroup[] {
-    if (this.dirty) this.refresh(false);
+    if (this.stale) this.refresh(false);
     let stamp = 'none'; try { const s = fs.statSync(this.distinctFile()); stamp = `${s.size}:${s.mtimeMs}`; } catch { /* No pairs marked. */ }
     const key = `${this.generation}:${stamp}`;
     if (this.duplicateCache?.key !== key) this.duplicateCache = { key, groups: duplicateGroups(this.indexedItems, this.indexedSignatures, distinctKeys(this.distinctPairs())) };
@@ -600,10 +920,10 @@ export class Workbench {
     return this.mutate(() => {
       const item = this.getItem(data.id);
       invariant(item.deletedAt, 'NOT_IN_TRASH', 'Move this item to the trash before deleting it permanently.');
-      for (const approval of this.approvals(true).filter(a => a.itemId === item.id)) fs.rmSync(path.join(this.canonical, 'approvals', `${approval.id}.json`), { force: true });
-      for (const analysis of this.analyses(item.id)) fs.rmSync(path.join(this.canonical, 'analyses', `${analysis.id}.json`), { force: true });
-      for (const score of this.scores(item.id)) fs.rmSync(path.join(this.canonical, 'scores', `${score.id}.json`), { force: true });
-      for (const trial of this.trials(true).filter(t => t.itemId === item.id)) { fs.rmSync(path.join(this.canonical, 'experiments', `${trial.id}.json`), { force: true }); fs.rmSync(path.join(this.local, 'runs', trial.id), { recursive: true, force: true }); }
+      for (const approval of this.approvals(true).filter(a => a.itemId === item.id)) this.removeRecord(this.approvalRecords, approval.id);
+      for (const analysis of this.analyses(item.id)) this.removeRecord(this.analysisRecords, analysis.id);
+      for (const score of this.scores(item.id)) this.removeRecord(this.scoreRecords, score.id);
+      for (const trial of this.trials(true).filter(t => t.itemId === item.id)) { this.removeRecord(this.trialRecords, trial.id); fs.rmSync(path.join(this.local, 'runs', trial.id), { recursive: true, force: true }); }
       const installs = this.installs(); if (installs[item.id]) { delete installs[item.id]; writeJson(this.installsFile(), installs); }
       fs.rmSync(this.itemDir(item.id), { recursive: true, force: true });
       for (const folder of ['private-revisions', 'private-sources']) fs.rmSync(path.join(this.local, folder, item.id), { recursive: true, force: true });
@@ -631,7 +951,7 @@ export class Workbench {
       const hasBoundary = evidence.some(t => t.case === 'boundary' && t.judgement === 'pass');
       invariant((hasTypical && hasBoundary) || data.waivedChecks.trim(), 'CHECKS_REQUIRED', 'Link passing typical and boundary trials, or explicitly explain why these checks are waived.');
       const approval = approvalSchema.parse({ ...data, schemaVersion: 1, id: randomUUID(), itemId: item.id, createdAt: now() });
-      writeJson(path.join(this.canonical, 'approvals', `${approval.id}.json`), approval);
+      this.writeRecord(this.approvalRecords, approval.id, approval);
       writeJson(this.itemFile(item.id), { ...item, status: 'approved', updatedAt: now() });
       this.record('approved', `Approved by ${data.reviewer}: ${data.scope}`, item.id, item.revision); return approval;
     });
@@ -652,7 +972,7 @@ export class Workbench {
       const errors = validateContent(revision); invariant(errors.length === 0, 'VALIDATION_FAILED', errors.join('\n'));
       const approval = approvalSchema.parse({ schemaVersion: 1, id: randomUUID(), itemId: item.id, revision: data.revision, reviewer: 'Kiln', scope: previous.scope,
         note: `Only the model-invocation flag changed from approved ${data.from.slice(0, 12)}; content otherwise identical.`, evidence: previous.evidence, waivedChecks: previous.waivedChecks, createdAt: now(), trust: 'local', carriedFrom: data.from });
-      writeJson(path.join(this.canonical, 'approvals', `${approval.id}.json`), approval);
+      this.writeRecord(this.approvalRecords, approval.id, approval);
       writeJson(this.itemFile(item.id), { ...item, status: 'approved', updatedAt: now() });
       this.record('approved', 'Approval carried over: only the model-invocation flag changed', item.id, item.revision); return approval;
     });
@@ -664,7 +984,7 @@ export class Workbench {
       invariant(!item.deletedAt && item.revision === data.revision, 'REVISION_CONFLICT', 'Reload this item before changing its approval.');
       const revokedAt = now();
       for (const approval of this.approvals().filter(a => a.itemId === item.id && a.revision === data.revision)) {
-        writeJson(path.join(this.canonical, 'approvals', `${approval.id}.json`), { ...approval, revokedAt });
+        this.writeRecord(this.approvalRecords, approval.id, { ...approval, revokedAt });
       }
       const next = { ...item, status: 'captured' as const, updatedAt: revokedAt };
       writeJson(this.itemFile(item.id), next);
@@ -708,7 +1028,7 @@ export class Workbench {
       const handoff = `${resolved}\n\n## Representative task\n${data.task}\n\n## Evaluation rubric\n${data.rubric.map(r => `- ${r}`).join('\n')}\n`;
       atomicWrite(path.join(folder, 'prompt.md'), handoff);
       writeJson(path.join(folder, 'environment.json'), { variables: data.variables, task: data.task, requestedWorkspace: data.workspace, revision: data.revision, provider: data.provider, authentication: 'Use the official client login', permissionProfile: trial.permissionProfile });
-      writeJson(path.join(this.canonical, 'experiments', `${trial.id}.json`), trial);
+      this.writeRecord(this.trialRecords, trial.id, trial);
       const item = this.getItem(data.id); if (item.revision === data.revision && item.status === 'captured') { this.dirty = true; writeJson(this.itemFile(item.id), { ...item, status: 'testing' }); }
       this.record('trial_prepared', data.mode === 'codex' ? `Started a ${agentLabel(data.provider)} CLI experiment` : 'Prepared manual agent handoff; execution not yet observed', item.id, data.revision);
       this.observeUnlocked({ schemaVersion: 1, eventId: `${trial.id}-prepared`, itemId: item.id, revision: data.revision, kind: 'test_prepared', source: 'kiln', confidence: 'observed', sessionId: trial.id, occurredAt: now() });
@@ -722,9 +1042,9 @@ export class Workbench {
       invariant(trial, 'TRIAL_NOT_FOUND', 'Trial not found.');
       if (trial.deletedAt) return trial;
       const deleted = { ...trial, deletedAt: now() };
-      writeJson(path.join(this.canonical, 'experiments', `${id}.json`), deleted);
+      this.writeRecord(this.trialRecords, id, deleted);
       // A human judgement of this experiment goes with it, so it no longer counts as approval evidence.
-      for (const review of this.trials().filter(t => t.outputReference === `review-of:${id}`)) writeJson(path.join(this.canonical, 'experiments', `${review.id}.json`), { ...review, deletedAt: deleted.deletedAt });
+      for (const review of this.trials().filter(t => t.outputReference === `review-of:${id}`)) this.writeRecord(this.trialRecords, review.id, { ...review, deletedAt: deleted.deletedAt });
       this.record('trial_deleted', 'Experiment deleted from the trial lists; historical evidence retained', trial.itemId, trial.revision);
       return deleted;
     });
@@ -738,7 +1058,7 @@ export class Workbench {
       if (data.output) atomicWrite(path.join(this.local, 'runs', trial.id, 'output.md'), data.output);
       if (data.outputReference) writeJson(path.join(this.local, 'runs', trial.id, 'output-reference.json'), { reference: data.outputReference });
       const updated = { ...trial, judgement: data.cancel ? null : data.judgement, note: data.note, status: data.cancel ? 'cancelled' as const : 'completed' as const, outputReference: data.output || data.outputReference ? `local-run:${trial.id}` : '', completedAt: now() };
-      writeJson(path.join(this.canonical, 'experiments', `${trial.id}.json`), updated);
+      this.writeRecord(this.trialRecords, trial.id, updated);
       this.record(data.cancel ? 'trial_cancelled' : 'trial_completed', data.cancel ? 'Handoff cancelled; any independently running agent must be stopped in its own window' : `${trial.mode === 'codex' ? `${agentLabel(trial.provider)} assessment` : 'Human judgement'}: ${data.judgement}`, trial.itemId, trial.revision);
       if (!data.cancel) this.observeUnlocked({ schemaVersion: 1, eventId: `${trial.id}-completed`, itemId: trial.itemId, revision: trial.revision, kind: 'test_completed', source: 'kiln', confidence: 'observed', sessionId: trial.id, occurredAt: now() });
       return updated;
@@ -757,10 +1077,10 @@ export class Workbench {
       const item = this.reconcileItem(reviewed.itemId);
       invariant(!item.deletedAt && item.revision === reviewed.revision, 'REVISION_CONFLICT', 'This experiment tested an earlier revision. Re-test the current revision before judging it.');
       const reference = `review-of:${reviewed.id}`, at = now();
-      for (const earlier of this.trials().filter(t => t.outputReference === reference)) writeJson(path.join(this.canonical, 'experiments', `${earlier.id}.json`), { ...earlier, deletedAt: at });
+      for (const earlier of this.trials().filter(t => t.outputReference === reference)) this.writeRecord(this.trialRecords, earlier.id, { ...earlier, deletedAt: at });
       const label = agentLabel(reviewed.provider), verdict = data.judgement === 'pass' ? 'passed' : 'failed';
       const trial = trialSchema.parse({ schemaVersion: 1, id: randomUUID(), itemId: item.id, revision: reviewed.revision, provider: 'manual', mode: 'manual', variables: {}, task: `Human review of the ${label} experiment`, rubric: reviewed.rubric, case: reviewed.case, workspace: 'Local run folder (machine-private)', machine: 'local', permissionProfile: 'Human review; no agent run', agentVersion: 'n/a', model: 'human', status: 'completed', judgement: data.judgement, note: data.note || `Marked as ${verdict} after reviewing the ${label} experiment.`, outputReference: reference, createdAt: at, completedAt: at });
-      writeJson(path.join(this.canonical, 'experiments', `${trial.id}.json`), trial);
+      this.writeRecord(this.trialRecords, trial.id, trial);
       this.record('trial_completed', `Human judgement: ${data.judgement} (reviewed the ${label} assessment)`, item.id, item.revision);
       return trial;
     });
@@ -769,7 +1089,7 @@ export class Workbench {
   private observeUnlocked(event: Observation) {
     const file = path.join(this.local, 'observations', `${digest({ source: event.source, id: event.eventId })}.json`);
     if (fs.existsSync(file)) return { duplicate: true };
-    writeJson(file, event); this.usageCache = undefined; return { duplicate: false };
+    writeJson(file, event); this.observationRecords.forget(path.basename(file)); return { duplicate: false };
   }
   enroll(input: unknown) {
     const data = targetSchema.omit({ id: true, machine: true }).parse(input);
@@ -779,7 +1099,7 @@ export class Workbench {
     return this.mutate(() => {
       const existing = this.targets().find(t => path.resolve(t.root).toLowerCase() === path.resolve(data.root).toLowerCase() && t.provider === data.provider && t.scope === data.scope && t.skillFolder === data.skillFolder);
       if (existing) return existing;
-      const target = targetSchema.parse({ ...data, id: randomUUID(), machine: 'local' }); writeJson(path.join(this.local, 'targets', `${target.id}.json`), target); return target;
+      const target = targetSchema.parse({ ...data, id: randomUUID(), machine: 'local' }); this.writeRecord(this.targetRecords, target.id, target); return target;
     });
   }
   /** Forgets an enrolled environment. Files already installed there stay as they are; their receipts become historical. */
@@ -787,7 +1107,7 @@ export class Workbench {
     const data = z.object({ id: idSchema, confirm: z.literal(true) }).parse(input);
     return this.mutate(() => {
       const target = this.targets().find(t => t.id === data.id); invariant(target, 'TARGET_NOT_ENROLLED', 'This environment is not enrolled.');
-      fs.rmSync(path.join(this.local, 'targets', `${target.id}.json`), { force: true });
+      this.removeRecord(this.targetRecords, target.id);
       this.record('target_removed', `Stopped managing ${target.name}; installed files were left in place`);
       return target;
     }, undefined, false);
@@ -976,7 +1296,18 @@ export class Workbench {
     invariant(on.length > 0, 'INVALID_SETTINGS', 'Keep at least one entry type for distillation.');
     return this.saveSettings({ ...this.settings(), distillOff: entryTypes.filter(type => !on.includes(type)) });
   }
-  invalidateGit() { this.gitCache = undefined; }
+  /** Forget the Git state; the next read gets it again before answering. */
+  invalidateGit() { this.gitCache = undefined; this.gitGeneration++; }
+  /**
+   * Reads the Git state again without blocking the thread. Background Git work (commits, pushes, fetches, pulls) awaits this after
+   * moving refs, so the next snapshot is current without starting Git itself.
+   */
+  refreshGit(): Promise<void> {
+    const generation = ++this.gitGeneration;
+    return Promise.all([gitStatus(this.root), isDedicatedAsync(this.root)]).then(([value, dedicated]) => {
+      if (generation === this.gitGeneration) this.gitCache = { at: Date.now(), value, dedicated };
+    }, () => { /* Unreadable for now: the next read tries again. */ });
+  }
   /** A library can publish approvals only when it has the standard layout, is a Git repository, and has a GitHub remote. */
   repositoryState(): RepositoryState {
     const git = this.cachedGitStatus();
@@ -984,18 +1315,26 @@ export class Workbench {
     const dedicated = standard && Boolean(this.gitCache?.dedicated);
     return { standard, dedicated, git: git.attached, remote: Boolean(git.remote), ready: dedicated && git.attached && Boolean(git.remote) };
   }
+  /**
+   * The Git state as last read. Only the first read (and the first after `invalidateGit`) waits for Git; after that a state older
+   * than ten seconds is returned at once and read again in the background.
+   */
   private cachedGitStatus() {
-    if (!this.gitCache || Date.now() - this.gitCache.at > 10000) this.gitCache = { at: Date.now(), value: gitStatus(this.root), dedicated: isDedicated(this.root) };
+    if (!this.gitCache) this.gitCache = { at: Date.now(), value: gitStatusSync(this.root), dedicated: isDedicated(this.root) };
+    else if (Date.now() - this.gitCache.at > 10000 && !this.gitRefresh) this.gitRefresh = this.refreshGit().finally(() => { this.gitRefresh = undefined; });
     return this.gitCache.value;
   }
   snapshot(): Snapshot {
-    if (this.dirty) this.refresh(false);
+    if (this.stale || this.deferred.size) this.refresh(false);
     const git = this.cachedGitStatus();
-    return { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: readRecords(path.join(this.local, 'receipts'), v => v as Snapshot['receipts'][number]), activity: this.activity().slice(0, 300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups(), invocation: this.invocation(), scores: this.latestScores() };
+    const snapshot: Snapshot = { schemaVersion: 1, root: this.root, items: this.indexedAllItems, trials: this.trials(), approvals: this.approvals(), targets: this.targets(), receipts: this.receiptRecords.all(), activity: this.recentActivity(300), warnings: [...new Set(this.warnings)], collections: this.collections(this.indexedItems), git, repository: this.repositoryState(), publish: [], settings: this.settings(), installs: this.installs(), coverage: 'App actions and human-recorded trials. External agent sessions: unknown coverage.', usage: this.foldedUsage(), duplicates: this.duplicateGroups(), invocation: this.invocation(), scores: this.latestScores() };
+    // What was read for it is kept for the next start (records-cache.json).
+    if (this.recordsChanged()) this.persistSoon();
+    return snapshot;
   }
   /** What each live skill's current revision says about model invocation, from the per-revision cache (no file is read here). */
   invocation(): Record<string, SkillListing> {
-    if (this.dirty) this.refresh(false);
+    if (this.stale) this.refresh(false);
     const result: Record<string, SkillListing> = {};
     for (const item of this.indexedItems) { const value = item.kind === 'skill' ? this.invocations.get(item.revision) : undefined; if (value) result[item.id] = value; }
     return result;

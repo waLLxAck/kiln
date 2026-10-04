@@ -128,7 +128,7 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.25.0](releases/0.25.0.md).
+See [what changed in 0.25.1](releases/0.25.1.md).
 
 ## Quick search
 
@@ -326,7 +326,7 @@ Kiln runs your installed, signed-in Codex or Claude Code CLI. It uses existing C
 
 Capture runs use an isolated working folder; experiments can use a selected local project as their working directory. Capture sends the selected input to the chosen agent; diagnostic logs themselves are local. See the [official non-interactive CLI documentation](https://learn.chatgpt.com/docs/non-interactive-mode) and [authentication](https://learn.chatgpt.com/docs/auth).
 
-**Settings → Official agents** chooses the Codex model and reasoning effort from the installed CLI's own catalog; leaving either blank uses the catalog default, and the resolved values are shown on every run. While a run is active the item shows a live activity list (messages, reasoning summaries, commands, web searches) with the thread id and, on completion, the input/cached/output token counts. Two runs go at once; further runs wait their turn as **Queued** and start by themselves. Cancel/retry controls and **Run files** expose progress and evidence. Local `agent-jobs` folders retain the structured response and bounded CLI event stream. App exit stops managed subprocesses; interrupted jobs can be retried. Experiments also retain their trial records and output files.
+**Settings → Official agents** chooses the Codex model and reasoning effort from the installed CLI's own catalog; leaving either blank uses the catalog default, and the resolved values are shown on every run. While a run is active the item shows a live activity list (messages, reasoning summaries, commands, web searches) with the thread id and, on completion, the input/cached/output token counts. Two runs go at once; further runs wait their turn as **Queued** and start by themselves. Cancel/retry controls and **Run files** expose progress and evidence. Local `agent-jobs` folders retain the structured response and bounded CLI event stream; records of runs that ended more than 60 days ago, beyond the newest 200, move to `agent-jobs/archive/`, where the item's chat history still finds them. App exit stops managed subprocesses; interrupted jobs can be retried. Experiments also retain their trial records and output files.
 
 The status bar's runs segment says how many runs are running and queued, and with which agent ("2 running · 1 queued · Claude Code"), or how many finished in the last 30 minutes. Click it for every active run and those that finished in the last 30 minutes, each with the model, elapsed time and current step, plus **Open** and **Cancel** (a queued run can be cancelled before it starts; one that had not started when Kiln closed is marked interrupted and can be retried). When an experiment, distillation, skill draft, score, Tune run or chat reply finishes while Kiln is in front, a toast says what finished ("Experiment passed · …", "Scored 68/100 · …", "Run failed · …") with **Open result**, which opens the item on its tests for experiments, its content for analyses and drafts, or the chat for replies. While Kiln is hidden or behind another window you get a desktop notification instead; click it to jump straight to the result.
 

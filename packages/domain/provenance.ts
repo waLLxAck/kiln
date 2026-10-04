@@ -33,22 +33,43 @@ function pendingArchives(wb: Workbench, id: string, shared: Map<string, Revision
   });
 }
 
+/** Original revisions (`itemId:hash`) whose repair is finished, from provenance-migrated.json. */
+function completedMigrations(wb: Workbench) {
+  const marker = path.join(wb.local, 'provenance-migrated.json');
+  noLinks(marker);
+  return new Set<string>(fs.existsSync(marker) ? z.array(z.string()).parse(readJson(marker)) : []);
+}
+
+/**
+ * Items with an archived original (private-revisions) that `migrateProvenance` has not looked at yet: with revisions not yet
+ * checked for private content, the only ones it can have anything to repair in. Reads folder listings, not revisions.
+ */
+export function unmigratedArchives(wb: Workbench, ids: Iterable<string>) {
+  const completed = completedMigrations(wb), found: string[] = [];
+  for (const id of ids) {
+    let names: string[]; try { names = fs.readdirSync(path.join(wb.local, 'private-revisions', id)); } catch { continue; }
+    if (names.some(name => name.endsWith('.json') && !completed.has(`${id}:${name.slice(0, -5)}`) && !fs.existsSync(path.join(wb.itemDir(id), 'revisions', name)))) found.push(id);
+  }
+  return found;
+}
+
 /**
  * Re-key provenance-only snapshots and their references deterministically, retaining original bytes privately.
  * Originals are archived first, and shared originals are removed last. A partial migration can therefore be retried
  * from either copy, including libraries that an older Kiln already cleaned into an unapproved draft. Completion is recorded
  * only after removal succeeds, so archived originals do not repeat the one-time approval repair on later launches.
- * The caller holds the library mutation lock and invalidates item caches afterwards.
+ * The caller holds the library mutation lock and invalidates item caches afterwards. `only` limits which items' revisions are
+ * read; items left out must have none that are provenance-only (each was checked as clean) and no archive left to repair.
  */
-export function migrateProvenance(wb: Workbench) {
+export function migrateProvenance(wb: Workbench, only?: Set<string>) {
   const marker = path.join(wb.local, 'provenance-migrated.json');
-  noLinks(marker);
-  const completed = new Set<string>(fs.existsSync(marker) ? z.array(z.string()).parse(readJson(marker)) : []);
+  const completed = completedMigrations(wb);
   const mapped = new Map<string, string>(), snapshots = new Map<string, Revision[]>(), items = wb.listItems(true);
   const checkedArchives = new Set<string>(), repairable = new Set<string>(), destinations = new Set<string>();
   const key = (id: string, hash: string) => `${id}:${hash}`;
   const removals: string[] = [];
-  for (const item of items) {
+  // Only the items given are read; references to their revisions from any item or record are still moved.
+  for (const item of only ? items.filter(item => only.has(item.id)) : items) {
     const shared = path.join(wb.itemDir(item.id), 'revisions');
     const originals = new Map<string, Revision>();
     // Shared copies take precedence so an existing clean snapshot keeps its original history metadata.

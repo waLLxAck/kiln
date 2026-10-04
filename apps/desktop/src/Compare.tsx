@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { FileDiff, FolderOpen, Save } from 'lucide-react';
 import type { ComparedFile, Comparison } from '../../../packages/deployment/service';
 import { api } from './api';
-import { InlineError, Modal } from './components';
+import { Modal } from './components';
+import { LoadError, useLoad, Waiting } from './Loading';
 import { LineDiff } from './Diff';
 import { keepExplanation } from './KeepChanges';
 
@@ -17,10 +18,10 @@ function FileView({ file }: { file: ComparedFile }) {
 }
 /** Summary, file list and per-file diff for one skill folder against the library. Loads on mount; read-only. */
 export function FolderComparison({ itemId, targetId }: { itemId: string; targetId: string }) {
-  const [data, setData] = useState<Comparison | null>(null), [error, setError] = useState(''), [open, setOpen] = useState<string | null>(null);
-  useEffect(() => { setData(null); setOpen(null); void api<Comparison>('deploy.compare', { itemId, targetId }).then(result => { setData(result); setOpen(result.files.find(f => f.status !== 'same')?.path ?? null); }).catch(e => setError(e instanceof Error ? e.message : String(e))); }, [itemId, targetId]);
-  if (error) return <InlineError error={error} />;
-  if (!data) return <p className="muted">Reading both versions…</p>;
+  const [open, setOpen] = useState<string | null>(null);
+  const reading = useLoad(async () => { const result = await api<Comparison>('deploy.compare', { itemId, targetId }); setOpen(result.files.find(f => f.status !== 'same')?.path ?? null); return result; }, [itemId, targetId]), data = reading.data;
+  if (reading.error) return <LoadError error={reading.error} onRetry={reading.retry} />;
+  if (!data) return <Waiting since={reading.since} label="Reading both versions">Reading both versions…</Waiting>;
   const differing = data.files.filter(f => f.status !== 'same');
   const count = (status: ComparedFile['status']) => data.files.filter(f => f.status === status).length;
   return <div className="compare">

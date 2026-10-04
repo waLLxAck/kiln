@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { Check, Download, Loader2, Merge } from 'lucide-react';
 import type { DuplicateGroup, Installation, Item, ItemDetail, Snapshot } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge, Modal } from './components';
+import { LoadError, useLoad, Waiting } from './Loading';
 import { LineDiff } from './Diff';
 import { locationLabel } from './library-filters';
 import { experimentsOf, reviews, verdictOf } from './trial-verdicts';
@@ -29,8 +30,8 @@ const fileLabel: Record<FileState, string> = { same: 'same', changed: 'differs',
  */
 export function ConsolidateDialog({ group, snapshot, installations, where, perform, refresh, onDone, onMessage, onClose }: Props) {
   const items = group.ids.flatMap(id => snapshot.items.find(i => i.id === id) ?? []);
-  const [details, setDetails] = useState<Record<string, ItemDetail> | null>(null), [error, setError] = useState('');
-  useEffect(() => { let active = true; void Promise.all(group.ids.map(id => api<ItemDetail>('items.read', { id }))).then(list => { if (active) setDetails(Object.fromEntries(list.map(d => [d.item.id, d]))); }).catch(e => { if (active) setError(e instanceof Error ? e.message : String(e)); }); return () => { active = false; }; }, [group.ids.join()]);
+  const reading = useLoad(fresh => Promise.all(group.ids.map(id => api<ItemDetail>('items.read', { id }, { fresh }))).then(list => Object.fromEntries(list.map(d => [d.item.id, d])) as Record<string, ItemDetail>), [group.ids.join()]);
+  const details = reading.data, error = reading.error;
   const approvedNow = (item: Item) => snapshot.approvals.some(a => a.itemId === item.id && a.revision === item.revision && a.trust === 'local');
   const [keep, setKeep] = useState(() => suggestKeep(items, snapshot.approvals, installations, snapshot.usage).id);
   const kept = items.find(i => i.id === keep) ?? items[0], others = items.filter(i => i.id !== kept.id);
@@ -89,7 +90,6 @@ export function ConsolidateDialog({ group, snapshot, installations, where, perfo
 
   return <Modal title={`Consolidate ${items.length} copies of “${kept.title}”`} subtitle="Keep one. The others move to Trash, marked as merged into it." onClose={onClose} wide>
     <div className={`cons n${Math.min(items.length, 4)}`}>
-      {error && <div className="error-box" role="alert">{error}</div>}
       <div className="cons-scroll">
         <table className="cons-table" style={{ '--cons-cols': items.length } as CSSProperties}>
           <thead><tr><th scope="row" aria-label="Copy" />{items.map(item => <th key={item.id} scope="col" className={item.id === kept.id ? 'kept' : ''}>
@@ -117,7 +117,7 @@ export function ConsolidateDialog({ group, snapshot, installations, where, perfo
       </div>
 
       <section className="cons-diff" aria-label="Differences">
-        {!details ? <p className="muted"><Loader2 size={14} className="spin" /> Reading the copies…</p> : other && chosen && otherText ? <>
+        {!details ? error ? <LoadError error={error} onRetry={reading.retry} /> : <Waiting since={reading.since} label="Reading the copies">Reading the copies…</Waiting> : other && chosen && otherText ? <>
           <div className="cons-diff-head">
             <span>The text you keep against</span>
             {against.length > 1 ? <span className="item-seg" role="group" aria-label="Compare with">{against.map(i => <button key={i.id} type="button" aria-pressed={i.id === other.id} className={i.id === other.id ? 'on' : ''} onClick={() => setCompare(i.id)}>{where(i)}</button>)}</span> : <b>{where(other)}</b>}

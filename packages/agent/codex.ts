@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { detectProviders } from '../providers/service';
+import { findExecutable } from '../providers/service';
+import { capture, killTree, settled, treeOptions } from './process';
 /** One JSONL event from `codex exec --json`. Only the fields Kiln reads are typed; everything else is passed through. */
 export type CodexEvent = { type: string; thread_id?: string; usage?: Record<string, number>; error?: { message?: string }; message?: string; item?: { id: string; type: string; text?: string; command?: string; aggregated_output?: string; exit_code?: number | null; status?: string; query?: string; message?: string; server?: string; tool?: string; changes?: { path: string; kind: string }[]; items?: { text: string; completed: boolean }[] } };
 export type CodexModel = { slug: string; name: string; description: string; defaultEffort: string; efforts: string[] };
@@ -41,21 +42,21 @@ export type RunInput = {
   onStatus?: (phase: string) => void;
 };
 function codexExecutable() {
-  const executable = detectProviders().find(p => p.id === 'codex')?.executable;
+  const executable = findExecutable('codex');
   if (!executable || /\.(cmd|bat)$/i.test(executable)) throw new Error('Install the native Codex CLI, then sign in with ChatGPT.');
   return executable;
 }
-function run(executable: string, args: string[], timeout: number) {
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(executable, args, { windowsHide: true, timeout }); let output = '', errors = '';
-    child.stdout.on('data', data => output += data); child.stderr.on('data', data => errors += data);
-    // Codex writes `login status` to stderr, so a successful run returns both streams together.
-    child.on('error', reject); child.on('close', code => code === 0 ? resolve(output + errors) : reject(new Error(errors.trim() || `codex ${args[0]} exited (${code})`)));
-  });
+/** A short Codex command. Codex writes `login status` to stderr, so a successful run returns both streams together. */
+async function run(executable: string, args: string[], timeout: number, signal?: AbortSignal) {
+  const result = await capture(executable, args, { timeoutMs: timeout, signal });
+  if (result.cancelled) throw new Error('Cancelled');
+  if (result.timedOut) throw new Error(`codex ${args[0]} did not answer within ${Math.round(timeout / 1000)} seconds`);
+  if (result.code !== 0) throw new Error(result.stderr.trim() || `codex ${args[0]} exited (${result.code})`);
+  return result.stdout + result.stderr;
 }
 /** Models the installed Codex CLI offers, most capable first. Hidden catalog entries (internal review models) are excluded. */
-export async function codexModels(): Promise<CodexModel[]> {
-  const raw = JSON.parse(await run(codexExecutable(), ['debug', 'models'], 20000)) as { models?: Record<string, unknown>[] };
+export async function codexModels(signal?: AbortSignal): Promise<CodexModel[]> {
+  const raw = JSON.parse(await run(codexExecutable(), ['debug', 'models'], 20000, signal)) as { models?: Record<string, unknown>[] };
   return (raw.models ?? []).filter(m => m.visibility === 'list' && typeof m.slug === 'string').sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0)).map(m => ({
     slug: String(m.slug), name: String(m.display_name ?? m.slug), description: String(m.description ?? ''), defaultEffort: String(m.default_reasoning_level ?? ''),
     efforts: Array.isArray(m.supported_reasoning_levels) ? (m.supported_reasoning_levels as { effort?: string }[]).map(level => level.effort).filter((e): e is string => typeof e === 'string') : [],
@@ -86,7 +87,7 @@ export async function runCodex(input: RunInput): Promise<unknown> {
   input.onStatus?.('Locating Codex');
   const executable = codexExecutable();
   input.onStatus?.('Checking Codex sign-in');
-  const auth = await run(executable, ['login', 'status'], 10000).catch(() => { throw new Error('Run codex login and sign in with ChatGPT.'); });
+  const auth = await run(executable, ['login', 'status'], 10000, input.signal).catch(error => { throw new Error(input.signal.aborted ? 'Cancelled' : /did not answer/.test(String(error)) ? `${error instanceof Error ? error.message : error}. Check that Codex starts in a terminal.` : 'Run codex login and sign in with ChatGPT.'); });
   if (!/ChatGPT/i.test(auth)) throw new Error('Codex must be signed in with ChatGPT for subscription-backed runs. Run codex login.');
   if (input.signal.aborted) throw new Error('Cancelled');
   const schemaFile = path.join(input.folder, 'schema.json'), resultFile = path.join(input.folder, 'response.json');
@@ -95,13 +96,13 @@ export async function runCodex(input: RunInput): Promise<unknown> {
   const args = codexArguments(input, { schema: schemaFile, result: resultFile });
   input.onStatus?.(input.resume ? 'Resuming Codex conversation' : 'Starting Codex conversation');
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: input.workdir ?? input.folder, windowsHide: true, stdio: ['pipe','pipe','pipe'], env: { ...process.env, OPENAI_API_KEY: '', CODEX_API_KEY: '' } });
+    const child = spawn(executable, args, { cwd: input.workdir ?? input.folder, ...treeOptions(), stdio: ['pipe','pipe','pipe'], env: { ...process.env, OPENAI_API_KEY: '', CODEX_API_KEY: '' } });
     if (child.pid) input.onProcess?.(child.pid, true);
     let stderr = '', pending = '', bytes = 0, cancelled = false, failure = '';
     const decoder = new StringDecoder('utf8');
     const trace = fs.createWriteStream(path.join(input.folder, 'events.jsonl'));
     const diagnostics = fs.createWriteStream(path.join(input.folder, 'stderr.log'));
-    const stop = () => { cancelled = true; if (process.platform === 'win32' && child.pid) { const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); killer.on('error', () => child.kill()); } else child.kill(); };
+    const stop = () => { if (cancelled) return; cancelled = true; killTree(child); };
     const timeoutMs = input.timeoutMs ?? 180000, timer = setTimeout(stop, timeoutMs);
     input.signal.addEventListener('abort', stop, { once: true });
     if (input.signal.aborted) stop();
@@ -125,14 +126,15 @@ export async function runCodex(input: RunInput): Promise<unknown> {
       const message = String(data).replace(/\x1b\[[0-9;]*m/g, '').trim();
       if (message) { try { input.onEvent({ type: 'kiln.diagnostic', message: message.slice(-1000) }); } catch (error) { failure = `Could not record Codex activity: ${String(error)}`; stop(); } }
     });
-    child.on('error', error => { clearTimeout(timer); input.signal.removeEventListener('abort', stop); trace.end(); diagnostics.end(); reject(error); });
-    child.on('close', code => {
+    const close = () => { clearTimeout(timer); input.signal.removeEventListener('abort', stop); trace.end(); diagnostics.end(); };
+    // Settles when Codex exits, even if a process it started keeps the output pipes open.
+    settled(child).then(({ code }) => {
       try { receive(pending + decoder.end()); } catch (error) { failure = `Could not record Codex activity: ${String(error)}`; }
-      if (child.pid) input.onProcess?.(child.pid, false); clearTimeout(timer); input.signal.removeEventListener('abort', stop); trace.end(); diagnostics.end();
+      if (child.pid) input.onProcess?.(child.pid, false); close();
       if (failure) reject(new Error(failure));
       else if (cancelled) reject(new Error(input.signal.aborted ? 'Cancelled' : `Codex timed out after ${Math.round(timeoutMs / 60000)} minutes. Retry this run.`));
       else if (code !== 0) reject(new Error(`Codex exited (${code ?? 'signal'}). ${stderr.slice(-1500)}`)); else resolve();
-    });
+    }, error => { close(); reject(error); });
     child.stdin.end(input.prompt);
   });
   const text = await fs.promises.readFile(resultFile, 'utf8').catch(() => { throw new Error(input.resume ? 'Codex could not continue this session. Its transcript may have been removed; check events.jsonl in the run folder.' : 'Codex returned no final message. Check events.jsonl in the run folder.'); });

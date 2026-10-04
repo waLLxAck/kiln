@@ -64,6 +64,18 @@ test('a failed download can be retried', async () => {
   await updates.download('0.20.0'); assert.equal(updates.status().stage.state, 'preparing');
 });
 
+test('a check that gets no answer fails after its time limit instead of holding "Check now"', async () => {
+  let signal: AbortSignal | undefined;
+  const stalled = async (_url: string, init: { signal?: AbortSignal }) => { signal = init.signal; return new Promise<never>((_, reject) => init.signal?.addEventListener('abort', () => reject(new Error('The operation was aborted due to timeout')))); };
+  const download = new GitHubUpdates('0.19.1', 'download', () => {}, stalled, noUpdater, 50);
+  await download.check('stalled');
+  assert.ok(signal, 'the request carries a time limit'); assert.match(download.status().error, /Could not reach GitHub: .*timeout/);
+  const events = new EventEmitter();
+  const hanging = { checkForUpdates: () => new Promise<never>(() => {}), downloadUpdate: async () => {}, quitAndInstall: () => {}, on: (event: string, listener: (...args: any[]) => void) => events.on(event, listener) } as unknown as Updater;
+  const app = new GitHubUpdates('0.19.1', 'app', () => {}, redirect('v0.20.0'), async () => hanging, 50);
+  await app.check('stalled'); assert.match(app.status().error, /no answer within/);
+});
+
 test('the developer folder watcher accepts installer names from before and after 0.20.0', () => {
   assert.equal(installerPattern.exec('Kiln Setup 0.19.1.exe')?.[1], '0.19.1');
   assert.equal(installerPattern.exec('Kiln-Setup-0.20.0.exe')?.[1], '0.20.0');
