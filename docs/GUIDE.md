@@ -116,7 +116,7 @@ First launch walks through connecting GitHub and creating or opening your Kiln r
 
 The left rail follows the same path. **Library** holds everything live; under **Stages**, **Drafts**, **Testing** and **Approved** show items by status and **Installed** shows skills and agents with at least one copy on this machine, each with a count. Choosing a stage filters the library; choosing a collection clears the stage. Collections, **Archive** and **Trash** come next, then the tools: **Experiments**, **Config files**, **Machines**, **Activity** and **Settings & repository**.
 
-The search field in the middle of the top bar (**Ctrl+K**) opens the quick-search window for items and commands. The thin status bar along the bottom shows the repository and branch with where it stands against GitHub (see [Sync with GitHub](#sync-with-github)), the agent runs (see [Agent runs](#agent-runs)), and **Session start** with roughly what each agent loads when a new session starts (see [Model invocation and session start](#model-invocation-and-session-start)). The installed version and update shortcut sit at the bottom-left of the sidebar and stay visible while the navigation scrolls. When a new version is available, click the download icon, follow its progress, and choose **Restart** when ready; copies that cannot install themselves open the release page instead.
+The search field in the middle of the top bar (**Ctrl+K**) opens the quick-search window for items and commands. The thin status bar along the bottom shows the repository and branch with where it stands against GitHub (see [Sync with GitHub](#sync-with-github)), the agent runs (see [Agent runs](#agent-runs)), and **Session start** with roughly what each agent loads when a new session starts (see [Model invocation and session start](#model-invocation-and-session-start)). For the sidebar version and update shortcut, see [Updating the installed app](#updating-the-installed-app).
 
 Setup checks the signed-in GitHub CLI account for `my-kiln` and offers **Use this repository** or **Use something else**. Existing local copies are reused only when their GitHub origin matches and they are Kiln libraries. Connection failures offer a retry; unrelated repositories are never attached.
 
@@ -130,7 +130,7 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.25.2](releases/0.25.2.md).
+See [what changed in 0.25.3](releases/0.25.3.md).
 
 ## Quick search
 
@@ -556,14 +556,14 @@ Kiln 0.22.0 shipped ten changes behind switches in Settings. They are now part o
 
 ## Updating the installed app
 
-Kiln 0.20.0 and later check the [releases page](https://github.com/waLLxAck/kiln/releases) for new versions 15 seconds after starting and then every 30 minutes. Each check is one small request to GitHub. When a new version is out, a download button appears at the bottom of the sidebar and in Settings → Updates.
+Kiln 0.20.0 and later check the [releases page](https://github.com/waLLxAck/kiln/releases) for new versions 15 seconds after starting and then every 30 minutes. Each check is one small request to GitHub. The installed version sits at the bottom-left of the sidebar and stays visible while navigation and collections scroll. When a new version is out, an update shortcut appears beside it and in Settings → Updates. The sidebar shortcut shows download or preparation progress, then **Restart** when ready; copies that cannot install themselves show a release-page shortcut instead.
 
 - **Windows, the Linux AppImage and the .deb:** **Download** fetches the update in the background while you keep working. **Restart to update** then installs it and reopens Kiln. The .deb asks for your administrator password. Nothing downloads until you click, and closing Kiln doesn't install anything.
 - **macOS and the Linux tar.gz:** **Get <version>** opens the release page. Replace `Kiln.app` in Applications, or unpack the new tar.gz over the old folder. macOS only lets apps signed with an Apple Developer ID replace themselves, and Kiln's macOS builds aren't signed that way yet.
 
 Settings → Updates also has **Check now** and **Stop checking**. Versions before 0.20.0 don't check GitHub: download 0.20.0 once from the releases page, and later versions arrive in the app.
 
-Windows builds made from a local checkout can update themselves in the app; see [DEVELOPMENT.md](DEVELOPMENT.md#in-app-updates-for-local-builds).
+Windows builds made from a local checkout can update themselves in the app; see [DEVELOPMENT.md](DEVELOPMENT.md#local-builds-developers).
 
 ## Panels and performance logs
 
