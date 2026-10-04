@@ -124,11 +124,13 @@ Setup checks the signed-in GitHub CLI account for `my-kiln` and offers **Use thi
 
 After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage, the unpacked tar.gz or your applications menu on Linux. (For builds you made yourself, see [DEVELOPMENT.md](DEVELOPMENT.md#run-a-local-build).)
 
+While the library opens, Kiln shows its progress and waits before starting ordinary reads, including Quick search. If opening fails or takes more than two minutes, **Retry** tries again. Agent detection starts after the library is available; detection failures appear under **Settings → Official agents**, where **Detect again** retries without blocking the library.
+
 Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Kiln** there to exit, or Cmd+Q on macOS. Linux desktops without a tray (GNOME without an AppIndicator extension) show no icon: quit from **File → Quit** (press Alt to show the menu bar), and opening Kiln again brings the window back.
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.25.1](releases/0.25.1.md).
+See [what changed in 0.25.2](releases/0.25.2.md).
 
 ## Quick search
 
@@ -367,7 +369,7 @@ Click a row to open the item. It takes the whole page, with a bar above it: **�
 
 **The query bar** above the table finds things. Free text searches titles, descriptions, content and tags. The list stays on screen while you type (a spinner shows a search on its way) and follows renames and edits. Results come best match first (a title match counts more than one in the tags, description or body) and the Sort pill says **Relevance**; pick another order to override it for this search, and clearing the search goes back to the view's own order. A typo such as "reveiw" still finds "code-review", with "No exact matches — showing close matches" under the bar. Filters are tokens: type a facet and a value (`kind:skill`) or pick from the suggestions, grouped by facet, each with how many items it would show. Facets are `kind:`, `status:` (draft, testing, approved, rejected, archived), `state:` (installed, not installed, changed outside Kiln, managed by Kiln, external copy, link or junction), `in:` (a skill folder: Shared Agents, Claude, Codex-specific, Copilot-specific, personal or in a project), `is:favourite`, `is:duplicate` (items with another copy in the library, see [Duplicates](#duplicates)), `is:model-invoked` (skills a model may invoke on its own, whose descriptions load in every new session) and `is:user-only` (skills only you can invoke), `tag:`, `from:` (a source), `collection:`, `provider:` (native definitions or client-specific copies; shared `.agents/skills` copies use `in:`) and `scope:` (personal or project). Two tokens of one facet match either value; different facets must all match; `in:`, `scope:`, `provider:` and the copy states must hold for the same copy (**state: not installed** with an `in:` token means "not in that folder"). Remove a token with its × or Backspace. **Ctrl+F** focuses the bar. When nothing matches, the list names the narrowest token and **Remove it** brings back the most items.
 
-**Filters** opens clickable choices for Type, Status, Installed, Tags and the other properties. Choose a category and a value; counts show how many items match. Adding a filter this way keeps your search text. Typing `kind:`, `status:` or another facet still works from the keyboard.
+**Filters** opens clickable choices for Type, Status, Installed, Tags and the other properties. Choose a category and a value; counts show how many items would match after adding it, within the current search text. Adding a filter this way keeps your search text. Typing `kind:`, `status:` or another facet still works from the keyboard.
 
 Under the bar, **All** clears the query and **Favourites** shows starred items. **Save this view** remembers the current filters, text, sort and grouping as a pill of its own (kept on this machine; its × deletes it). **Group by** puts the list under collapsible headings by **Collection**, **Type**, **Status**, or **Last used** (Today, Yesterday, Last 7 days, Last 30 days, Earlier and Never used). Sorting applies inside each group. **Expand all** and **Collapse all** work across the headings. Each view (the library, each stage, each collection, Archive and Trash) remembers its own query, order, grouping, highlighted row and open item; a new view starts without grouping.
 

@@ -1,4 +1,4 @@
-/** How the library list is ordered: the sort choices, the default, and sources leading inside a collection. Kept free of React so it can be tested. */
+/** Library ordering helpers, kept free of React so they can be tested. */
 import type { Item, Usage } from '../../../packages/protocol/schema';
 
 export type SortKey = 'title' | 'kind' | 'collection' | 'status' | 'updatedAt' | 'createdAt' | 'lastUsed' | 'site' | 'copied' | 'used' | 'order';
@@ -23,7 +23,7 @@ const headingLabel: Partial<Record<SortKey, string>> = { kind: 'Type', collectio
 export const sortLabel = (sort: NonNullable<Sort>) => sortChoices.find(c => c.sort.key === sort.key && c.sort.dir === sort.dir)?.label ?? `${headingLabel[sort.key] ?? 'Custom order'}${['kind', 'collection', 'status', 'site'].includes(sort.key) && sort.dir === 'desc' ? ' (reversed)' : ''}`;
 export const site = (item: Item) => { try { return new URL(item.source).hostname.replace(/^www\./, ''); } catch { return item.source || '—'; } };
 const statusRank: Record<string, number> = { approved: 0, testing: 1, captured: 2, rejected: 3, archived: 4 };
-/** `usage` holds copy and use counts per item id; counts tie often, so ties fall back to newest added. A null sort is the default. */
+/** Counts tie often, so prefer the latest recorded activity, then newest added. A null sort is the default. */
 export function sortItems(items: Item[], sort: Sort, usage: Usage = {}): Item[] {
   const { key, dir } = sort ?? defaultSort;
   if (key === 'lastUsed') return [...items].sort((a, b) => {
@@ -39,8 +39,7 @@ export function sortItems(items: Item[], sort: Sort, usage: Usage = {}): Item[] 
   return [...items].sort((a, b) => { const x = value(a), y = value(b); return (x < y ? -1 : x > y ? 1 : a.title.localeCompare(b.title)) * direction; });
 }
 /**
- * The list as shown. Inside a collection its sources are the material everything else was made from, so they lead, sorted
- * among themselves; across the whole library they mix in with the rest.
+ * Optional source pinning preserves the sorted order within each partition. The caller chooses when pinning applies.
  */
 export function arrangeItems(items: Item[], sort: Sort, usage: Usage = {}, pinSources = false): Item[] {
   const sorted = sortItems(items, sort, usage);

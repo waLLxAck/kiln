@@ -67,7 +67,6 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
   }, [open, pool, installations, sources, duplicates, invocation, tokens, query, browseFilters, filterFacet]);
   const flat = suggestions.flatMap(g => g.rows);
   useEffect(() => setActive(-1), [query, tokens]);
-  /** Adds a token; whatever was typed to find it is cleared by the caller, so it does not also search. */
   const add = (token: QueryToken) => { onTokens([...tokens, token]); input.current?.focus(); };
   const pick = (token: QueryToken) => { add(token); if (!browseFilters) onQuery(''); else setOpen(false); };
   const remove = (token: QueryToken) => onTokens(tokens.filter(t => !sameToken(t, token)));

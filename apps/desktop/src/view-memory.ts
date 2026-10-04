@@ -7,7 +7,7 @@ import { filterSchema, noFilter, type MachinesFilter } from './machines-filter';
 const tokenSchema = z.object({ facet: z.enum(['kind', 'status', 'in', 'state', 'provider', 'scope', 'tag', 'from', 'collection', 'is']), value: z.string() });
 const sortSchema = z.object({ key: z.enum(['title', 'kind', 'collection', 'status', 'updatedAt', 'createdAt', 'lastUsed', 'site', 'copied', 'used', 'order']), dir: z.enum(['asc', 'desc']) }).nullable();
 const groupSchema = z.enum(['none', 'collection', 'kind', 'status', 'lastUsed']);
-/** What one view remembers: the focused row, whether it is open as a page, the search text, the filter tokens and the order. */
+/** Machine-private state for one view; defaults keep older saved state readable. */
 const viewSchema = z.object({
   selected: z.string().default(''), open: z.boolean().default(false), query: z.string().default(''),
   tokens: z.array(tokenSchema).default([]),

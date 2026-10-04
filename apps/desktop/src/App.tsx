@@ -436,7 +436,6 @@ export default function App() {
   const base = useMemo(() => items.filter(i => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i))
     && inCollection(i, collection) && (section !== 'library' || inStage(i, stage, installations))), [items, section, collection, stage, installations]);
   const filterPool = useMemo(() => base.filter(bySearch), [base, searchText, searchSet]);
-  // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
   // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
   const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
   const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort;
