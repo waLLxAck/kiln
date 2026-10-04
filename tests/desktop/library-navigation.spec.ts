@@ -198,3 +198,43 @@ test('recently added and every named grouping preserve the complete library', as
     }
   } finally { await f.close(); }
 });
+
+test('legacy searched views retain a search override and leave the ordinary view sort intact', async () => {
+  const f = await fixture();
+  try {
+    await f.page.evaluate(() => {
+      localStorage.setItem('kiln-saved-views', JSON.stringify([
+        { id: 'legacy-search', name: 'Notes search', tokens: [], query: 'notes' },
+        { id: 'legacy-empty', name: 'Whole library', tokens: [], query: '' },
+      ]));
+    });
+    await f.page.reload();
+    const search = f.page.getByRole('combobox', { name: 'Search library' });
+    const sortPill = f.page.getByRole('button', { name: /^Sort:/ });
+    const quick = f.page.getByRole('group', { name: 'Quick sort' });
+    const searchedView = f.page.getByRole('button', { name: 'Notes search', exact: true });
+    const emptyView = f.page.getByRole('button', { name: 'Whole library', exact: true });
+    await quick.getByRole('button', { name: 'Most used', exact: true }).click();
+    await expect(titles(f.page)).toHaveText(['Code review', 'Research outline', 'Release checklist', 'API reference']);
+    await search.fill('outline');
+    await expect(titles(f.page)).toHaveText(['Research outline']);
+    await search.press('Escape');
+    await quick.getByRole('button', { name: 'Title A–Z', exact: true }).click();
+    await searchedView.click();
+    await expect(search).toHaveValue('notes');
+    await expect(sortPill).toContainText('Title A–Z');
+    await expect(titles(f.page)).toHaveText(['API reference', 'Code review', 'Research outline']);
+    // Leaving search restores the separate ordinary sort, never the search override.
+    await emptyView.click();
+    await expect(search).toHaveValue('');
+    await expect(quick.getByRole('button', { name: 'Most used', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(titles(f.page)).toHaveText(['Code review', 'Research outline', 'Release checklist', 'API reference']);
+    // Entering search with no override still uses relevance; it does not replace the ordinary sort.
+    await searchedView.click();
+    await expect(sortPill).toContainText('Relevance');
+    await expect(titles(f.page)).toHaveCount(3);
+    await emptyView.click();
+    await expect(quick.getByRole('button', { name: 'Most used', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(titles(f.page)).toHaveText(['Code review', 'Research outline', 'Release checklist', 'API reference']);
+  } finally { await f.close(); }
+});
