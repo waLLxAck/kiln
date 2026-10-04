@@ -179,7 +179,10 @@ export class FleetService {
    */
   async sync(): Promise<SyncEntry[]> {
     if (this.tracking() && this.wb.repositoryState().ready) await this.background.fetcher.fetch();
-    const entries: SyncEntry[] = this.deployments.syncInstalls();
+    // One read of the approvals for every entry below, instead of several per install (DeploymentService.batch).
+    return this.deployments.batch(() => this.syncWanted(this.deployments.syncInstalls()));
+  }
+  private syncWanted(entries: SyncEntry[]) {
     const locations = targetLocations(this.wb.targets(), os.homedir()), targets = this.wb.targets();
     const token = (key: string): ProviderId | 'codex-native' | undefined => key === 'agents' ? 'codex' : key === 'codex' ? 'codex-native' : key === 'claude' || key === 'copilot' ? key : undefined;
     for (const [itemId, keys] of Object.entries(this.wanted())) for (const key of keys) {

@@ -55,13 +55,17 @@ export function UsageView({ onOpenItem, perform, refresh }: Props) {
   const [again, setAgain] = useState(0);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
-  // One capped pass per request; while logs remain, ask again right away so the page fills in as they are read.
+  // One capped pass per request; while logs remain, ask again so the page fills in as they are read. Half a second apart while a
+  // pass makes progress, backing off (to 10 s) while it does not, such as a log an agent keeps writing. A failed request leaves
+  // the last report on screen with the error and a Retry; it is not asked again on its own.
   useEffect(() => {
-    let active = true, timer: ReturnType<typeof setTimeout> | undefined;
+    let active = true, timer: ReturnType<typeof setTimeout> | undefined, delay = 500, pending = Infinity;
     const load = () => void api<UsageReport>('usage.report', { days }).then(next => {
       if (!active) return;
       setReport(next); setError('');
-      if (!next.scan.complete) timer = setTimeout(load, 50);
+      if (next.scan.complete) return;
+      delay = next.scan.pending < pending ? 500 : Math.min(delay * 2, 10_000); pending = next.scan.pending;
+      timer = setTimeout(load, delay);
     }).catch(e => { if (active) setError(e instanceof Error ? e.message : String(e)); });
     load();
     return () => { active = false; clearTimeout(timer); };
@@ -85,7 +89,7 @@ export function UsageView({ onOpenItem, perform, refresh }: Props) {
     if (result.imported[0]) onOpenItem(result.imported[0]);
   }, `Imported “${row.name}” as a draft`);
 
-  const status = <span className="usage-scan muted small">{scan.complete
+  const status = <span className="usage-scan muted small">{error && !scan.complete ? <>Reading session logs stopped at {read}%</> : scan.complete
     ? <>{scan.files.toLocaleString()} log{scan.files === 1 ? '' : 's'} · {size(scan.bytes)}{scan.scannedAt ? ` · read ${date(scan.scannedAt)}` : ''}</>
     : <><Loader2 className="spin" size={12} />Reading session logs… {read}%</>}</span>;
   const head = <div className="usage-bar">
@@ -95,7 +99,8 @@ export function UsageView({ onOpenItem, perform, refresh }: Props) {
     <button className="icon-button" aria-label="Read new log entries" title="Read what the agents logged since" onClick={() => setAgain(n => n + 1)}><RefreshCw size={15} /></button>
   </div>;
 
-  if (!scan.files) return <>{head}<Empty icon={<BarChart3 size={30} />} title="No session logs on this machine yet.">Kiln reads Claude Code's logs in <code>{scan.roots.claude}</code> and Codex's in <code>{scan.roots.codex}</code>. They appear after your first session.</Empty></>;
+  const failed = error && <div className="notice warning" role="alert">Kiln could not read the session logs: {error} <button type="button" className="text-button" onClick={() => setAgain(n => n + 1)}>Retry</button></div>;
+  if (!scan.files) return <>{head}{failed}<Empty icon={<BarChart3 size={30} />} title="No session logs on this machine yet.">Kiln reads Claude Code's logs in <code>{scan.roots.claude}</code> and Codex's in <code>{scan.roots.codex}</code>. They appear after your first session.</Empty></>;
 
   const skillTable = <table className="usage-table">
     <thead><tr>
@@ -159,6 +164,7 @@ export function UsageView({ onOpenItem, perform, refresh }: Props) {
 
   return <div className="usage-page">
     {head}
+    {failed}
     {tab === 'skills' ? <>
       <div className="usage-filters">{(['all', 'unmanaged', 'unapproved', 'unused'] as SkillFilter[]).map(f => <button key={f} className={`chip ${filter === f ? 'active' : ''}`} aria-pressed={filter === f} disabled={f !== 'all' && !counts[f]} onClick={() => setFilter(f)}
         title={f === 'unmanaged' ? 'Used, but not in your library' : f === 'unapproved' ? 'Used, in your library, not approved' : f === 'unused' ? `Installed on this machine, no use in the last ${windowLabel(days)}` : undefined}>

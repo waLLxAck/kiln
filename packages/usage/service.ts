@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { Item, Receipt } from '../protocol/schema';
 import { atomicWrite, now } from '../storage/files';
-import { addTokens, defaultPrices, estimateCost, noTokens, normaliseModel, priceFor, pricesChecked, totalTokens, type PriceTable, type TokenCounts } from './prices';
+import { addTokens, costAt, defaultPrices, noTokens, normaliseModel, priceFor, pricesChecked, totalTokens, type PriceTable, type TokenCounts } from './prices';
 import { claudeLine, codexLine, localDay, newEntry, type FileEntry, type Harness, type Signal, type SkillUse } from './transcripts';
 
 /**
@@ -50,6 +50,8 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 export class UsageService {
   private cache?: Cache;
   private running: Promise<ScanStatus> | null = null;
+  /** When the cache was last written; a pass that leaves logs unread saves at most every few seconds (see `pass`). */
+  private savedAt = 0;
   private jobs = new Map<string, { mtimeMs: number; usage: JobUsage | null }>();
   constructor(private options: Options) {}
 
@@ -84,10 +86,11 @@ export class UsageService {
     walk(claude, 'claude', 0); walk(codex, 'codex', 0); walk(path.join(path.dirname(codex), 'archived_sessions'), 'codex', 0);
     return found;
   }
-  status(): ScanStatus {
+  /** Every log file with its size and modification time; files that vanish while listed are left out. */
+  private stats() { return this.list().flatMap(({ file, harness }) => { try { const stat = fs.statSync(file); return [{ file, harness, stat }]; } catch { return []; } }); }
+  status(listed = this.stats()): ScanStatus {
     const cache = this.load(); let bytes = 0, pending = 0, files = 0;
-    for (const { file } of this.list()) {
-      let stat: fs.Stats; try { stat = fs.statSync(file); } catch { continue; }
+    for (const { file, stat } of listed) {
       files++; bytes += stat.size;
       const entry = cache.files[file];
       pending += !entry ? stat.size : entry.size === stat.size && entry.mtimeMs === stat.mtimeMs ? 0 : stat.size < entry.offset ? stat.size : stat.size - entry.offset;
@@ -108,11 +111,12 @@ export class UsageService {
   async scanAll() { let status = await this.scan({ maxBytes: 2 ** 40, maxMs: 2 ** 30 }); while (!status.complete) status = await this.scan({ maxBytes: 2 ** 40, maxMs: 2 ** 30 }); return status; }
 
   private async pass(maxBytes: number, maxMs: number): Promise<ScanStatus> {
-    const cache = this.load(), started = Date.now(), listed = this.list(), present = new Set(listed.map(f => f.file));
+    // The log tree is walked and stat'ed once per pass; the status at the end uses the same listing.
+    const cache = this.load(), started = Date.now(), listed = this.stats(), present = new Set(listed.map(f => f.file));
     let budget = maxBytes, changed = false;
     for (const [file, entry] of Object.entries(cache.files)) if (!present.has(file) && !entry.gone) { entry.gone = true; changed = true; }
     // Newest first, so a first scan shows recent weeks early.
-    const work = listed.flatMap(({ file, harness }) => { try { const stat = fs.statSync(file); return [{ file, harness, stat }]; } catch { return []; } })
+    const work = listed
       .filter(({ file, stat }) => { const e = cache.files[file]; return !e || e.gone || e.size !== stat.size || e.mtimeMs !== stat.mtimeMs; })
       .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
     for (const { file, harness, stat } of work) {
@@ -127,8 +131,11 @@ export class UsageService {
       // even when its last line is still being written: that line is read once the file changes again.
       if (!read.reached) entry.mtimeMs = -1;
     }
-    if (changed) { cache.scannedAt = now(); this.save(); }
-    return this.status();
+    const status = this.status(listed);
+    // The whole cache is one JSON file, so it is written when a scan finishes and otherwise at most every 5 seconds: the desktop
+    // asks for a pass after another while logs remain, and rewriting megabytes each time cost more than the pass itself.
+    if (changed) { cache.scannedAt = status.scannedAt = now(); if (status.complete || Date.now() - this.savedAt >= 5000) { this.save(); this.savedAt = Date.now(); } }
+    return status;
   }
   /**
    * Reads complete lines from `entry.offset`, handing each to its harness's parser, until `size` or, at the next line boundary,
@@ -224,7 +231,7 @@ export class UsageService {
    * The Usage view over the last `days` days (0: all time). Reads only the cache: call `scan` first for fresh numbers. Skills are
    * every skill seen in the logs; `unused` lists library skills with a copy on this machine and no use in the window.
    */
-  report(input: unknown, library: LibraryView): UsageReport {
+  report(input: unknown, library: LibraryView, status?: ScanStatus): UsageReport {
     const { days } = z.object({ days: z.number().int().min(0).max(3650).default(30) }).passthrough().parse(input ?? {});
     const today = Date.now(), since = days ? localDay(today - (days - 1) * DAY) : '', before = days ? localDay(today - (2 * days - 1) * DAY) : '';
     const inWindow = (day: string) => !since || day >= since;
@@ -247,9 +254,13 @@ export class UsageService {
     }
 
     const row = (key: string, label: string): SpendRow => ({ key, label, tokens: noTokens(), cost: null, unpriced: 0 });
+    // Each model is looked up in the price table once: there are a few models and a great many day buckets.
+    const looked = new Map<string, ReturnType<typeof priceFor>>();
+    const price = (model: string) => { let found = looked.get(model); if (found === undefined) looked.set(model, found = priceFor(model, table)); return found; };
+    const estimateCost = (model: string, tokens: TokenCounts) => costAt(price(model)?.price, tokens);
     const add = (target: SpendRow, model: string, tokens: TokenCounts) => {
       addTokens(target.tokens, tokens);
-      const cost = estimateCost(model, tokens, table);
+      const cost = estimateCost(model, tokens);
       if (cost === null) target.unpriced += totalTokens(tokens); else target.cost = (target.cost ?? 0) + cost;
     };
     const group = (map: Map<string, SpendRow>, key: string, label = key) => map.get(key) ?? map.set(key, row(key, label)).get(key)!;
@@ -260,13 +271,13 @@ export class UsageService {
       for (const bucket of Object.values(entry.buckets)) {
         add(group(byMonth, bucket.day.slice(0, 7)), bucket.model, bucket.tokens);
         if (!inWindow(bucket.day)) continue;
-        const model = priceFor(bucket.model, table)?.key ?? normaliseModel(bucket.model);
+        const model = price(bucket.model)?.key ?? normaliseModel(bucket.model);
         add(total, bucket.model, bucket.tokens); add(group(byModel, model), bucket.model, bucket.tokens);
         add(group(byProject, entry.project || '(unknown folder)'), bucket.model, bucket.tokens); add(group(byHarness, entry.harness, entry.harness === 'claude' ? 'Claude Code' : 'Codex'), bucket.model, bucket.tokens);
         (projectSessions.get(entry.project || '(unknown folder)') ?? projectSessions.set(entry.project || '(unknown folder)', new Set()).get(entry.project || '(unknown folder)')!).add(session);
         (modelSessions.get(model) ?? modelSessions.set(model, new Set()).get(model)!).add(session);
         const s = sessions.get(session) ?? sessions.set(session, { tokens: noTokens(), cost: 0, priced: false }).get(session)!;
-        addTokens(s.tokens, bucket.tokens); const cost = estimateCost(bucket.model, bucket.tokens, table); if (cost !== null) { s.cost += cost; s.priced = true; }
+        addTokens(s.tokens, bucket.tokens); const cost = estimateCost(bucket.model, bucket.tokens); if (cost !== null) { s.cost += cost; s.priced = true; }
       }
     }
     for (const [key, r] of byProject) r.sessions = projectSessions.get(key)?.size ?? 0;
@@ -291,7 +302,7 @@ export class UsageService {
       .sort((a, b) => (a.lastUsed ?? '').localeCompare(b.lastUsed ?? '') || a.title.localeCompare(b.title));
     const sorted = (map: Map<string, SpendRow>) => [...map.values()].sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0) || totalTokens(b.tokens) - totalTokens(a.tokens));
     return {
-      days, since: since || null, scan: this.status(), unused,
+      days, since: since || null, scan: status ?? this.status(), unused,
       skills: [...rows.values()].map(({ days: active, projectSet, signalSet, harnessSet, ...r }) => ({ ...r, activeDays: active.size, projects: [...projectSet].sort(), signals: [...signalSet].sort(), harnesses: [...harnessSet].sort(), importable: !r.itemId && Boolean(r.folder) && !/[\\/](?:bundled-skills|\.system|plugins)[\\/]/.test(r.folder!) && fs.existsSync(path.join(r.folder!, 'SKILL.md')) }))
         .sort((a, b) => b.uses - a.uses || b.total - a.total || a.title.localeCompare(b.title)),
       spend: { total, byModel: sorted(byModel), byProject: sorted(byProject), byHarness: sorted(byHarness), byMonth: [...byMonth.values()].sort((a, b) => b.key.localeCompare(a.key)), kiln: { total: kilnTotal, byKind: sorted(byKind), byItem: sorted(byItem) } },

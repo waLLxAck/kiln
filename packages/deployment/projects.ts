@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Workbench } from '../domain/workbench';
 import type { CopyPreview, DeploymentService } from './service';
 import { invariant } from '../domain/errors';
-import { idSchema, hashSchema, type ProviderId, type Target } from '../protocol/schema';
+import { idSchema, hashSchema, type ProviderId, type Receipt, type Target } from '../protocol/schema';
 import { noLinks } from '../storage/files';
 import { skillLocation, type SkillLocation } from '../providers/skill-locations';
 
@@ -46,6 +46,8 @@ export function mergeProjects(entries: ProjectEntry[], platform: NodeJS.Platform
   return [...merged.values()].sort((a, b) => (b.lastUsed ?? '').localeCompare(a.lastUsed ?? '') || a.name.localeCompare(b.name) || a.root.localeCompare(b.root));
 }
 
+/** The newest receipt for each destination (receipts come oldest first). */
+const latestByDestination = (receipts: Receipt[]) => { const latest = new Map<string, Receipt>(); for (const r of receipts) latest.set(r.destination, r); return latest; };
 const recentSchema = z.object({ recent: z.array(z.object({ path: z.string().min(1).max(4096), at: z.string().max(40).optional() })).max(1000).default([]) });
 const placeSchema = z.object({ itemId: idSchema, root: z.string().min(1).max(4096), location: z.enum(['agents', 'claude', 'copilot']).optional() });
 export type ProjectPreview = CopyPreview & { root: string; name: string; location: ProjectLocation | null; provider: ProviderId; /** False until the first install enrols the folder as a project target. */ enrolled: boolean };
@@ -57,16 +59,17 @@ export type ProjectPreview = CopyPreview & { root: string; name: string; locatio
  */
 export class ProjectInstalls {
   constructor(private wb: Workbench, private deployments: DeploymentService, private savedProjects: () => string[], private install: (args: unknown) => { destination: string; method: string }) {}
-  private targetsAt(root: string) { const key = projectKey(root); return this.wb.targets().filter(t => t.scope === 'project' && projectKey(t.root) === key); }
-  /** Latest applied receipts for copies in this folder's targets that are still on disk. */
-  private managedCopies(root: string) {
-    const ids = new Set(this.targetsAt(root).map(t => t.id)), receipts = this.deployments.receipts();
+  private targetsAt(root: string, targets = this.wb.targets()) { const key = projectKey(root); return targets.filter(t => t.scope === 'project' && projectKey(t.root) === key); }
+  /** Latest applied receipts for copies in this folder's targets that are still on disk. `latest` is the newest receipt per destination. */
+  private managedCopies(targets: Target[], receipts = this.deployments.receipts(), latest = latestByDestination(receipts)) {
+    const ids = new Set(targets.map(t => t.id));
     return [...new Set(receipts.filter(r => ids.has(r.targetId)).map(r => r.destination))]
-      .map(destination => receipts.filter(r => r.destination === destination).at(-1)!)
+      .map(destination => latest.get(destination)!)
       .filter(r => r.status === 'applied' && ids.has(r.targetId) && fs.lstatSync(r.destination, { throwIfNoEntry: false }));
   }
   known(input: unknown = {}): KnownProject[] {
-    const { recent } = recentSchema.parse(input ?? {}), receipts = this.deployments.receipts();
+    // Targets and receipts are read once for every project listed, not once or twice per project.
+    const { recent } = recentSchema.parse(input ?? {}), receipts = this.deployments.receipts(), latest = latestByDestination(receipts);
     const targets = this.wb.targets().filter(t => t.scope === 'project');
     const merged = mergeProjects([
       ...targets.map(t => ({ root: t.root, source: 'installs' as const, name: t.name, at: receipts.filter(r => r.targetId === t.id).at(-1)?.createdAt ?? null })),
@@ -75,7 +78,8 @@ export class ProjectInstalls {
     ]);
     return merged.map(project => {
       let exists = false; try { exists = fs.statSync(project.root).isDirectory(); } catch { /* A moved or deleted folder stays listed so it can be forgotten. */ }
-      return { ...project, exists, targets: this.targetsAt(project.root).map(t => ({ id: t.id, provider: t.provider, location: skillLocation(t) })), managed: this.managedCopies(project.root).length };
+      const here = this.targetsAt(project.root, targets);
+      return { ...project, exists, targets: here.map(t => ({ id: t.id, provider: t.provider, location: skillLocation(t) })), managed: this.managedCopies(here, receipts, latest).length };
     });
   }
   private place(input: unknown) {
@@ -124,7 +128,7 @@ export class ProjectInstalls {
     const { root } = z.object({ root: z.string().min(1).max(4096), confirm: z.literal(true) }).parse(input);
     const targets = this.targetsAt(root);
     invariant(targets.length, 'TARGET_NOT_ENROLLED', 'Kiln does not install into this folder, so there is nothing to forget.');
-    const managed = this.managedCopies(root);
+    const managed = this.managedCopies(targets);
     const titles = [...new Set(managed.map(r => { try { return this.wb.getItem(r.itemId).title; } catch { return 'an item no longer in the library'; } }))];
     invariant(!managed.length, 'COPIES_REMAIN', `Kiln still manages ${managed.length === 1 ? 'a copy' : `${managed.length} copies`} in this folder (${titles.join(', ')}). Remove ${managed.length === 1 ? 'it' : 'them'} from the item's Installs section first.`);
     for (const target of targets) this.wb.removeTarget({ id: target.id, confirm: true });
