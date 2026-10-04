@@ -151,16 +151,10 @@ export default function App() {
   // One library load at a time: asking while one runs gets one more after it (load-state.ts), so actions, focus, sync and
   // finished runs never stack snapshots in the backend's queue. `lastLoad` is when the latest one started.
   const lastLoad = useRef(0);
-  const opened = useRef(false);
   const [startupSince, setStartupSince] = useState(() => Date.now());
   const refresh = useMemo(() => coalesce(async () => {
     lastLoad.current = Date.now();
-    if (!opened.current) {
-      setStartupSince(lastLoad.current);
-      // A cold library can take longer than an ordinary read. Start the snapshot deadline once it is open.
-      await api('desktop.ready', {}, { timeoutMs: 120_000 });
-      opened.current = true;
-    }
+    setStartupSince(lastLoad.current);
     setSnapshot(await api<Snapshot>('snapshot', {}, { fresh: true }));
   }), []);
   // Jobs as the screens see them: replaced only when something they show changed, so an idle poll redraws nothing.
