@@ -53,7 +53,7 @@ import { duplicateIds, groupOf } from './consolidate-model';
 import { updateInstalls } from './InstallUpdates';
 import { canKeep, useKeepChanges } from './KeepChanges';
 import { HomeFilesView } from './HomeFiles';
-import { UpdatesPanel } from './Updates';
+import { UpdateAction, UpdatesPanel } from './Updates';
 import { ASK_AGENT_EVENT, reviewOf, type AskAgentDetail } from './TrialLoop';
 import { ExperimentsPage } from './ExperimentsPage';
 import { invocationMessage } from './Invocation';
@@ -616,6 +616,7 @@ export default function App() {
   return <div className="app-shell">
     <div className="app-body">
       <Rail style={sidebar.style} theme={(theme ?? snapshot.settings.theme) === 'dark' ? 'dark' : 'light'} onTheme={toggleTheme} section={section} collection={collection} stage={stage} collections={snapshot.collections} counts={counts} collapsed={collapsed} onToggle={toggleCollapsed} drag={collectionDrag} itemDrag={itemDrag} renaming={renamingCollection} onRename={renameCollection} onRenaming={setRenamingCollection} onError={setError}
+        footer={<><span title={update?.packaged === false ? 'Running from source' : 'Installed version'}>v{update?.current ?? '…'}</span><UpdateAction update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} compact /></>}
         onNavigate={navigate} onStage={chooseStage} onCollection={openCollection} onNewCollection={() => newCollection()} onCollectionMenu={(event, name) => setCollectionMenu({ ...menuPoint(event), name })} />
       <ResizeHandle panel={sidebar} label="Resize sidebar" />
       <main className="main-workspace"><header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><b>{sectionName}</b></div>
@@ -662,7 +663,7 @@ export default function App() {
         </div>
       </main>
     </div>
-    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection}
+    <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection}
       context={<SessionStartStatus snapshot={snapshot} installations={installations} stamp={copiesStamp === undefined ? installations : installStamp} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />} />
     <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} entryTypes={selectedEntryTypes(snapshot.settings)} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} onRepository={url => setDialog({ name: 'repo-scan', url })} />
     {undoStack.toasts(message)}
