@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Item, Snapshot } from '../packages/protocol/schema';
-import { busyLine, coalesce, detailReducer, errorText, focusReloads, idleDetail, isTimeout, itemStamp, jobsSignature, pendingPublish, publishSignature, type DetailState } from '../apps/desktop/src/load-state';
+import { busyLine, coalesce, detailReducer, errorText, focusReloads, idleDetail, isTimeout, itemStamp, jobsSignature, pendingPublish, publishSignature, searchState, type DetailState } from '../apps/desktop/src/load-state';
 import { date } from '../apps/desktop/src/dates';
 import { railCounts } from '../apps/desktop/src/library-filters';
 
@@ -121,4 +121,21 @@ test('rail counts: one pass gives the library, stages, nested collections, archi
   assert.deepEqual({ library: counts.library, unfiled: counts.unfiled, archive: counts.archive, trash: counts.trash }, { library: 4, unfiled: 1, archive: 1, trash: 1 });
   assert.deepEqual(Object.fromEntries(counts.collections), { Work: 2, 'Work/Docs': 1, Home: 1 });
   assert.deepEqual(counts.stages, { drafts: 3, approved: 1 });
+});
+
+test('a search runs from the keystroke until its answer is in, with no gap while the list catches up with the box', () => {
+  const remember = { query: 'Remember', ids: ['a', 'b'], close: false };
+  // Typed, but the deferred list still shows the unfiltered view: already searching, so nothing takes it for the results.
+  assert.deepEqual(searchState('Remember', '', null, null), { searchIds: null, close: false, searching: true });
+  // The list has caught up and the debounced search is on its way.
+  assert.deepEqual(searchState('Remember', 'Remember', null, null), { searchIds: null, close: false, searching: true });
+  assert.deepEqual(searchState('Remember', 'Remember', remember, null), { searchIds: ['a', 'b'], close: false, searching: false });
+  // A longer query keeps the previous results on screen until its own answer replaces them.
+  assert.deepEqual(searchState('Remember 2', 'Remember 2', remember, null), { searchIds: ['a', 'b'], close: false, searching: true });
+  // Re-reading the same query after an edit is not a new search; a failed one stops the spinner.
+  assert.equal(searchState('  Remember ', 'Remember', remember, null).searching, false);
+  assert.equal(searchState('Other', 'Other', remember, 'Other').searching, false);
+  // Clearing the box: nothing to search for, even before the list has caught up.
+  assert.deepEqual(searchState('', 'Remember', remember, null), { searchIds: ['a', 'b'], close: false, searching: false });
+  assert.deepEqual(searchState('', '', remember, null), { searchIds: null, close: false, searching: false });
 });

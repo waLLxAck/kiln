@@ -96,13 +96,17 @@ export default function App() {
   // The box shows every key at once; filtering the list follows a moment later, so typing never waits for 400 rows.
   const listQuery = useDeferredValue(query);
   // "kind:" being typed is a filter on its way, not text to search for.
-  const searchText = parseTyped(listQuery).facet ? '' : listQuery.trim();
-  const { searchIds, close: closeMatches, searching, searchSort, setSearchSort } = useLibrarySearch(searchText, snapshot, message => setError(message));
+  const searchFor = (text: string) => parseTyped(text).facet ? '' : text.trim();
+  const searchText = searchFor(listQuery);
+  // Searching shows from the keystroke, while the list has yet to catch up with the box, until the answer is in.
+  const { searchIds, close: closeMatches, searching, searchSort, setSearchSort } = useLibrarySearch(searchText, snapshot, message => setError(message), searchFor(query));
   const searchSet = useMemo(() => searchIds && new Set(searchIds), [searchIds]);
   const libraryView = ['library', 'archive', 'trash'].includes(section);
   // An open item replaces the list; coming back puts the list where it was.
   const listShown = libraryView && !itemOpen;
-  const listScroll = useScrollMemory(`list:${viewKey}`, Boolean(snapshot) && listShown && (!searchText || searchIds !== null), `${snapshot?.items.length}:${searchIds?.join(',') ?? ''}:${listShown}`);
+  // The position is restored, and remembered, only once the list holds what it is about to show: a scroll of the old rows while
+  // a search is still on its way would be lost when its results arrive.
+  const listScroll = useScrollMemory(`list:${viewKey}`, Boolean(snapshot) && listShown && !searching && (!searchText || searchIds !== null), `${snapshot?.items.length}:${searchIds?.join(',') ?? ''}:${listShown}`);
   /** Rows picked with Ctrl-click, Shift-click or Ctrl+A. `selected` stays the focused row; two or more picked rows make right-click act on all of them. */
   const [bulkIds, setBulkIds] = useState<string[]>([]); const bulkRef = useRef<string[]>([]); bulkRef.current = bulkIds;
   const [bulkReview, setBulkReview] = useState<string[] | null>(null);

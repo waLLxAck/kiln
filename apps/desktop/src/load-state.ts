@@ -88,3 +88,18 @@ export function busyLine(status: BackendStatus | null) {
 export const isTimeout = (error: unknown) => /^TIMEOUT\b/.test(error instanceof Error ? error.message : String(error));
 /** An error as the sentence to show: without `Error: ` and the backend's `CODE: ` prefix. */
 export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error: /, '').replace(/^[A-Z_]+: /, '');
+
+/** One search's answer, and the query it answers. */
+export type SearchAnswer = { query: string; ids: string[]; close: boolean };
+/**
+ * What the list shows for a search: the ids of the latest answer (an earlier query's stay until the next answer replaces them),
+ * whether those are only close matches, and whether an answer is still on its way. `typed` is the search as typed in the box and
+ * `query` the one the list is filtered by, which follows it a moment later (useDeferredValue); until it has caught up, and until
+ * its answer is in, the search is running, so nothing takes the list on screen for the results.
+ */
+export function searchState(typed: string, query: string, answer: SearchAnswer | null, failed: string | null) {
+  const wanted = typed.trim(), shown = query.trim();
+  const searching = Boolean(wanted) && (wanted !== shown || (answer?.query !== shown && failed !== shown));
+  if (!shown) return { searchIds: null, close: false, searching };
+  return { searchIds: answer?.ids ?? null, close: answer?.close ?? false, searching };
+}
