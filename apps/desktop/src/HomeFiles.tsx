@@ -4,6 +4,8 @@ import { ArrowRight, ChevronDown, ExternalLink, FilePlus2, FolderOpen, History, 
 import type { HomeBackup, HomeFile, HomeFileContent, HomeFileKind, HomeList } from '../../../packages/home/service';
 import { api, date, fileManager } from './api';
 import { Modal } from './components';
+import { LoadError, Waiting } from './Loading';
+import { focusReloads } from './load-state';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
 import { ConfigTree, bytes, purposeIcon } from './ConfigTree';
 import { HooksEditor, PermissionsEditor, type Apply } from './Permissions';
@@ -63,15 +65,20 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary, append }: Props
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<Tab>('permissions');
-  const reloadList = useCallback(async () => { setFiles(await api<HomeList>('home.list')); }, []);
+  // Reading the list and the chosen file: failures show in place with Retry, never as an endless "Reading…".
+  const [listError, setListError] = useState(''), [reading, setReading] = useState<number | null>(null), [readError, setReadError] = useState('');
+  const listRead = useRef(0);
+  const reloadList = useCallback(async () => { listRead.current = Date.now(); try { setFiles(await api<HomeList>('home.list')); setListError(''); } catch (e) { setListError(plainError(e)); throw e; } }, []);
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const loadBackups = useCallback(async (key: string) => { const found = await api<HomeBackup[]>('home.backups', { key }); if (selectedRef.current === key) setBackups(found); }, []);
-  const load = useCallback(async (key: string) => {
+  const load = useCallback(async (key: string, fresh = false) => {
     const sequence = ++loadSequence.current;
-    setLoaded(null); setEditingEmpty(false); setSaveError('');
-    const content = await api<HomeFileContent>('home.read', { key });
+    setLoaded(null); setEditingEmpty(false); setSaveError(''); setReadError(''); setReading(Date.now());
+    let content: HomeFileContent;
+    try { content = await api<HomeFileContent>('home.read', { key }, { fresh }); }
+    catch (e) { if (sequence === loadSequence.current) { setReadError(plainError(e)); setReading(null); } throw e; }
     if (sequence !== loadSequence.current) return;
-    setLoaded(content); setBackups(null); setCompare(null);
+    setReading(null); setLoaded(content); setBackups(null); setCompare(null);
     const saved = savedDraft(key);
     // A private draft survives restarts; it is dropped only when it matches what is on disk.
     const start = saved && saved.content !== content.content ? saved : { content: content.content, base: content.hash };
@@ -84,11 +91,11 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary, append }: Props
     if (add && added) void perform(async () => undefined, `${added.heading ? `Added under “${added.heading}”` : 'Added at the end'} as an unsaved edit. Review it, then save.`);
     void loadBackups(key).catch(() => undefined);
   }, [loadBackups]);
-  useEffect(() => { void perform(reloadList); }, []);
+  useEffect(() => { void reloadList().catch(() => undefined); }, []);
   // Declared before the load below, so the snippet is waiting when the chosen file is read.
   useEffect(() => { if (!append) return; pendingAppend.current = append; if (selectedRef.current === append.key) void load(append.key).catch(() => undefined); else setSelected(append.key); }, [append?.at]);
-  useEffect(() => { localStorage.setItem('kiln-home-selected', selected); void load(selected).catch(() => setLoaded(null)); }, [selected, load]);
-  useEffect(() => { const onFocus = () => void reloadList().catch(() => undefined); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [reloadList]);
+  useEffect(() => { localStorage.setItem('kiln-home-selected', selected); void load(selected).catch(() => undefined); }, [selected, load]);
+  useEffect(() => { const onFocus = () => { if (focusReloads(Date.now(), listRead.current, document.visibilityState === 'hidden')) void reloadList().catch(() => undefined); }; window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [reloadList]);
   const current = files?.files.find(f => f.key === selected);
   const dirty = loaded !== null && draft !== loaded.content;
   useEffect(() => { if (!loaded) return; if (dirty) localStorage.setItem(draftKey(loaded.key), JSON.stringify({ content: draft, base })); else localStorage.removeItem(draftKey(loaded.key)); }, [draft, dirty, base, loaded]);
@@ -153,7 +160,7 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary, append }: Props
 
   return <div className="library-layout cfg-layout">
     <section className="cfg-tree" style={{ ...list.style, maxWidth: 'calc(100% - 420px)' }} aria-label="Config files">
-      <ConfigTree files={files} selected={selected} onSelect={setSelected} onCreate={create} hasDraft={hasDraft} onRefresh={() => void perform(reloadList)} onAddProject={addProject} onAddFile={addFile} />
+      <ConfigTree files={files} failed={Boolean(listError)} selected={selected} onSelect={setSelected} onCreate={create} hasDraft={hasDraft} onRefresh={() => void perform(reloadList)} onAddProject={addProject} onAddFile={addFile} />
     </section><ResizeHandle panel={list} label="Resize file list" />
     {current && loaded && PurposeIcon ? <article className="cfg-main" aria-label="Selected file" onKeyDown={onKey}>
       <header className="cfg-head">
@@ -200,7 +207,12 @@ export function HomeFilesView({ perform, refresh, onOpenLibrary, append }: Props
           </>
           : <><CodeEditor key={current.key} label={current.label} value={draft} onChange={setDraft} language={languageFor(current.path, { comments: current.kind === 'vscode' })} /><Status content={loaded} file={current.path} /></>}
       </div>
-    </article> : <div className="welcome-pane"><div className="welcome-content"><h1>{files ? 'Pick a file to edit.' : 'Reading your home folder…'}</h1><p>Settings and instructions for Claude Code, Codex, GitHub Copilot and your shell.</p></div></div>}
+    </article> : <div className="welcome-pane"><div className="welcome-content">
+      {!files && listError ? <LoadError error={`Couldn’t read your home folder: ${listError}`} onRetry={() => void reloadList().catch(() => undefined)} />
+        : current && readError ? <LoadError error={`Couldn’t read ${current.label}: ${readError}`} onRetry={() => void load(selected, true).catch(() => undefined)} />
+        : current && reading !== null ? <Waiting since={reading} label={`Reading ${current.label}`}>{`Reading ${current.label}…`}</Waiting>
+        : <><h1>{files ? 'Pick a file to edit.' : 'Reading your home folder…'}</h1><p>Settings and instructions for Claude Code, Codex, GitHub Copilot and your shell.</p></>}
+    </div></div>}
     {removing && <Modal title="Remove from this list?" subtitle={removing.label} onClose={() => setRemoving(null)}><code className="path-text">{removing.path}</code><p>The file stays where it is. Only Kiln's list entry and the versions Kiln kept for it are removed.</p><div className="modal-actions"><button className="button" onClick={() => setRemoving(null)}>Cancel</button><button className="button primary" onClick={() => void perform(async () => { await api('home.remove', { key: removing.key }); localStorage.removeItem(draftKey(removing.key)); setRemoving(null); if (selected === removing.key) setSelected('claude-global'); await reloadList(); }, 'Removed from the list; the file was not touched')}><Trash2 size={14} />Remove from list</button></div></Modal>}
   </div>;
 }

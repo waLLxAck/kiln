@@ -18,6 +18,8 @@ type ItemAction = { id: string; label: string; icon: ReactNode; run: () => void 
 const IDLE_ITEMS = 8;
 /** Results asked for per search; the list says when there were more. */
 const LIMIT = 30;
+/** How long the usage, installs and theme read for quick search stay good; it is shown often, and they rarely matter to the second. */
+const SNAPSHOT_MS = 30_000;
 type How = 'default' | 'kiln' | 'test';
 const sections = [
   { id: 'library', label: 'Library', icon: <Layers3 size={15} />, detail: 'Every item, with search, filters and collections.' },
@@ -58,7 +60,7 @@ export default function Palette() {
   const [query, setQuery] = useState(''), [results, setResults] = useState<SearchResults | null>(null), [selected, setSelected] = useState(0), [error, setError] = useState('');
   const [preview, setPreview] = useState<ItemDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  // Usage for ordering, marked installs and the theme: read once each time the palette is shown.
+  // Usage for ordering, marked installs and the theme: read when the palette is shown, unless read in the last SNAPSHOT_MS.
   const [snapshot, setSnapshot] = useState<Pick<Snapshot, 'usage' | 'installs' | 'items' | 'settings'> | null>(null);
   // Tab switches the list to the selected item's actions; Esc comes back.
   const [mode, setMode] = useState<'list' | 'actions'>('list'), [actionIndex, setActionIndex] = useState(0);
@@ -74,11 +76,17 @@ export default function Palette() {
   const [generation, setGeneration] = useState(0);
   const input = useRef<HTMLInputElement>(null), list = useRef<HTMLDivElement>(null), preview_ = useRef<HTMLElement>(null), hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const loadSnapshot = () => void api<Snapshot>('snapshot').then(next => { setSnapshot(next); applyTheme(next.settings.theme); }).catch(e => setError(String(e)));
+  // Only those four parts are kept: showing quick search should not hold or re-read the whole library each time.
+  const snapshotAt = useRef(0), settingsRef = useRef<Snapshot['settings'] | null>(null); settingsRef.current = snapshot?.settings ?? null;
+  const loadSnapshot = () => {
+    if (Date.now() - snapshotAt.current < SNAPSHOT_MS) return;
+    snapshotAt.current = Date.now();
+    void api<Snapshot>('snapshot').then(({ usage, installs, items, settings }) => { setSnapshot({ usage, installs, items, settings }); applyTheme(settings.theme); }).catch(e => { snapshotAt.current = 0; setError(String(e)); });
+  };
   useEffect(() => {
     applyTheme();
     // The last search stays, selected, so typing replaces it and Enter does the same thing again.
-    const shown = () => { clearTimeout(hideTimer.current); setCopied(null); setPending(null); input.current?.focus(); input.current?.select(); setMode('list'); setValues({}); setError(''); setGeneration(g => g + 1); loadSnapshot(); };
+    const shown = () => { applyTheme(settingsRef.current?.theme); clearTimeout(hideTimer.current); setCopied(null); setPending(null); input.current?.focus(); input.current?.select(); setMode('list'); setValues({}); setError(''); setGeneration(g => g + 1); loadSnapshot(); };
     window.addEventListener('focus', shown); input.current?.focus(); loadSnapshot();
     return () => { window.removeEventListener('focus', shown); clearTimeout(hideTimer.current); };
   }, []);

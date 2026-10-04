@@ -53,7 +53,8 @@ export function RepoStatus({ snapshot, refresh, perform, onMessage, onConflicts,
   const fetchNow = useCallback(async (maxAgeMs: number) => {
     try {
       const next = await api<SyncStatus>('sync.fetch', { maxAgeMs });
-      const changed = next.checkedAt !== current?.checkedAt; publish(next);
+      // Only a fetch that brought something can change the library; a failed or skipped attempt moves `checkedAt` alone.
+      const changed = (['fetchedAt', 'ahead', 'behind'] as const).some(key => (next as Partial<Record<string, unknown>>)[key] !== (current as Partial<Record<string, unknown>> | null)?.[key]); publish(next);
       if (changed) await refresh().catch(() => undefined);
     } catch { /* The library changed meanwhile; the next check starts over. */ }
   }, [refresh]);

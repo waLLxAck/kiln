@@ -1,10 +1,12 @@
 import { useViewMemory, useScrollMemory, useGroupBy, useSavedViews } from './view-memory';
 import { BulkRemovalDialog } from './BulkLibrary';
-import { inStage, matchesQuery, narrowest, parseTyped, sameToken, stages, statusLabel, tokenLabel, type QueryToken, type Stage } from './library-filters';
+import { inStage, matchesQuery, narrowest, parseTyped, railCounts, sameToken, stages, statusLabel, tokenLabel, type QueryToken, type Stage } from './library-filters';
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
 import { SkillLocationSettings } from './Skills';
-import { useCallback, useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
-import { Activity, ArrowRight, ChevronRight, Copy, Download, ExternalLink, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, Loader2, MessageSquare, Pencil, Plug, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useReducer, useState, useRef, type MouseEvent } from 'react';
+import { Activity, ArrowRight, ChevronRight, Copy, Download, ExternalLink, Folder, FolderGit2, FolderInput, FolderOpen, FolderPlus, FolderX, Github, Layers3, MessageSquare, Pencil, Plug, Plus, RefreshCw, RotateCcw, Search, Settings, Star, Terminal, Trash2, Upload, X } from 'lucide-react';
+import { coalesce, detailReducer, errorText, focusReloads, idleDetail, itemStamp, jobsSignature, pendingPublish, publishSignature, STEP_READ_MS, type DetailState } from './load-state';
+import { ErrorBoundary, LoadError, Waiting } from './Loading';
 import { Setup, type PreviousLibrary } from './Setup';
 import { ChatPopover } from './Chat';
 import { useKilnCommands } from './commands';
@@ -29,7 +31,7 @@ import { repoName, StatusBar } from './StatusBar';
 import { OPEN_RESULT_TAB_EVENT, resultTarget, type RunRef } from './Runs';
 import { requestSync, SyncSummary } from './Sync';
 import { activeRun } from '../../../packages/agent/run-notice';
-import type { DuplicateGroup, Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
+import type { DuplicateGroup, Installation, Item, ItemDetail, Provider, ProviderId, PublishJob, Snapshot, Trial, UpdateStatus } from '../../../packages/protocol/schema';
 import { api, date, platform, shortHash, variablesIn } from './api';
 import { Badge, ContextMenu, Empty, Field, KilnMark, menuPoint, Modal, shortcutEntry, statusHelp, type MenuEntry } from './components';
 import { useGlobalKeys } from './keyboard';
@@ -68,6 +70,10 @@ const hidden = ['archived', 'rejected'];
 /** Whether an item shows under a collection filter: everything for none, the collection with its subfolders, or only unfiled items. */
 const inCollection = (item: Item, collection: string) => !collection || (collection === UNFILED ? !item.collection : isWithin(item.collection, collection));
 const sectionLabel: Record<string, string> = { library: 'Library', settings: 'Settings', archive: 'Archive', trash: 'Trash', ...Object.fromEntries(tools.map(t => [t.id, t.label])) };
+/** A cheap stamp the backend may send with the snapshot: it changes when installed copies may have (receipts, targets, installs). */
+type Stamped = Snapshot & { stamps?: { installations?: string | number } };
+const openDetail = detailReducer<ItemDetail>;
+const noItems: Item[] = [];
 
 export default function App() {
   const sidebar = usePanelWidth('kiln-sidebar-width', 250, 180, 360);
@@ -84,9 +90,13 @@ export default function App() {
     setSection, setCollection, setStage, setSelected, setOpen, setQuery, setTokens, setSort } = useViewMemory();
   const [group, setGroup] = useGroupBy();
   const savedViews = useSavedViews();
-  const [detail, setDetail] = useState<ItemDetail | null>(null);
+  // The open item: loading, failed or shown (load-state.ts). `detail` is only ever the selected item's.
+  const [detailState, dispatchDetail] = useReducer(openDetail, idleDetail as DetailState<ItemDetail>);
+  const detail = detailState.id === selected ? detailState.data : null;
+  // The box shows every key at once; filtering the list follows a moment later, so typing never waits for 400 rows.
+  const listQuery = useDeferredValue(query);
   // "kind:" being typed is a filter on its way, not text to search for.
-  const searchText = parseTyped(query).facet ? '' : query.trim();
+  const searchText = parseTyped(listQuery).facet ? '' : listQuery.trim();
   const { searchIds, close: closeMatches, searching, searchSort, setSearchSort } = useLibrarySearch(searchText, snapshot, message => setError(message));
   const searchSet = useMemo(() => searchIds && new Set(searchIds), [searchIds]);
   const libraryView = ['library', 'archive', 'trash'].includes(section);
@@ -96,14 +106,14 @@ export default function App() {
   /** Rows picked with Ctrl-click, Shift-click or Ctrl+A. `selected` stays the focused row; two or more picked rows make right-click act on all of them. */
   const [bulkIds, setBulkIds] = useState<string[]>([]); const bulkRef = useRef<string[]>([]); bulkRef.current = bulkIds;
   const [bulkReview, setBulkReview] = useState<string[] | null>(null);
-  useEffect(() => { setBulkIds([]); }, [query, tokens, collection, stage, section, snapshot?.root]);
+  useEffect(() => { setBulkIds(current => current.length ? [] : current); }, [query, tokens, collection, stage, section, snapshot?.root]);
   useEffect(() => { setBulkReview(null); }, [snapshot?.root]);
   const [dialog, setDialog] = useState<Dialog>(null); const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<CodexModel[] | null>(null);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [updating, setUpdating] = useState(false);
   // Reads the main process's last result: GitHub is only contacted by its own timer or by Check now, so this is cheap to repeat.
-  const checkUpdate = useCallback((force = false) => api<UpdateStatus>('desktop.updateCheck', { force }).then(setUpdate).catch(() => undefined), []);
+  const checkUpdate = useCallback((force = false) => api<UpdateStatus>('desktop.updateCheck', { force }).then(next => setUpdate(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)).catch(() => undefined), []);
   useEffect(() => { void checkUpdate(); const onFocus = () => void checkUpdate(); window.addEventListener('focus', onFocus); const timer = setInterval(() => void checkUpdate(), 60_000); return () => { window.removeEventListener('focus', onFocus); clearInterval(timer); }; }, [checkUpdate]);
   useEffect(() => { if (update?.stage.state !== 'preparing') return; const timer = setInterval(() => void checkUpdate(), 500); return () => clearInterval(timer); }, [update?.stage.state, checkUpdate]);
   const [menu, setMenu] = useState<{ x: number; y: number; items: Item[] } | null>(null);
@@ -134,8 +144,13 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(false);
   const previousLibrary = useRef<PreviousLibrary>(null);
   const toggleTheme = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; setTheme(next); localStorage.setItem('kiln-theme', next); void api('desktop.theme', { theme: next }).catch(e => setError(String(e))); };
-  const refreshVersion = useRef(0);
-  const refresh = useCallback(async () => { const version = ++refreshVersion.current; const next = await api<Snapshot>('snapshot'); if (version === refreshVersion.current) setSnapshot(next); }, []);
+  // One library load at a time: asking while one runs gets one more after it (load-state.ts), so actions, focus, sync and
+  // finished runs never stack snapshots in the backend's queue. `lastLoad` is when the latest one started.
+  const lastLoad = useRef(0);
+  const refresh = useMemo(() => coalesce(async () => { lastLoad.current = Date.now(); setSnapshot(await api<Snapshot>('snapshot', {}, { fresh: true })); }), []);
+  // Jobs as the screens see them: replaced only when something they show changed, so an idle poll redraws nothing.
+  const jobsKey = useRef('');
+  const showJobs = useCallback((current: AgentJob[]) => { const key = jobsSignature(current); if (key !== jobsKey.current) { jobsKey.current = key; setJobs(current); } }, []);
   useEffect(() => {
     let active = true, pending = false, again = false, lastPoll = 0;
     const poll = async () => {
@@ -144,7 +159,7 @@ export default function App() {
       try {
         const current = await api<AgentJob[]>('agent.jobs'); if (!active) return;
         const changed = knownJobs.current && current.some(j => knownJobs.current!.get(j.id) !== j.status && j.status !== 'running');
-        knownJobs.current = new Map(current.map(j => [j.id,j.status])); setJobs(current); setAgentSyncError('');
+        knownJobs.current = new Map(current.map(j => [j.id,j.status])); showJobs(current); setAgentSyncError('');
         if (changed) await refresh();
       } catch (e) { if (active) setAgentSyncError(`Agent updates disconnected. Retrying… ${String(e)}`); }
       finally { pending = false; if (active && again) { again = false; void poll(); } }
@@ -152,7 +167,7 @@ export default function App() {
     void poll(); const timer = setInterval(() => { if (!pending && ([...(knownJobs.current?.values() ?? [])].some(status => status === 'running' || status === 'queued') || Date.now() - lastPoll >= 5000)) void poll(); },1000);
     const start = () => void poll(); window.addEventListener('kiln:agent-started',start); window.addEventListener('kiln:agent-refresh',start);
     return () => { active = false; clearInterval(timer); window.removeEventListener('kiln:agent-started',start); window.removeEventListener('kiln:agent-refresh',start); };
-  },[refresh,snapshot?.root]);
+  },[refresh,showJobs,snapshot?.root]);
   /** Opens the capture dialog over whatever is on screen and hands it whatever was pasted or dropped. */
   const startCapture = (seed?: CaptureSeed) => setCapture({ id: ++captureCount.current, seed });
   const startCaptureRef = useRef(startCapture); startCaptureRef.current = startCapture;
@@ -167,7 +182,8 @@ export default function App() {
   const keeper = useKeepChanges({ items: snapshot?.items ?? [], installations, perform, refresh, onMessage: setMessage });
   useEffect(() => { void perform(refresh); void api<Provider[]>('providers.detect').then(setProviders).catch(e => setError(String(e))); }, []);
   useEffect(() => { if (section === 'settings' && models === null) void api<CodexModel[]>('agent.models').then(setModels).catch(() => setModels([])); }, [section, models]);
-  useEffect(() => { const onFocus = () => void refresh().catch(e => setError(String(e))); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [refresh]);
+  // Coming back to the window re-reads the library, unless it was read moments ago (alt-tabbing, quick search).
+  useEffect(() => { const onFocus = () => { if (focusReloads(Date.now(), lastLoad.current, document.visibilityState === 'hidden')) void refresh().catch(e => setError(String(e))); }; window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, [refresh]);
   useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(''), 6000); return () => clearTimeout(timer); }, [message]);
   // A sidebar collection being named in place: a new "New Folder", or one chosen with Rename or F2.
   const [renamingCollection, setRenamingCollection] = useState<string | null>(null);
@@ -185,24 +201,73 @@ export default function App() {
   const collectionDrag = useCollectionDrag(snapshot?.collections ?? [], (name, { parent, before }) => void perform(async () => { const moved = await api<{ to: string }>('collections.move', { name, parent, before }); if (parent) expandCollection(parent); await refresh(); followCollection(name, moved.to); }), name => !collapsed.includes(name));
   // Remember the library Kiln started with when it is not a ready repository, so setup can offer to carry its items over.
   useEffect(() => { if (snapshot && !snapshot.repository.ready && !previousLibrary.current) previousLibrary.current = { root: snapshot.root, items: snapshot.items.filter(i => !i.deletedAt).length, standard: snapshot.repository.standard, dedicated: snapshot.repository.dedicated }; }, [snapshot]);
-  // While an approval is being committed or pushed, poll so the item shows when it reached GitHub.
-  useEffect(() => { if (!snapshot?.publish.some(j => !['done', 'failed'].includes(j.status))) return; const timer = setTimeout(() => void refresh().catch(() => undefined), 1500); return () => clearTimeout(timer); }, [snapshot, refresh]);
+  // While an approval is being committed or pushed, follow the publish jobs alone (cheap and read-only), showing each step,
+  // and read the whole library once a job has finished, so the item shows when it reached GitHub.
+  const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
+  const publishing = Boolean(snapshot && pendingPublish(snapshot.publish).length);
   useEffect(() => {
-    if (!selected) { setDetail(null); return; }
-    let active = true;
-    // A selection remembered from another library (or a purged item) is simply dropped; every other failure is shown.
-    void api<ItemDetail>('items.read', { id: selected }).then(data => { if (active) setDetail(data); }).catch(e => { if (!active) return; setDetail(null); if (/ITEM_NOT_FOUND/.test(String(e))) { setSelected(''); setOpen(false); localStorage.removeItem('kiln-selected'); } else setError(String(e)); });
-    localStorage.setItem('kiln-selected', selected); return () => { active = false; };
-  }, [selected, snapshot]);
+    if (!publishing) return;
+    let live = true, timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      try {
+        const jobs = await api<PublishJob[]>('publish.jobs'); const known = snapshotRef.current?.publish ?? [];
+        if (!live) return;
+        const waiting = new Set(pendingPublish(known).map(j => j.id));
+        if (!pendingPublish(jobs).length || jobs.some(j => waiting.has(j.id) && (j.status === 'done' || j.status === 'failed'))) await refresh();
+        else if (publishSignature(jobs) !== publishSignature(known)) setSnapshot(current => current && { ...current, publish: jobs });
+      } catch { /* The next tick asks again. */ }
+      if (live) timer = setTimeout(() => void tick(), 1500);
+    };
+    timer = setTimeout(() => void tick(), 1500);
+    return () => { live = false; clearTimeout(timer); };
+  }, [publishing, refresh]);
+  // What the open item's page shows from the snapshot; a new snapshot re-reads the item only when this changed (load-state.ts).
+  const stamp = useMemo(() => snapshot && selected ? itemStamp(snapshot, selected, jobs) : '', [snapshot, selected, jobs]);
+  const itemShown = Boolean(snapshot && itemOpen && ['library', 'archive', 'trash'].includes(section) && snapshot.items.some(i => i.id === selected));
+  /** Bumped by Retry and the item bar's Refresh: read the item again even if nothing seems to have changed. */
+  const [readAttempt, setReadAttempt] = useState(0);
+  const lastRead = useRef({ id: '', stamp: '', attempt: -1 }), readSequence = useRef(0), stepping = useRef(false), retried = useRef(0);
+  const detailRef = useRef(detailState); detailRef.current = detailState;
+  useEffect(() => {
+    if (!selected) { dispatchDetail({ type: 'clear' }); lastRead.current = { id: '', stamp: '', attempt: -1 }; return; }
+    localStorage.setItem('kiln-selected', selected);
+    // Alt+↑/↓ held down: read the item the keys stop on, not every one passed.
+    const stepped = stepping.current; stepping.current = false;
+    // Read only for the open page, and again only when the item, its approvals, trials or runs moved on.
+    if (!itemShown) return;
+    const last = lastRead.current;
+    if (last.id === selected && last.stamp === stamp && last.attempt === readAttempt) return;
+    dispatchDetail({ type: 'open', id: selected, at: Date.now() });
+    const id = selected, timer = setTimeout(() => {
+      // A Retry must not join a read that is stuck on its way.
+      const fresh = readAttempt !== retried.current; retried.current = readAttempt;
+      lastRead.current = { id, stamp, attempt: readAttempt };
+      const sequence = ++readSequence.current;
+      void api<ItemDetail>('items.read', { id }, { fresh }).then(data => { if (sequence === readSequence.current) dispatchDetail({ type: 'loaded', id, data }); }).catch(e => {
+        if (sequence !== readSequence.current) return;
+        lastRead.current = { id: '', stamp: '', attempt: -1 };
+        // A selection remembered from another library (or a purged item) is simply dropped; every other failure is shown, in
+        // place of the page when there is none yet, in the banner when the page is already showing.
+        if (/ITEM_NOT_FOUND/.test(String(e))) { setSelected(''); setOpen(false); localStorage.removeItem('kiln-selected'); return; }
+        const shown = detailRef.current.id === id && detailRef.current.data;
+        dispatchDetail({ type: 'failed', id, error: errorText(e) });
+        if (shown) setError(String(e));
+      });
+    }, stepped ? STEP_READ_MS : 0);
+    return () => clearTimeout(timer);
+  }, [selected, stamp, itemShown, readAttempt]);
   // Items sharing a title show where each came from; an import's full folder is kept on this machine only, so ask for it.
   const [origins, setOrigins] = useState<Record<string, string>>({});
-  const sharedTitles = snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '';
+  const sharedTitles = useMemo(() => snapshot ? sharedTitleIds(snapshot.items).sort().join(',') : '', [snapshot?.items]);
   useEffect(() => { if (!sharedTitles) { setOrigins({}); return; } let active = true; void api<Record<string, string>>('items.origins', { ids: sharedTitles.split(',') }).then(result => { if (active) setOrigins(result); }).catch(() => {}); return () => { active = false; }; }, [sharedTitles]);
   // Machines: share this machine's installs with the rest of the fleet, now and after each change (see packages/fleet).
   // Never started while Machines manages this machine only, so no machine report is committed.
   useEffect(() => { if (multiMachine) void api('fleet.start').catch(() => {}); }, []);
   // Installation state for every skill: drives the Installed column, the Installed stage and the install menus.
-  useEffect(() => { if (!snapshot) return; let active = true; void api<Installation[]>('deploy.installations').then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [snapshot]);
+  // Checking every copy on disk is costly, so it is read again only when the snapshot's stamp says copies may have changed;
+  // a backend without the stamp gets the old behaviour, a read per snapshot.
+  const copiesStamp = (snapshot as Stamped | null)?.stamps?.installations, installStamp = snapshot ? copiesStamp === undefined ? snapshot : `${snapshot.root}\n${copiesStamp}` : null;
+  useEffect(() => { if (!installStamp) return; let active = true; void api<Installation[]>('deploy.installations', {}, { fresh: true }).then(result => { if (active) setInstallations(result); }).catch(() => {}); return () => { active = false; }; }, [installStamp]);
   useEffect(() => {
     const chosenTheme = theme ?? snapshot?.settings.theme;
     document.documentElement.dataset.theme = chosenTheme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : chosenTheme ?? 'light';
@@ -265,7 +330,7 @@ export default function App() {
   const captured = async (id: string, analyzing: boolean) => { await refresh(); if (analyzing) setMessage('Analysis started. Its progress shows in the status bar.'); else { revealItem(id, 'library', false); setMessage('Saved'); } };
   const copyItem = async (item: Item) => {
     const data = await api<ItemDetail>('items.read', { id: item.id });
-    if (variablesIn(data.revision.content).length) { select(item.id); setDetail(data); setDialog({ name: 'variables' }); return; }
+    if (variablesIn(data.revision.content).length) { select(item.id); dispatchDetail({ type: 'open', id: item.id, at: Date.now() }); dispatchDetail({ type: 'loaded', id: item.id, data }); setDialog({ name: 'variables' }); return; }
     await api('desktop.copy', { id: item.id, revision: item.revision }); await refresh(); setMessage('Copied to clipboard');
   };
   /** Test from the list or quick search: the item opens on its experiments grid, whose run bar starts a run. */
@@ -280,7 +345,7 @@ export default function App() {
   const action = (name: string, trial?: Trial) => {
     if (name === 'delete-trial' && trial) {
       if (busy) return;
-      void perform(async () => { await api('trials.delete', { id: trial.id }); setJobs(await api<AgentJob[]>('agent.jobs')); await refresh(); }, 'Experiment deleted');
+      void perform(async () => { await api('trials.delete', { id: trial.id }); showJobs(await api<AgentJob[]>('agent.jobs')); await refresh(); }, 'Experiment deleted');
       return;
     }
     if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }
@@ -338,33 +403,41 @@ export default function App() {
     await refresh();
   };
   const setLocation = (provider: Provider, on: boolean, native = false) => void perform(() => updateLocation(provider, on, native), on ? `${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills folder is now managed by Kiln. Nothing was installed yet.` : `Kiln stopped managing the ${native ? 'Codex-specific' : primarySkillLabel(provider.id)} skills folder. Installed files were left in place.`);
-  if (!snapshot) return <div className="startup"><span className="brand-symbol"><KilnMark /></span><h1>Kiln</h1><p>{error || 'Opening your workbench…'}</p>{error && <button className="button" onClick={() => void perform(refresh)}>Retry</button>}</div>;
-  // Kiln only works on a Kiln repository connected to GitHub. Anything else lands here until one is connected.
-  if (!snapshot.repository.ready || setupOpen) return <Setup snapshot={snapshot} previous={previousLibrary.current} providers={providers} onSetLocation={updateLocation} onRefresh={refresh} onAttach={async root => { await api('desktop.attach', { root }); setSelected(''); await refresh(); setSetupOpen(true); }} onDone={async (review = false) => { await refresh(); setStage(''); setQuery(''); setTokens([]); setSelected(''); setOpen(false); setSetupOpen(false); if (review) setMessage('Use Select all, then choose a bulk action. You can narrow the list with filters first.'); }} />;
-  const live = snapshot.items.filter(i => !i.deletedAt);
+  // The library view, worked out when what it depends on changes rather than on every render: a keystroke, a poll or a hover
+  // then redraws only what changed.
+  const items = snapshot?.items ?? noItems, trials = snapshot?.trials, invocation = snapshot?.invocation, usage = snapshot?.usage, targets = snapshot?.targets, duplicates = snapshot?.duplicates;
   const isHidden = (i: Item) => hidden.includes(i.status);
+  const live = useMemo(() => items.filter(i => !i.deletedAt), [items]);
   // How many live items each item was made from, for sources' Status column and `from:` suggestions.
-  const madeCount = new Map<string, number>(); for (const i of live) if (i.origin) madeCount.set(i.origin.itemId, (madeCount.get(i.origin.itemId) ?? 0) + 1);
-  // The newest experiment on each item, for the Last test column. Built once per render from the snapshot, never per row.
-  const places = trialPlaces(jobs);
-  const lastTrial = new Map<string, Trial>(); for (const t of snapshot.trials) if (!t.deletedAt && !reviewOf(t) && (!lastTrial.has(t.itemId) || lastTrial.get(t.itemId)!.createdAt < t.createdAt)) lastTrial.set(t.itemId, t);
-  // Each filter is a predicate, so the query bar can count what a token would show under all the others.
-  const inSection = (i: Item) => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i));
+  const madeCount = useMemo(() => { const made = new Map<string, number>(); for (const i of live) if (i.origin) made.set(i.origin.itemId, (made.get(i.origin.itemId) ?? 0) + 1); return made; }, [live]);
+  // The newest experiment on each item, for the Last test column. Built once from the snapshot, never per row.
+  const places = useMemo(() => trialPlaces(jobs), [jobs]);
+  const lastTrial = useMemo(() => { const last = new Map<string, Trial>(); for (const t of trials ?? []) if (!t.deletedAt && !reviewOf(t) && (!last.has(t.itemId) || last.get(t.itemId)!.createdAt < t.createdAt)) last.set(t.itemId, t); return last; }, [trials]);
   // Until the first results arrive the list stays as it was; after that the previous results stay until the next ones replace them.
   const bySearch = (i: Item) => !searchText || !searchSet || searchSet.has(i.id);
-  const byStage = (i: Item) => section !== 'library' || inStage(i, stage, installations);
   /** The view before search and tokens: its section, collection or stage. Suggestions count from here. */
-  const base = snapshot.items.filter(i => inSection(i) && inCollection(i, collection) && byStage(i));
-  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens, duplicateSet, snapshot.invocation)).length;
+  const base = useMemo(() => items.filter(i => (section === 'trash' ? Boolean(i.deletedAt) : !i.deletedAt) && (section === 'archive' ? isHidden(i) : section === 'trash' || !isHidden(i))
+    && inCollection(i, collection) && (section !== 'library' || inStage(i, stage, installations))), [items, section, collection, stage, installations]);
   // Every view starts newest added first until another order is picked; inside a collection (Unfiled too) its sources lead.
   // A search orders by relevance; another order picked during it lasts until the search is cleared, then the view's own order is back.
   const relevance = Boolean(searchText) && (searchSort ?? 'relevance') === 'relevance';
   const order = (searchText && searchSort && searchSort !== 'relevance' ? searchSort : sort) ?? defaultSort, pinSources = Boolean(collection);
-  const found = base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet, snapshot.invocation));
-  const matching = relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, snapshot.usage, pinSources);
-  const groups = groupItems(matching, group);
+  const found = useMemo(() => base.filter(i => bySearch(i) && matchesQuery(i, installations, tokens, duplicateSet, invocation ?? {})), [base, searchText, searchSet, installations, tokens, duplicateSet, invocation]);
+  const matching = useMemo(() => relevance && searchIds ? rankItems(found, searchIds, pinSources) : arrangeItems(found, order, usage ?? {}, pinSources), [found, relevance, searchIds, order, usage, pinSources]);
+  const groups = useMemo(() => groupItems(matching, group), [matching, group]);
   /** The rows in the order shown, groups included: what ranges, Select all and the item page's steps walk through. */
-  const shown = groups.flatMap(g => g.items);
+  const shown = useMemo(() => groups.flatMap(g => g.items), [groups]);
+  const configured = useMemo(() => targets ? providers.map(p => ({ provider: p, target: personalTarget(targets, providers, p.id) })).filter((l): l is Location => Boolean(l.target)) : [], [providers, targets]);
+  // Two items with one title (the same skill name imported from different folders) show where each came from.
+  const sameTitle = useMemo(() => titleCollisions(items, providers[0]?.personalRoot, origins), [items, providers, origins]);
+  // Duplicates (Consolidate.tsx): how many copies are in each row's group.
+  const groupSize = useMemo(() => new Map((duplicates ?? []).flatMap(g => g.ids.map(id => [id, g.ids.length] as const))), [duplicates]);
+  const counts = useMemo(() => railCounts(items, isHidden, (i, s) => inStage(i, s, installations)), [items, installations]);
+  if (!snapshot) return <div className="startup"><span className="brand-symbol"><KilnMark /></span><h1>Kiln</h1><p>{error || 'Opening your workbench…'}</p>{error && <button className="button" onClick={() => void perform(refresh)}>Retry</button>}</div>;
+  // Kiln only works on a Kiln repository connected to GitHub. Anything else lands here until one is connected.
+  if (!snapshot.repository.ready || setupOpen) return <Setup snapshot={snapshot} previous={previousLibrary.current} providers={providers} onSetLocation={updateLocation} onRefresh={refresh} onAttach={async root => { await api('desktop.attach', { root }); setSelected(''); await refresh(); setSetupOpen(true); }} onDone={async (review = false) => { await refresh(); setStage(''); setQuery(''); setTokens([]); setSelected(''); setOpen(false); setSetupOpen(false); if (review) setMessage('Use Select all, then choose a bulk action. You can narrow the list with filters first.'); }} />;
+  // Each filter is a predicate, so the query bar can count what a token would show under all the others.
+  const countFor = (withTokens: QueryToken[], text: string) => base.filter(i => (!text || bySearch(i)) && matchesQuery(i, installations, withTokens, duplicateSet, snapshot.invocation)).length;
   const bulkItems = shown.filter(item => bulkIds.includes(item.id));
   /** Plain click opens the item. Ctrl-click toggles a row in the selection; Shift-click extends it from the focused row, like a file manager. */
   const clickRow = (event: MouseEvent, item: Item) => {
@@ -383,10 +456,6 @@ export default function App() {
   const sourceTitle = (id: string) => snapshot.items.find(i => i.id === id)?.title;
   const stageName = stages.find(s => s.id === stage)?.label;
   const sectionName = (collection === UNFILED ? 'Unfiled' : collection.replaceAll('/', ' / ')) || (section === 'library' && stageName) || sectionLabel[section] || 'Library';
-  const locations: Location[] = providers.map(p => ({ provider: p, target: personalTarget(snapshot.targets, providers, p.id) })).filter((l): l is Location => Boolean(l.target));
-  const configured = locations;
-  // Two items with one title (the same skill name imported from different folders) show where each came from.
-  const sameTitle = titleCollisions(snapshot.items, providers[0]?.personalRoot, origins);
   const openTrialItem = (itemId: string) => {
     const item = snapshot.items.find(i => i.id === itemId);
     revealItem(itemId, item?.deletedAt ? 'trash' : item?.status === 'archived' || item?.status === 'rejected' ? 'archive' : 'library');
@@ -470,7 +539,7 @@ export default function App() {
   // The open item's page. It stays open when a filter hides it; the bar then says so instead of a position.
   const itemView = libraryView && itemOpen && snapshot.items.some(i => i.id === selected);
   const position = shown.findIndex(i => i.id === selected) + 1;
-  const step = (direction: number) => { const next = shown[position - 1 + direction]; if (position > 0 && next) setSelected(next.id); };
+  const step = (direction: number) => { const next = shown[position - 1 + direction]; if (position > 0 && next) { stepping.current = true; setSelected(next.id); } };
   keys.current = { itemOpen: itemView, step };
   const filtering = Boolean(searchText) || tokens.length > 0;
   const rescue = !matching.length && filtering ? narrowest(tokens, searchText, countFor) : null;
@@ -487,7 +556,6 @@ export default function App() {
   /** Shift with the list keys: `ids` picked, `anchor` the open row they extend from. */
   const pickRange = (ids: string[], anchor: string) => { setSelected(anchor); setBulkIds(ids); };
   // Duplicates (Consolidate.tsx): how many other copies a row has, a short name for a copy, and the two actions' undo.
-  const groupSize = new Map(snapshot.duplicates.flatMap(g => g.ids.map(id => [id, g.ids.length] as const)));
   const copiesOf = (item: Item) => item.deletedAt ? undefined : (groupSize.get(item.id) ?? 1) - 1 || undefined;
   const copyName = (item: Item) => sameTitle.get(item.id)?.label ?? (item.collection ? item.collection.replaceAll('/', ' / ') : 'Unfiled');
   const consolidated = (result: { kept: Item; merged: string[]; undo: Record<string, unknown> }) => {
@@ -520,15 +588,15 @@ export default function App() {
       hint={section === 'trash' ? 'Right-click to restore or delete permanently. Ctrl-click picks several items at once.' : section === 'archive' ? 'Right-click to change status or move to trash. Ctrl-click picks several items at once.' : 'Click opens an item. Right-click for actions and their shortcuts. Ctrl-click or Shift-click picks several items at once. Swipe sideways to archive. Press ? for every shortcut.'} />
   </section>;
   const itemPage = itemView && <div className="item-view">
-    <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(refresh)} />
-    {detail && detail.item.id === selected ? <Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onAddToInstructions={append => { setHomeAppend(append); setSection('home'); }} onMachines={() => navigate('machines')} onUsage={() => navigate('usage')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} request={itemRequest} />
-      : <div className="item-loading" aria-label="Opening item"><Loader2 className="spin" size={18} /></div>}
+    <ItemBar label={sectionName} position={position} total={shown.length} onBack={() => setOpen(false)} onStep={step} onRefresh={() => void perform(async () => { await refresh(); setReadAttempt(n => n + 1); })} />
+    {detail ? <ErrorBoundary resetKey={detail.item.id} fallback={(problem, reset) => <LoadError block error={`This item could not be shown: ${problem.message}`} onRetry={reset} back={{ label: 'Back to library', onClick: () => setOpen(false) }} />}><Detail jobs={jobs} key={detail.item.id} detail={detail} snapshot={snapshot} providers={providers} sameTitle={sameTitle.get(detail.item.id)} installations={installations} refresh={refresh} perform={perform} onSelect={onSelectId => { revealItem(onSelectId); }} onAction={action} onToggleInstall={(provider, targetId) => toggleInstall(detail.item.id, provider, targetId)} onSetup={() => navigate('settings')} onCollection={openCollection} onMadeFrom={showMadeFrom} onAsk={() => setChatOpen(true)} onAddToInstructions={append => { setHomeAppend(append); setSection('home'); }} onMachines={() => navigate('machines')} onUsage={() => navigate('usage')} onInvocation={setInvocation} where={copyName} onConsolidate={() => { const found = groupOf(snapshot.duplicates, detail.item.id); if (found) setConsolidating(found); }} onNotDuplicates={() => notDuplicates(detail.item, detail.duplicates)} onMeta={patch => void undoStack.apply([detail.item], () => patch)} showTests={testRequest} request={itemRequest} /></ErrorBoundary>
+      : detailState.id === selected && detailState.status === 'error' ? <LoadError block error={`Couldn’t open this item: ${detailState.error}`} onRetry={() => setReadAttempt(n => n + 1)} back={{ label: 'Back to library', onClick: () => setOpen(false) }} />
+      : <Waiting block label="Opening item" since={detailState.id === selected ? detailState.since : null} />}
   </div>;
   const running = jobs.some(j => j.kind === 'chat' && activeRun(j));
   return <div className="app-shell">
     <div className="app-body">
-      <Rail style={sidebar.style} theme={(theme ?? snapshot.settings.theme) === 'dark' ? 'dark' : 'light'} onTheme={toggleTheme} section={section} collection={collection} stage={stage} collections={snapshot.collections} live={live} trashed={snapshot.items.filter(i => i.deletedAt).length} hidden={isHidden}
-        stageCount={s => live.filter(i => !isHidden(i) && inStage(i, s, installations)).length} collapsed={collapsed} onToggle={toggleCollapsed} drag={collectionDrag} itemDrag={itemDrag} renaming={renamingCollection} onRename={renameCollection} onRenaming={setRenamingCollection} onError={setError}
+      <Rail style={sidebar.style} theme={(theme ?? snapshot.settings.theme) === 'dark' ? 'dark' : 'light'} onTheme={toggleTheme} section={section} collection={collection} stage={stage} collections={snapshot.collections} counts={counts} collapsed={collapsed} onToggle={toggleCollapsed} drag={collectionDrag} itemDrag={itemDrag} renaming={renamingCollection} onRename={renameCollection} onRenaming={setRenamingCollection} onError={setError}
         onNavigate={navigate} onStage={chooseStage} onCollection={openCollection} onNewCollection={() => newCollection()} onCollectionMenu={(event, name) => setCollectionMenu({ ...menuPoint(event), name })} />
       <ResizeHandle panel={sidebar} label="Resize sidebar" />
       <main className="main-workspace"><header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><b>{sectionName}</b></div>
@@ -576,7 +644,7 @@ export default function App() {
       </main>
     </div>
     <StatusBar snapshot={snapshot} jobs={jobs} agentError={agentSyncError} busy={busy} update={update} updating={updating} onUpdate={updateAction} onSettings={() => navigate('settings')} onOpenRun={openRun} refresh={refresh} perform={perform} onMessage={setMessage} onConflicts={result => { setConflicts(result as typeof conflicts); setDialog({ name: 'conflicts' }); }} onReveal={id => revealItem(id)} onOpenCollection={openCollection}
-      context={<SessionStartStatus snapshot={snapshot} installations={installations} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />} />
+      context={<SessionStartStatus snapshot={snapshot} installations={installations} stamp={copiesStamp === undefined ? installations : installStamp} onOpenItem={id => revealItem(id)} onInvocation={setInvocation} />} />
     <CaptureDialog request={capture} provider={snapshot.settings.agentProvider} entryTypes={selectedEntryTypes(snapshot.settings)} providers={providers} jobs={jobs} items={snapshot.items} onSaved={(id, analyzing) => void perform(() => captured(id, analyzing))} onOpenItem={id => openTrialItem(id)} onOpenCollection={openCollection} onRepository={url => setDialog({ name: 'repo-scan', url })} />
     {undoStack.toasts(message)}
     {sheet && <ShortcutSheet quickSearch={snapshot.settings.shortcut} onClose={() => setSheet(false)} />}
