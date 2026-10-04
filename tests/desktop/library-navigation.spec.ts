@@ -109,6 +109,27 @@ test('clickable filters preserve search text and keyboard selection still works'
   } finally { await f.close(); }
 });
 
+test('empty-query filter browsing supports ArrowDown and Tab without changing normal search navigation', async () => {
+  const f = await fixture();
+  try {
+    const search = f.page.getByRole('combobox', { name: 'Search library' });
+    await search.focus();
+    await search.press('ArrowDown');
+    await expect(f.page.getByRole('listbox', { name: 'Filter suggestions' })).toHaveCount(0);
+    await expect(f.page.locator('.item-card.selected')).toBeFocused();
+    await f.page.getByRole('button', { name: /^Filters/ }).click();
+    await f.page.getByRole('button', { name: 'Type', exact: true }).click();
+    await expect(search).toHaveValue('');
+    await search.press('ArrowDown');
+    await expect(f.page.getByRole('option', { name: /kind: prompt/ })).toHaveAttribute('aria-selected', 'true');
+    await search.press('Tab');
+    await expect(f.page.locator('.q-token')).toContainText('prompt');
+    await expect(search).toHaveValue('');
+    await expect(titles(f.page)).toHaveCount(2);
+    await expect(f.page.getByRole('listbox', { name: 'Filter suggestions' })).toHaveCount(0);
+  } finally { await f.close(); }
+});
+
 test('existing grouping and saved filters survive the view-memory upgrade', async () => {
   const f = await fixture();
   try {
@@ -125,6 +146,31 @@ test('existing grouping and saved filters survive the view-memory upgrade', asyn
     await f.page.getByRole('button', { name: 'Approved work', exact: true }).click();
     await expect(titles(f.page)).toHaveText(['Release checklist']);
     await expect(f.page.getByRole('button', { name: /^Group by:/ })).toContainText('Type');
+    // Legacy views still select by filters, but cannot hide saving a new sort/group configuration.
+    const quick = f.page.getByRole('group', { name: 'Quick sort' });
+    const legacy = f.page.getByRole('button', { name: 'Approved work', exact: true });
+    await quick.getByRole('button', { name: 'Most used', exact: true }).click();
+    await groupBy(f.page, 'Last used');
+    await expect(legacy).toHaveAttribute('aria-pressed', 'true');
+    await f.page.getByRole('button', { name: 'Save this view', exact: true }).click();
+    await f.page.getByRole('textbox', { name: 'Name this view' }).fill('Approved by usage');
+    await f.page.getByRole('button', { name: 'Save view', exact: true }).click();
+    await expect(f.page.getByRole('button', { name: 'Approved by usage', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(legacy).toHaveAttribute('aria-pressed', 'false');
+    await expect(f.page.getByRole('button', { name: 'Save this view', exact: true })).toHaveCount(0);
+    await quick.getByRole('button', { name: 'Title A–Z', exact: true }).click();
+    await groupBy(f.page, 'No grouping');
+    await legacy.click();
+    await expect(quick.getByRole('button', { name: 'Title A–Z', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(f.page.getByRole('button', { name: /^Group by:/ })).toContainText('No grouping');
+    await f.page.reload();
+    await f.page.getByRole('button', { name: 'Approved by usage', exact: true }).click();
+    await expect(f.page.getByRole('button', { name: 'Approved by usage', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(legacy).toHaveAttribute('aria-pressed', 'false');
+    await expect(quick.getByRole('button', { name: 'Most used', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(f.page.getByRole('button', { name: /^Group by:/ })).toContainText('Last used');
+    await expect(titles(f.page)).toHaveText(['Release checklist']);
+    await expect(f.page.getByRole('button', { name: 'Save this view', exact: true })).toHaveCount(0);
   } finally { await f.close(); }
 });
 
