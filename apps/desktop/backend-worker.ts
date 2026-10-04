@@ -49,7 +49,7 @@ parentPort!.on('message', request => {
         if (!allowed.includes(request.method)) throw new Error('Unsupported worker operation');
         data = await (wb as any)[request.method](...request.args);
       }
-      if (request.method === 'rpc' && ['git.sync','git.checkpoint','git.merge','git.finishMerge'].includes(request.args[0])) wb.invalidateGit();
+      if (request.method === 'rpc' && ['git.sync','git.checkpoint','git.merge','git.finishMerge','sync.pull','sync.push'].includes(request.args[0])) wb.invalidateGit();
       parentPort!.postMessage({ id: request.id, data });
     } catch (error) {
       parentPort!.postMessage({ id: request.id, error: { code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) } });

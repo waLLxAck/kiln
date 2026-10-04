@@ -80,10 +80,12 @@ export function RepoStatus({ snapshot, refresh, perform, onMessage, onConflicts,
   const pull = useCallback(() => perform(async () => {
     setOpen(false); setProblem(null);
     await fetchNow(0);
-    const result = await api<PullResult>('sync.pull');
+    const result = await api<PullResult & { pushError?: string }>('sync.pull');
     await refresh();
-    if (result.status === 'pulled') onMessage(`Pulled ${plural(result.count, 'change')} from GitHub`);
-    else if (result.status === 'current') onMessage('Already up to date with GitHub');
+    const unpushed = result.pushError ? `; couldn’t push this machine’s commits: ${result.pushError}` : '';
+    if (result.status === 'pulled') onMessage(`Pulled ${plural(result.count, 'change')} from GitHub${unpushed}`);
+    else if (result.status === 'merged') onMessage(`Merged ${plural(result.count, 'change')} from GitHub${unpushed || ' and pushed this machine’s'}`);
+    else if (result.status === 'current') onMessage(unpushed ? `Already up to date with GitHub${unpushed}` : 'Up to date with GitHub');
     else if (result.status === 'blocked') setProblem({ kind: 'blocked', items: result.items, paths: result.paths });
     else setProblem({ kind: 'diverged', ahead: result.ahead, behind: result.behind });
   }), [perform, fetchNow, refresh, onMessage]);
@@ -116,7 +118,7 @@ export function RepoStatus({ snapshot, refresh, perform, onMessage, onConflicts,
       {git.behind > 0 && <div className="sync-row"><span>{git.behind} new on GitHub</span><button type="button" className="button primary" onClick={() => void pull()}><ArrowDown size={14} />Pull</button></div>}
       {pending.map(j => <div className="sync-row" key={j.id}><span>{j.title}</span><small className="muted"><Loader2 className="spin" size={12} /> {j.status}</small></div>)}
       {failed.slice(0, 5).map(j => <div className="sync-row failed" key={j.id}><span><b>{j.title}</b><small>{j.error}</small></span><button type="button" className="button" onClick={() => void perform(async () => { await api('publish.retry', { id: j.id }); await refresh(); })}>Retry</button></div>)}
-      {git.ahead > 0 && !pending.length && <div className="sync-row"><span>{plural(git.ahead, 'commit')} not on GitHub yet</span><button type="button" className="button" onClick={() => void perform(async () => { await api('git.sync', { action: 'push' }); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button></div>}
+      {git.ahead > 0 && !pending.length && <div className="sync-row"><span>{plural(git.ahead, 'commit')} not on GitHub yet</span><button type="button" className="button" onClick={() => void perform(async () => { await api('sync.push'); await refresh(); }, 'Pushed to GitHub')}><Upload size={14} />Push now</button></div>}
       <div className="sync-foot"><button type="button" className="button" disabled={checking || status?.fetching} onClick={() => void check()}><RefreshCw size={14} />Check now</button><button type="button" className="text-button" onClick={() => { setOpen(false); onSettings(); }}>Repository settings</button></div>
     </div>}
     {problem?.kind === 'blocked' && <Modal title="Can’t pull yet" subtitle="GitHub changed things you also changed on this machine. Nothing was changed here." onClose={() => setProblem(null)}>
@@ -125,7 +127,7 @@ export function RepoStatus({ snapshot, refresh, perform, onMessage, onConflicts,
       <div className="modal-actions"><button className="button primary" onClick={() => setProblem(null)}>OK</button></div>
     </Modal>}
     {problem?.kind === 'diverged' && <Modal title="Merge from GitHub?" subtitle={`GitHub has ${plural(problem.behind, 'new commit')} and this machine has ${plural(problem.ahead, 'commit')} GitHub doesn’t.`} onClose={() => setProblem(null)}>
-      <p>Merging combines both. Items changed on both sides are shown side by side for you to choose; drafts of other items stay as they are.</p>
+      <p>Both changed the same items, so Kiln can’t combine them on its own. Merging shows each of those items side by side for you to choose; everything else combines by itself, and drafts of other items stay as they are.</p>
       <div className="modal-actions"><button className="button" onClick={() => setProblem(null)}>Not now</button><button className="button primary" onClick={() => void merge()}><GitMerge size={15} />Merge from GitHub</button></div>
     </Modal>}
   </div>;

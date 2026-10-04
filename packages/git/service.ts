@@ -120,7 +120,9 @@ export function push(root: string) {
   try { execFileSync('git', ['-c', 'core.hooksPath=', '-C', root, 'push', '-u', 'origin', 'HEAD'], { encoding: 'utf8', windowsHide: true, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] }); }
   catch (error) {
     const stderr = String((error as { stderr?: string }).stderr ?? error).trim();
-    const reason = stderr.split('\n').map(l => l.trim()).filter(l => l && !/^(To |remote: ?$|branch '|\* \[new branch\])/.test(l)).join(' ').slice(0, 600);
+    // Another machine pushed first: callers that can fetch and merge (sync.ts `pushToGitHub`) catch this and try again.
+    if (/\[rejected\]|non-fast-forward|fetch first/i.test(stderr)) throw new WorkbenchError('GIT_PUSH_REJECTED', 'GitHub has commits this machine does not have yet. Pull from GitHub, then push again.');
+    const reason = stderr.split('\n').map(l => l.trim()).filter(l => l && !/^(To |remote: ?$|branch '|\* \[new branch\]|hint:)/.test(l)).join(' ').slice(0, 600);
     throw new WorkbenchError('GIT_PUSH_FAILED', reason || 'git push failed');
   }
   return gitStatus(root);
