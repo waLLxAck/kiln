@@ -70,6 +70,9 @@ test('usage shortcuts show actual order and context; saved views restore sorting
     await f.page.getByRole('button', { name: 'Reviews by title', exact: true }).click();
     await expect(search).toHaveValue('review');
     await expect(sortPill).toContainText('Title A–Z');
+    await search.fill(''); await search.press('Escape');
+    await expect(quick.getByRole('button', { name: 'Last used', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(titles(f.page)).toHaveText(['Release checklist', 'Code review', 'Research outline', 'API reference']);
     await f.page.getByRole('button', { name: 'Recently used work', exact: true }).click();
     await expect(search).toHaveValue('');
     await expect(quick.getByRole('button', { name: 'Last used', exact: true })).toHaveAttribute('aria-pressed', 'true');
