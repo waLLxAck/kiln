@@ -71,17 +71,18 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
   const pick = (token: QueryToken) => { add(token); if (!browseFilters) onQuery(''); else setOpen(false); };
   const remove = (token: QueryToken) => onTokens(tokens.filter(t => !sameToken(t, token)));
   const keyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') { event.preventDefault(); if (open && flat.length && (active >= 0 || query.trim())) setActive(i => Math.min(flat.length - 1, i + 1)); else { setOpen(false); onLeave(); } }
+    if (event.key === 'ArrowDown') { event.preventDefault(); if (open && flat.length && (active >= 0 || browseFilters || query.trim())) setActive(i => Math.min(flat.length - 1, i + 1)); else { setOpen(false); onLeave(); } }
     else if (event.key === 'ArrowUp') { if (open) { event.preventDefault(); setActive(i => Math.max(-1, i - 1)); } }
     else if (event.key === 'Enter') { event.preventDefault(); const choice = flat[active] ?? (typed.facet ? flat[0] : undefined); if (open && choice) pick(choice.token); else setOpen(false); }
-    else if (event.key === 'Tab' && open && query.trim() && flat.length) { event.preventDefault(); pick((flat[active] ?? flat[0]).token); }
+    else if (event.key === 'Tab' && open && (browseFilters || query.trim()) && flat.length) { event.preventDefault(); pick((flat[active] ?? flat[0]).token); }
     else if (event.key === 'Backspace' && !query && tokens.length) onTokens(tokens.slice(0, -1));
     else if (event.key === 'Escape') { event.preventDefault(); if (open) setOpen(false); else if (query) onQuery(''); else input.current?.blur(); }
   };
   const viewIs = (view: { tokens: QueryToken[]; query: string }) => sameSet(view.tokens, tokens) && view.query === query.trim();
   const activeSort = relevance?.active ? 'relevance' : sort;
   const savedIs = (view: SavedView) => viewIs(view) && (view.group === undefined || view.group === group) && (view.sort === undefined || JSON.stringify(view.sort ?? defaultSort) === JSON.stringify(activeSort));
-  const current = saved.views.find(savedIs)?.id ?? (viewIs({ tokens: [], query: '' }) ? 'all' : viewIs({ tokens: [favourite], query: '' }) ? 'favourites' : undefined);
+  const savedConfigurationIs = (view: SavedView) => view.sort !== undefined && view.group !== undefined && savedIs(view);
+  const current = (saved.views.find(savedConfigurationIs) ?? saved.views.find(savedIs))?.id ?? (viewIs({ tokens: [], query: '' }) ? 'all' : viewIs({ tokens: [favourite], query: '' }) ? 'favourites' : undefined);
   const customView = !['all', 'favourites'].includes(current ?? '') || group !== 'none' || relevance?.active || sort.key !== defaultSort.key || sort.dir !== defaultSort.dir;
   const quickSorts = [
     { label: 'Recently added', sort: defaultSort, icon: <Plus size={12} /> },
@@ -141,7 +142,7 @@ export function QueryBar({ tokens, onTokens, query, onQuery, pool, installations
         </span>)}
         {naming !== null
           ? <form className="q-name" onSubmit={event => { event.preventDefault(); saved.save(naming, tokens, query, activeSort, group); setNaming(null); }}><Bookmark size={12} /><input autoFocus aria-label="Name this view" value={naming} maxLength={60} onChange={event => setNaming(event.target.value)} placeholder="Name this view" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setNaming(null); } }} onBlur={() => { if (!naming.trim()) setNaming(null); }} /><button type="submit" aria-label="Save view"><Check size={12} /></button></form>
-          : customView && !saved.views.some(savedIs) && <button type="button" className="q-view save" disabled={saved.views.length >= 40} title={saved.views.length >= 40 ? 'Delete a saved view to add another' : 'Remember these filters, sort and grouping'} onClick={() => setNaming('')}><Plus size={12} />Save this view</button>}
+          : customView && !saved.views.some(savedConfigurationIs) && <button type="button" className="q-view save" disabled={saved.views.length >= 40} title={saved.views.length >= 40 ? 'Delete a saved view to add another' : 'Remember these filters, sort and grouping'} onClick={() => setNaming('')}><Plus size={12} />Save this view</button>}
       </div>
     </div>
   </div>;
