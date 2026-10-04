@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Check, CheckCircle2, CircleSlash, Clock, Loader2, X } from 'lucide-react';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import type { Item } from '../../../packages/protocol/schema';
 import { activeRun, runFinished, runKindLabel, runNotice } from '../../../packages/agent/run-notice';
 import { api } from './api';
@@ -16,25 +16,25 @@ export const RECENT_MS = 30 * 60_000;
 export const OPEN_RUN_EVENT = 'kiln:open-run';
 /** Detail listens for this to show the view that holds a run's result when the item is already open. */
 export const OPEN_RESULT_TAB_EVENT = 'kiln:open-result-tab';
-export type RunRef = Pick<AgentJob, 'itemId' | 'kind' | 'createdItemId'>;
+export type RunRef = Pick<AgentJobSummary, 'itemId' | 'kind' | 'createdItemId'>;
 /** Where a run's result is: the skill a draft created, else the item it ran on; experiments are in its tests, chat replies in the chat. */
 export function resultTarget(job: RunRef) { return { itemId: job.kind === 'derive' && job.createdItemId ? job.createdItemId : job.itemId, view: job.kind === 'trial' ? 'tests' as const : job.kind === 'chat' ? 'chat' as const : 'content' as const }; }
-const ended = (job: AgentJob) => job.status === 'completed' || job.status === 'failed';
+const ended = (job: AgentJobSummary) => job.status === 'completed' || job.status === 'failed';
 /** "4 s", "2 min 5 s", "1 h 5 min". */
 const duration = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.floor(s / 60) % 60} min` : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`; };
-const took = (job: AgentJob, at: number) => job.status === 'queued' ? `waiting ${duration(at - Date.parse(job.startedAt))}` : duration((job.finishedAt ? Date.parse(job.finishedAt) : at) - Date.parse(job.startedAt));
+const took = (job: AgentJobSummary, at: number) => job.status === 'queued' ? `waiting ${duration(at - Date.parse(job.startedAt))}` : duration((job.finishedAt ? Date.parse(job.finishedAt) : at) - Date.parse(job.startedAt));
 const firstLine = (text: string, max: number) => text.split('\n')[0].slice(0, max);
 
-type Props = { jobs: AgentJob[]; items: Item[]; /** Reveal the result: the item on the right view, or the chat for a reply. */ onOpen: (job: RunRef) => void; /** A finished analysis filed its entries here. */ onOpenCollection?: (name: string) => void };
+type Props = { jobs: AgentJobSummary[]; items: Item[]; /** Reveal the result: the item on the right view, or the chat for a reply. */ onOpen: (job: RunRef) => void; /** A finished analysis filed its entries here. */ onOpenCollection?: (name: string) => void };
 export function RunsStatus({ jobs, items, onOpen, onOpenCollection }: Props) {
-  const [open, setOpen] = useState(false), [toast, setToast] = useState<AgentJob[]>([]), [now, setNow] = useState(Date.now());
+  const [open, setOpen] = useState(false), [toast, setToast] = useState<AgentJobSummary[]>([]), [now, setNow] = useState(Date.now());
   const session = useRef(Date.now()), box = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
   const title = (id: string) => items.find(i => i.id === id)?.title;
   const active = jobs.filter(activeRun), queued = active.filter(j => j.status === 'queued').length, running = active.length - queued;
   const recent = jobs.filter(j => !activeRun(j) && j.finishedAt && now - Date.parse(j.finishedAt) < RECENT_MS).slice(0, 20);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), open || active.length ? 1000 : 30_000); return () => clearInterval(timer); }, [open, active.length > 0]);
   // A run that was running or queued at the last poll and has now completed or failed. One that started and ended between two polls counts too; runs from before this session never do.
-  const seen = useRef<Map<string, AgentJob['status']> | null>(null);
+  const seen = useRef<Map<string, AgentJobSummary['status']> | null>(null);
   useEffect(() => {
     const before = seen.current; seen.current = new Map(jobs.map(j => [j.id, j.status]));
     if (!before) return;
@@ -56,9 +56,9 @@ export function RunsStatus({ jobs, items, onOpen, onOpenCollection }: Props) {
     window.addEventListener('mousedown', away); window.addEventListener('keydown', key, true);
     return () => { window.removeEventListener('mousedown', away); window.removeEventListener('keydown', key, true); };
   }, [open]);
-  const cancel = (job: AgentJob) => void api('agent.cancel', { id: job.id }).finally(() => window.dispatchEvent(new CustomEvent('kiln:agent-refresh')));
-  const row = (job: AgentJob) => {
-    const name = title(job.itemId) ?? job.focus?.title ?? 'Removed item', step = job.steps.at(-1)?.text && firstLine(job.steps.at(-1)!.text, 90);
+  const cancel = (job: AgentJobSummary) => void api('agent.cancel', { id: job.id }).finally(() => window.dispatchEvent(new CustomEvent('kiln:agent-refresh')));
+  const row = (job: AgentJobSummary) => {
+    const name = title(job.itemId) ?? job.focus?.title ?? 'Removed item', step = job.lastStep?.text && firstLine(job.lastStep.text, 90);
     // A finished analysis says how many entries it made and opens the collection they were filed in.
     const made = job.createdItemIds?.length ?? 0, analysis = (job.kind === 'distill' || job.kind === 'distill-repo' || job.kind === 'capture') && job.status === 'completed';
     const detail = job.status === 'queued' ? 'Queued' : job.status === 'running' ? [job.phase, step !== job.phase && step].filter(Boolean).join(' · ') : job.error ? firstLine(job.error, 120) : job.status === 'completed' ? analysis && made ? `Done · ${made} entr${made === 1 ? 'y' : 'ies'}` : 'Done' : job.status[0].toUpperCase() + job.status.slice(1);

@@ -1,4 +1,4 @@
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJob, AgentJobSummary } from '../../../packages/agent/service';
 import type { Item, ItemDetail, Trial } from '../../../packages/protocol/schema';
 import { date, shortHash } from './api';
 import { Field, providerName } from './components';
@@ -24,9 +24,9 @@ const trimmed = (text: string, limit: number) => text.length > limit ? `${text.s
 /** "2 passed · 1 failed" over the verdicts that count, for a revision or an item. */
 export const tally = (trials: Trial[], judged: Map<string, Trial>) => { const count = (v: string) => trials.filter(t => verdictOf(t, judged) === v).length; return [['pass', 'passed'], ['fail', 'failed'], ['uncertain', 'uncertain']].map(([v, word]) => [count(v), word] as const).filter(([n]) => n).map(([n, word]) => `${n} ${word}`).join(' · ') || 'no verdicts yet'; };
 
-/** What "Improve with agent" types into the chat: the experiment's verdict, note and a trimmed excerpt of its output, and what to do about it. */
-export function improveMessage(t: Trial, item: Item, job: AgentJob | undefined, review: Trial | undefined) {
-  const output = job?.result && 'judgement' in job.result ? job.result.output : '';
+/** What "Improve with agent" types into the chat: the experiment's verdict, note and a trimmed excerpt of its output (from the run's full record), and what to do about it. */
+export function improveMessage(t: Trial, item: Item, job: AgentJob | AgentJobSummary | undefined, review: Trial | undefined) {
+  const output = job && 'steps' in job && job.result && 'judgement' in job.result ? job.result.output : '';
   const current = t.revision === item.revision;
   return [
     `Please improve this ${item.kind} using the ${who(t)} experiment run on ${date(t.completedAt ?? t.createdAt)} (listed in context.md under Experiments). Revise the current revision with Kiln's CLI so it addresses what the experiment found, then tell me what you changed so I can re-test it.`,

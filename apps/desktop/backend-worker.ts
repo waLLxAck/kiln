@@ -36,6 +36,7 @@ parentPort!.on('message', request => {
       else if (request.method === 'rpc' && request.args[0] === 'agent.chat') data = agent.chat(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.exportSession') data = agent.exportSession(request.args[1].id);
       else if (request.method === 'rpc' && request.args[0] === 'agent.jobs') data = agent.list();
+      else if (request.method === 'rpc' && request.args[0] === 'agent.job') data = agent.job(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.chatHistory') data = agent.chatHistory(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.models') data = await agent.models();
       else if (request.method === 'rpc' && request.args[0] === 'agent.cancel') data = agent.cancel(request.args[1].id);
@@ -56,6 +57,6 @@ parentPort!.on('message', request => {
     }
   };
   // Read-only calls run beside the queue. Usage reads session logs in chunks and yields between them, so it never holds the queue.
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine', 'usage.scan', 'usage.report', 'usage.item', 'usage.prices'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.job', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine', 'usage.scan', 'usage.report', 'usage.item', 'usage.prices'].includes(request.args[0])) void run();
   else queue = queue.then(run);
 });

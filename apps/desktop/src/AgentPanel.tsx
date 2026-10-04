@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, Brain, Clock, FileDiff, FileText, ListChecks, Loader2, MessageSquare, Search, Sparkles, Terminal, Wrench } from 'lucide-react';
-import type { AgentJob, AgentKind, AgentStep } from '../../../packages/agent/service';
+import type { AgentJob, AgentJobSummary, AgentKind, AgentStep } from '../../../packages/agent/service';
 import { activeRun } from '../../../packages/agent/run-notice';
 import { entryTypeInfo } from '../../../packages/agent/distill';
 import type { Analysis, ItemDetail, Provider, RunProviderId } from '../../../packages/protocol/schema';
@@ -9,6 +9,7 @@ import { ExperimentProject } from './ExperimentProject';
 import { RevisionSelect } from './TrialLoop';
 import { Field, Modal, providerName } from './components';
 import { Markdown } from './Markdown';
+import { useAgentJob, type JobLike } from './agent-job';
 
 /** Announces a new run. Detail listens to jump to the tab where that kind of result appears. */
 export function agentStarted(kind: AgentKind) { window.dispatchEvent(new CustomEvent('kiln:agent-started', { detail: { kind } })); }
@@ -17,14 +18,14 @@ const entryLabel: Record<string, string> = { ...Object.fromEntries(Object.entrie
 const stepIcon: Record<AgentStep['kind'], typeof Terminal> = { status: Loader2, message: MessageSquare, reasoning: Brain, command: Terminal, search: Search, file: FileText, tool: Wrench, todo: ListChecks, error: AlertTriangle };
 export const tokens = (n: number) => n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
 const kilobytes = (n: number) => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
-export function useElapsed(job: AgentJob) {
+export function useElapsed(job: Pick<JobLike, 'status' | 'startedAt' | 'finishedAt'>) {
   const [, tick] = useState(0);
   useEffect(() => { if (!activeRun(job)) return; const timer = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(timer); }, [job.status]);
   const seconds = Math.max(0, Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt)) / 1000));
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
 }
 /** What the run is doing and with what: model, effort, elapsed time, thread, tokens. Shown on every job so nothing about the CLI session stays hidden. */
-function RunMeta({ job }: { job: AgentJob }) {
+function RunMeta({ job }: { job: JobLike }) {
   const elapsed = useElapsed(job);
   return <div className="run-meta">
     <span title="Model the CLI was asked to use">{job.model || (activeRun(job) ? 'Resolving model…' : 'CLI default model')}</span>
@@ -37,20 +38,24 @@ function RunMeta({ job }: { job: AgentJob }) {
   </div>;
 }
 /** Compact one-line strip shown on every tab while a run is active, so the tab content underneath stays visible. */
-export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: AgentJob[]; onOpen: (kind: AgentKind) => void }) {
+export function AgentStatus({ itemId, jobs, onOpen }: { itemId: string; jobs: AgentJobSummary[]; onOpen: (kind: AgentKind) => void }) {
   // A queued run shows here too, as Queued, so it can be cancelled before it starts.
   const running = jobs.filter(job => job.itemId === itemId && activeRun(job));
-  return <>{running.map(job => { const last = job.steps.at(-1); return <div className="agent-status" key={job.id}>{job.status === 'queued' ? <Clock size={14} /> : <Loader2 size={14} className="spin"/>}<b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.status === 'queued' && 'Queued · '}{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
+  return <>{running.map(job => { const last = job.lastStep; return <div className="agent-status" key={job.id}>{job.status === 'queued' ? <Clock size={14} /> : <Loader2 size={14} className="spin"/>}<b>{providerName[job.provider]} {heading[job.kind]}</b><span>{job.status === 'queued' && 'Queued · '}{job.model && <>{job.model}{job.effort ? ` · ${job.effort}` : ''} · </>}{job.phase}{last ? ` · ${last.text.split('\n')[0].slice(0, 80)}` : ''}</span><button className="text-button" onClick={() => onOpen(job.kind)}>View</button><button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button></div>; })}</>;
 }
-export function Steps({ job }: { job: AgentJob }) {
+/** A run's phase line and its steps. `steps` are the ones the caller already reads; without them they are read here. */
+export function Steps({ job, steps: given }: { job: JobLike; steps?: AgentStep[] }) {
   useElapsed(job);
+  const fetched = useAgentJob(given ? undefined : job), steps = given ?? fetched?.steps ?? [], count = stepCount(job);
   const quietSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.lastActivityAt ?? job.startedAt)) / 1000));
   return <>
     {job.status === 'running' && <p className="muted small" role="status">{job.phase}{job.process?.running ? ' · process running' : ''}{quietSeconds >= 15 ? ` · no new activity for ${quietSeconds}s` : ''}{quietSeconds >= 60 ? '. You can cancel or open Run files for details.' : ''}</p>}
-    {job.steps.length > 0 && <details className="agent-steps" open={job.status === 'running'}><summary>Activity · {job.steps.length} step{job.steps.length === 1 ? '' : 's'}</summary><StepList job={job} /></details>}
+    {count > 0 && <details className="agent-steps" open={job.status === 'running'}><summary>Activity · {count} step{count === 1 ? '' : 's'}</summary><StepList steps={steps} /></details>}
   </>;
 }
-const StepList = ({ job }: { job: AgentJob }) => <ol>{job.steps.map(step => { const Icon = stepIcon[step.kind]; return <li key={step.id} className={step.kind}><Icon size={13} /><div><span className="step-kind">{step.kind === 'reasoning' ? 'reasoning summary' : step.kind}{step.status ? ` · ${step.status}` : ''} · {new Date(step.at).toLocaleTimeString()}</span><pre>{step.text}</pre></div></li>; })}</ol>;
+/** How many steps a run has, from its summary or its full record. */
+export const stepCount = (job: JobLike) => 'steps' in job ? job.steps.length : job.stepCount;
+const StepList = ({ steps }: { steps: AgentStep[] }) => <ol>{steps.map(step => { const Icon = stepIcon[step.kind]; return <li key={step.id} className={step.kind}><Icon size={13} /><div><span className="step-kind">{step.kind === 'reasoning' ? 'reasoning summary' : step.kind}{step.status ? ` · ${step.status}` : ''} · {new Date(step.at).toLocaleTimeString()}</span><pre>{step.text}</pre></div></li>; })}</ol>;
 
 /** Lets the user pick which signed-in CLI runs a job. Unavailable clients stay listed so the reason is visible. */
 export function ProviderSelect({ providers, value, onChange, label = 'Run with', compact = false }: { providers: Provider[]; value: RunProviderId; onChange: (value: RunProviderId) => void; label?: string; /** Inline bars: only say something when the client is missing. */ compact?: boolean }) {
@@ -66,7 +71,7 @@ export function useStart(kind: AgentKind, itemId: string, onClose: () => void) {
   return { busy, error, setError, start };
 }
 /** Runs a job again with its exact inputs: provider, project, context and revision, even if the item has been edited since. */
-export const retryJob = (job: AgentJob) => api('agent.start', { id: job.itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind));
+export const retryJob = (job: JobLike) => api('agent.start', { id: job.itemId, revision: job.revision, kind: job.kind, provider: job.provider, workspace: job.workspace, context: job.context }).then(() => agentStarted(job.kind));
 export function AgentTrialDialog({ itemId, providers, initialWorkspace = '', defaultProvider, onClose, onManual, revisions }: { itemId: string; providers: Provider[]; initialWorkspace?: string; defaultProvider: RunProviderId; onClose: () => void; onManual: (workspace: string) => void; /** Offer a Revision selector over this item's history; without it the current revision runs. */ revisions?: ItemDetail }) {
   const [context, setContext] = useState(''), [provider, setProvider] = useState<RunProviderId>(defaultProvider);
   const { busy, error, start } = useStart('trial', itemId, onClose);
@@ -94,16 +99,17 @@ export function CreateSkillDialog({ itemId, title, providers, defaultProvider, o
   </Modal>;
 }
 /** A chat reply's steps behind one collapsed line, so the answer stays on top; the phase line shows what a running turn is doing. */
-export function ChatActivity({ job }: { job: AgentJob }) {
+export function ChatActivity({ job, steps: given }: { job: JobLike; /** Steps the caller already reads; without them they are read here. */ steps?: AgentStep[] }) {
   useElapsed(job);
+  const fetched = useAgentJob(given ? undefined : job), steps = given ?? fetched?.steps ?? [], count = stepCount(job);
   const quietSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.lastActivityAt ?? job.startedAt)) / 1000));
   return <>
     {activeRun(job) && <p className="chat-phase" role="status">{job.status === 'queued' ? <><Clock size={13} />Queued · </> : <Loader2 size={13} className="spin" />}{job.phase}{quietSeconds >= 15 ? ` · no new activity for ${quietSeconds}s` : ''}</p>}
-    {job.steps.length > 0 && <details className="agent-steps chat-activity"><summary>Activity · {job.steps.length} step{job.steps.length === 1 ? '' : 's'}</summary><StepList job={job} /></details>}
+    {count > 0 && <details className="agent-steps chat-activity"><summary>Activity · {count} step{count === 1 ? '' : 's'}</summary><StepList steps={steps} /></details>}
   </>;
 }
 /** The muted line under a chat reply: model · time · tokens, then the CLI session and the run folder. */
-export function ChatRunMeta({ job, onError }: { job: AgentJob; onError: (message: string) => void }) {
+export function ChatRunMeta({ job, onError }: { job: JobLike; onError: (message: string) => void }) {
   const elapsed = useElapsed(job);
   const usage = job.usage;
   return <div className="chat-meta">
@@ -128,7 +134,7 @@ export function AnalysisRecord({ analysis }: { analysis: Analysis }) {
   </section>;
 }
 /** A Tune run's card body: what it proposes and whether the user took it. */
-function TuneOutcome({ job, onReview }: { job: AgentJob; onReview?: (jobId: string) => void }) {
+function TuneOutcome({ job, onReview }: { /** The full record: the summary has no report. */ job: AgentJob; onReview?: (jobId: string) => void }) {
   const tune = job.tune, result = job.result && 'report' in job.result ? job.result : null;
   if (!tune || !result) return null;
   const n = tune.changes.length;
@@ -138,25 +144,30 @@ function TuneOutcome({ job, onReview }: { job: AgentJob; onReview?: (jobId: stri
     {onReview && <button className={`button ${tune.state === 'ready' ? 'primary' : ''}`} onClick={() => onReview(job.id)}><FileDiff size={14} />{tune.state === 'ready' ? 'Review changes' : 'Open report'}</button>}
   </>;
 }
-export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, collections, onReviewTune }: { itemId: string; jobs: AgentJob[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; /** Current collections: a run's collection may have been renamed or deleted since. */ collections?: string[]; /** Opens a Tune run's diff (Score.tsx's TuneReview). */ onReviewTune?: (jobId: string) => void }) {
+export function AgentPanel({ itemId, jobs, kinds, onOpen, onOpenCollection, collections, onReviewTune }: { itemId: string; jobs: AgentJobSummary[]; kinds?: AgentKind[]; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; /** Current collections: a run's collection may have been renamed or deleted since. */ collections?: string[]; /** Opens a Tune run's diff (Score.tsx's TuneReview). */ onReviewTune?: (jobId: string) => void }) {
   const [error,setError] = useState('');
   // A finished score lives on in the score panel; its card would say the same thing twice.
   const relevant = jobs.filter(job => job.itemId === itemId && job.kind !== 'chat' && (!kinds || kinds.includes(job.kind)) && !(job.kind === 'score' && job.status === 'completed'));
-  const retry = (job: AgentJob) => { void retryJob(job).catch(e => setError(String(e))); };
-  return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <section className="agent-result" key={job.id}>
+  return <>{error && <p className="error-box">{error}</p>}{relevant.map(job => <RunCard key={job.id} job={job} onOpen={onOpen} onOpenCollection={onOpenCollection} collections={collections} onReviewTune={onReviewTune} onError={setError} />)}</>;
+}
+/** One run's card. Its steps and result come from the full record, read while the card is shown. */
+function RunCard({ job, onOpen, onOpenCollection, collections, onReviewTune, onError }: { job: AgentJobSummary; onOpen: (id: string) => void; onOpenCollection?: (name: string) => void; collections?: string[]; onReviewTune?: (jobId: string) => void; onError: (message: string) => void }) {
+  const full = useAgentJob(job), result = job.result && full?.result;
+  const retry = () => { void retryJob(job).catch(e => onError(String(e))); };
+  return <section className="agent-result">
     <div className="section-heading"><b>{providerName[job.provider]} {heading[job.kind]}</b><span className="inline">{job.status === 'running' ? <Loader2 size={14} className="spin"/> : job.status === 'queued' && <Clock size={14} />}{job.status === 'running' ? job.phase : job.status === 'queued' ? `Queued · ${job.phase}` : job.status}</span></div>
     <RunMeta job={job} />
     {activeRun(job) && <button className="text-button" onClick={() => void api('agent.cancel', { id: job.id })}>Cancel run</button>}
-    <Steps job={job} />
+    <Steps job={job} steps={full?.steps ?? []} />
     {job.error && <p className="error-box">{job.error}</p>}
-    {job.result && ('report' in job.result ? <TuneOutcome job={job} onReview={onReviewTune} />
-      : 'improvements' in job.result ? <p>Scored {job.result.score}/100</p>
-      : 'entries' in job.result ? <><p>{job.result.summary}</p><p><b>Takeaway:</b> {job.result.takeaway}</p><p className="distill-counts">{Object.entries(job.result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!job.result.entries.length && <span>Nothing reusable found</span>}</p>{job.result.skipped && <p className="muted">Skipped: {job.result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>
-      : 'summary' in job.result ? <><p>{job.result.summary}</p>{job.result.extractedText && <details><summary>Extracted text</summary><pre className="prompt-preview">{job.result.extractedText}</pre></details>}<p><b>Next test:</b> {job.result.nextTest}</p>{job.result.limitations && <p className="muted">{job.result.limitations}</p>}</>
-      : 'judgement' in job.result ? <><p><b>{job.result.judgement}</b> · Agent assessment</p><p>{job.result.note}</p><pre className="prompt-preview">{job.result.output}</pre></>
-      : 'reply' in job.result ? <pre className="chat-text">{job.result.reply}</pre>
-      : <><p>Drafted <b>{job.result.name}</b>: {job.result.description}</p>{job.result.notes && <p className="muted">{job.result.notes}</p>}{job.createdItemId && <button className="button" onClick={() => onOpen(job.createdItemId!)}>Open the draft skill <ArrowRight size={14} /></button>}</>)}
-    <button className="text-button" onClick={() => void api('desktop.openAgentJob', { id: job.id }).catch(e => setError(String(e)))}>Run files</button>
-    {['failed','cancelled','interrupted'].includes(job.status) && <button className="button" onClick={() => retry(job)}>Retry with {providerName[job.provider]}</button>}
-  </section>)}</>;
+    {result && full && ('report' in result ? <TuneOutcome job={full} onReview={onReviewTune} />
+      : 'improvements' in result ? <p>Scored {result.score}/100</p>
+      : 'entries' in result ? <><p>{result.summary}</p><p><b>Takeaway:</b> {result.takeaway}</p><p className="distill-counts">{Object.entries(result.entries.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {})).map(([type, n]) => <span key={type}>{n} {n === 1 ? type : entryLabel[type] ?? type}</span>)}{!result.entries.length && <span>Nothing reusable found</span>}</p>{result.skipped && <p className="muted">Skipped: {result.skipped}</p>}{job.collection && onOpenCollection && (!collections || collections.includes(job.collection)) && <button className="button" onClick={() => onOpenCollection(job.collection!)}>Open “{job.collection}” <ArrowRight size={14} /></button>}</>
+      : 'summary' in result ? <><p>{result.summary}</p>{result.extractedText && <details><summary>Extracted text</summary><pre className="prompt-preview">{result.extractedText}</pre></details>}<p><b>Next test:</b> {result.nextTest}</p>{result.limitations && <p className="muted">{result.limitations}</p>}</>
+      : 'judgement' in result ? <><p><b>{result.judgement}</b> · Agent assessment</p><p>{result.note}</p><pre className="prompt-preview">{result.output}</pre></>
+      : 'reply' in result ? <pre className="chat-text">{result.reply}</pre>
+      : <><p>Drafted <b>{result.name}</b>: {result.description}</p>{result.notes && <p className="muted">{result.notes}</p>}{job.createdItemId && <button className="button" onClick={() => onOpen(job.createdItemId!)}>Open the draft skill <ArrowRight size={14} /></button>}</>)}
+    <button className="text-button" onClick={() => void api('desktop.openAgentJob', { id: job.id }).catch(e => onError(String(e)))}>Run files</button>
+    {['failed','cancelled','interrupted'].includes(job.status) && <button className="button" onClick={retry}>Retry with {providerName[job.provider]}</button>}
+  </section>;
 }

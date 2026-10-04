@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AtSign, Check, ChevronDown, Clock, Download, History, ListChecks, Loader2, Maximize2, MessageSquare, MoreHorizontal, Plus, RotateCcw, ScrollText, Send, Sparkles, SquarePen, Undo2, X } from 'lucide-react';
-import type { AgentJob, ChatChange, ChatResult } from '../../../packages/agent/service';
+import type { AgentJob, AgentJobSummary, ChatChange, ChatResult } from '../../../packages/agent/service';
+import { jobSignature } from '../../../packages/agent/job-summary';
 import { chatSessions, chatTurns, mergeTurns } from '../../../packages/agent/chat-history';
 import { activeRun } from '../../../packages/agent/run-notice';
 import type { Item, ItemDetail, Revision, RunProviderId } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { KindIcon, Modal, providerName } from './components';
 import { ChatActivity, ChatRunMeta } from './AgentPanel';
+import { useAgentJob, type JobLike } from './agent-job';
 import { LineDiff } from './Diff';
 import { ResizeHandle, usePanelWidth } from './ResizeHandle';
 import './chat.css';
@@ -32,7 +34,7 @@ const readDecisions = (): Record<string, Decision> => { try { return JSON.parse(
  * `initialMessage` prefills the composer without sending it, once per nonce. It is how the `kiln:ask-agent` event reaches the chat:
  * `{ itemId, message }` opens this chat about that item with `message` typed in.
  */
-export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem, items, onRefresh, initialMessage }: { jobs: AgentJob[]; item: Item; /** The source behind the open item, when there is one. */ source: Item | null; provider: RunProviderId; onClose: () => void; onOpenItem: (id: string) => void; /** Library items, for @-mentions, item links and the entry count. */ items?: Item[]; /** Reloads the library after an Undo. */ onRefresh?: () => unknown; initialMessage?: { text: string; nonce: number } }) {
+export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem, items, onRefresh, initialMessage }: { jobs: AgentJobSummary[]; item: Item; /** The source behind the open item, when there is one. */ source: Item | null; provider: RunProviderId; onClose: () => void; onOpenItem: (id: string) => void; /** Library items, for @-mentions, item links and the entry count. */ items?: Item[]; /** Reloads the library after an Undo. */ onRefresh?: () => unknown; initialMessage?: { text: string; nonce: number } }) {
   const video = source?.tags.includes('youtube') ? source : null;
   const panel = usePanelWidth('kiln-chat-width', 440, 340, 760);
   const [chosen, setChosen] = useState<RunProviderId | null>(null);
@@ -50,7 +52,10 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem,
   // agent.jobs carries only the newest runs; the item's full history comes from disk, again whenever one of its turns changes state.
   useEffect(() => { let active = true; api<AgentJob[]>('agent.chatHistory', { itemId: item.id }).then(turns => { if (active) setHistory({ itemId: item.id, turns }); }).catch(e => { if (active) { setHistory({ itemId: item.id, turns: [] }); setError(String(e)); } }); return () => { active = false; }; }, [item.id, liveKey]);
   const loaded = history?.itemId === item.id;
-  const all = mergeTurns(live, accepted?.itemId === item.id ? [accepted] : [], loaded ? history.turns : []);
+  // agent.jobs lists turns without their steps and replies; the history read from disk has them, so it stands in for a turn it has caught up with.
+  const recorded = new Map((loaded ? history.turns : []).map(turn => [turn.id, turn]));
+  const caughtUp = live.map((turn): JobLike => { const known = recorded.get(turn.id); return known && jobSignature(known) === jobSignature(turn) ? known : turn; });
+  const all = mergeTurns<JobLike>(caughtUp, accepted?.itemId === item.id ? [accepted] : [], loaded ? history.turns : []);
   const sessions = chatSessions(all);
   // The remembered conversation, else the item's latest one, else a fresh one (remembered once its first message is sent).
   const fresh = useMemo(() => crypto.randomUUID(), [item.id]);
@@ -61,11 +66,12 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem,
   const running = turns.find(activeRun), elsewhere = running ? undefined : all.find(activeRun), busy = sending?.itemId === item.id || Boolean(running ?? elsewhere);
   // A session stays on the CLI it started with; before the first turn the choice (or Settings) decides.
   const current: RunProviderId = turns.at(-1)?.provider ?? chosen ?? provider, who = providerName[current];
-  const last = turns.at(-1);
+  const last = turns.at(-1), lastFull = useAgentJob(last);
   const reset = () => { remember(crypto.randomUUID()); setText(''); setMentions([]); };
   // Esc closes an open chat menu first, then the chat.
   useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key !== 'Escape' || document.querySelector('dialog[open], .context-menu')) return; event.stopPropagation(); if (document.querySelector('.chat-menu')) setMenu(null); else onClose(); }; window.addEventListener('keydown', key, true); return () => window.removeEventListener('keydown', key, true); }, [onClose]);
-  const lastKey = last ? `${last.id}:${last.status}:${last.phase}:${last.steps.at(-1)?.text}` : '';
+  // Scrolls to the newest activity: when the last turn changes, and again when its steps or reply have been read.
+  const lastKey = last ? `${jobSignature(last)}:${lastFull ? `${jobSignature(lastFull)}:${lastFull.steps.at(-1)?.text.length}:${Boolean(lastFull.result)}` : ''}` : '';
   useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight }); }, [lastKey, item.id, conversationId, loaded]);
   useEffect(() => { setError(''); setText(''); setMentions([]); setMenu(null); }, [item.id]);
   // The prefill is put in the composer once per nonce, after the item switch above has cleared the old text.
@@ -142,7 +148,7 @@ export function ChatPopover({ jobs, item, source, provider, onClose, onOpenItem,
         <p>{source ? `Ask about the ${video ? 'video' : 'source'} or this entry, or ask for a change. The agent has the ${video ? 'transcript' : 'source material'}, this item and every entry made from the ${video ? 'video' : 'source'}.` : 'Ask about this item, or ask for a change. The agent reads it and its attached files.'} It edits through Kiln’s CLI, so every change is a new revision you can undo. It runs through your installed CLI, with the permissions explained before your first message each time Kiln starts.</p>
         <div className="chat-suggest">{(video ? ['Which prompt did they use for the outline step?', 'Make this technique more detailed', 'Add an entry for the tool mentioned at 12:30'] : source ? ['What did the analysis leave out?', 'Make this technique more detailed', 'Add a prompt for the review step it describes'] : ['Make this prompt more specific', 'Summarise this in three bullets', 'Turn the steps into a checklist']).map(suggestion => <button key={suggestion} type="button" onClick={() => { setText(suggestion); input.current?.focus(); }}>{suggestion}</button>)}</div>
       </div>}
-      {turns.length > 0 && <ol className="chat-turns">{turns.map(turn => <Turn key={turn.id} turn={turn} byId={byId} onOpenItem={onOpenItem} onRefresh={onRefresh} onError={setError} />)}</ol>}
+      {turns.length > 0 && <ol className="chat-turns">{turns.map(turn => <Turn key={turn.id} turn={turn} shared={turn === last ? { full: lastFull } : undefined} byId={byId} onOpenItem={onOpenItem} onRefresh={onRefresh} onError={setError} />)}</ol>}
       {sending?.itemId === item.id && <div role="status" className="chat-you pending"><p>{sending.message}</p><span>Sending to {who}…</span></div>}
     </div>
 
@@ -189,7 +195,8 @@ function MentionPicker({ items, exclude, query, onPick, onClose, keys: forwarded
   </div>;
 }
 
-function Turn({ turn, byId, onOpenItem, onRefresh, onError }: { turn: AgentJob; byId: Map<string, Item>; onOpenItem: (id: string) => void; onRefresh?: () => unknown; onError: (message: string) => void }) {
+function Turn({ turn, shared, byId, onOpenItem, onRefresh, onError }: { turn: JobLike; /** The last turn's record, which the chat reads itself. */ shared?: { full?: AgentJob }; byId: Map<string, Item>; onOpenItem: (id: string) => void; onRefresh?: () => unknown; onError: (message: string) => void }) {
+  const fetched = useAgentJob(shared ? undefined : turn), record = shared ? shared.full : fetched;
   const changed = (turn.changes ?? []).filter(c => c.from), created = (turn.changes ?? []).filter(c => !c.from);
   return <li>
     <div className="chat-you"><p>{turn.question}</p>
@@ -198,10 +205,10 @@ function Turn({ turn, byId, onOpenItem, onRefresh, onError }: { turn: AgentJob; 
     <div className="chat-agent">
       <div className="chat-agent-name"><Sparkles size={13} />{providerName[turn.provider]}</div>
       {turn.error && <p className="error-box">{turn.status === 'cancelled' ? 'Cancelled.' : turn.error}</p>}
-      {turn.result && 'reply' in turn.result && <Reply text={(turn.result as ChatResult).reply} byId={byId} onOpenItem={onOpenItem} />}
+      {turn.result && record?.result && 'reply' in record.result && <Reply text={(record.result as ChatResult).reply} byId={byId} onOpenItem={onOpenItem} />}
       {changed.map(change => <ChangeCard key={change.itemId} jobId={turn.id} change={change} current={byId.get(change.itemId)} onOpenItem={onOpenItem} onRefresh={onRefresh} />)}
       {created.length > 0 && <div className="chat-created"><b>Added by the agent</b>{created.map(c => <div key={c.itemId}><KindIcon kind={c.kind} size={14} /><span className="chat-chip-label">{byId.get(c.itemId)?.title ?? c.title}</span><code>{shortHash(c.to)}</code><button type="button" className="button chat-sm" onClick={() => onOpenItem(c.itemId)}>Open</button></div>)}</div>}
-      <ChatActivity job={turn} />
+      <ChatActivity job={turn} steps={record?.steps ?? []} />
       <ChatRunMeta job={turn} onError={onError} />
     </div>
   </li>;

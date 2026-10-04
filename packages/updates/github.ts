@@ -5,17 +5,19 @@ import { newerVersion } from './service';
 export const RELEASES = 'https://github.com/waLLxAck/kiln/releases';
 /** First check shortly after launch, then on a slow timer. A check is one small request to github.com; nothing is scanned or indexed. */
 export const FIRST_CHECK_MS = 15_000, CHECK_EVERY_MS = 30 * 60_000;
+/** A check that gets no answer in this long fails, so "Check now" never waits on a stalled connection. */
+export const CHECK_TIMEOUT_MS = 15_000;
 /** app: downloads and installs in place; download: the new version is downloaded from its release page by hand. */
 export type InstallKind = 'app' | 'download';
-type Fetch = (url: string, init: { method: string; redirect: 'follow'; cache: 'no-store' }) => Promise<{ status: number; url: string; headers: { get(name: string): string | null } }>;
+type Fetch = (url: string, init: { method: string; redirect: 'follow'; cache: 'no-store'; signal?: AbortSignal }) => Promise<{ status: number; url: string; headers: { get(name: string): string | null } }>;
 
 /**
  * Newest published version: github.com redirects /releases/latest to the release's tag page, so one HEAD request answers it without
  * the rate-limited API. Pass a fetch that reports the final URL after a redirect: Node's does; Electron's net.fetch leaves it empty.
  * No release yet is null; an answer that names no tag is an error, never a silent "up to date".
  */
-export async function latestRelease(fetcher: Fetch): Promise<{ version: string; url: string } | null> {
-  const response = await fetcher(`${RELEASES}/latest`, { method: 'HEAD', redirect: 'follow', cache: 'no-store' });
+export async function latestRelease(fetcher: Fetch, timeoutMs = CHECK_TIMEOUT_MS): Promise<{ version: string; url: string } | null> {
+  const response = await fetcher(`${RELEASES}/latest`, { method: 'HEAD', redirect: 'follow', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
   if (response.status === 404) return null;
   const location = response.url.includes('/releases/tag/') ? response.url : response.headers.get('location') ?? '';
   const match = location.match(/\/releases\/tag\/(v?(\d+\.\d+\.\d+))$/);
@@ -33,6 +35,13 @@ export type Updater = {
   on(event: 'error', listener: (error: Error) => void): unknown;
 };
 type Log = (event: string, fields?: Record<string, unknown>) => void;
+/** electron-updater takes no signal, so its check is raced against the same limit; a late answer is ignored. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer within ${Math.round(ms / 1000)} seconds`)), ms);
+    promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
+}
 /** Checks GitHub releases on a timer and, where the platform allows, downloads and installs them when the user asks. Never downloads on its own. */
 export class GitHubUpdates {
   private stage: UpdateStage = { state: 'idle' };
@@ -42,7 +51,7 @@ export class GitHubUpdates {
   private checking?: Promise<void>;
   private updater?: Promise<Updater>;
   private timers: ReturnType<typeof setTimeout>[] = [];
-  constructor(private current: string, readonly install: InstallKind, private log: Log, private fetcher: Fetch, private loadUpdater: () => Promise<Updater>) {}
+  constructor(private current: string, readonly install: InstallKind, private log: Log, private fetcher: Fetch, private loadUpdater: () => Promise<Updater>, private timeoutMs = CHECK_TIMEOUT_MS) {}
   /** The updater is loaded on first use, not at startup. */
   private load() {
     return this.updater ??= this.loadUpdater().then(updater => {
@@ -62,7 +71,7 @@ export class GitHubUpdates {
     if (this.stage.state === 'preparing' || this.stage.state === 'ready') return Promise.resolve();
     return this.checking ??= (async () => {
       try {
-        const release = this.install === 'app' ? await this.load().then(u => u.checkForUpdates()).then(r => r ? { version: r.updateInfo.version, url: `${RELEASES}/tag/v${r.updateInfo.version}` } : null) : await latestRelease(this.fetcher);
+        const release = this.install === 'app' ? await withTimeout(this.load().then(u => u.checkForUpdates()), this.timeoutMs).then(r => r ? { version: r.updateInfo.version, url: `${RELEASES}/tag/v${r.updateInfo.version}` } : null) : await latestRelease(this.fetcher, this.timeoutMs);
         this.latest = release && newerVersion(release.version, this.current) ? release : null;
         this.error = ''; this.log('update.checked', { reason, available: this.latest?.version ?? null });
       } catch (error) { this.error = `Could not reach GitHub: ${error instanceof Error ? error.message : String(error)}`; this.log('update.checkFailed', { reason, message: this.error }); }

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import type { Snapshot, UpdateStatus } from '../../../packages/protocol/schema';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import { UpdateAction } from './Updates';
 import { RepoStatus } from './Sync';
 import { RunsStatus, type RunRef } from './Runs';
@@ -12,7 +12,7 @@ export { repoName } from './Sync';
 export const elapsed = (from: string, to = Date.now()) => { const s = Math.max(0, Math.round((to - new Date(from).getTime()) / 1000)); return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min`; };
 
 type Props = {
-  snapshot: Snapshot; jobs: AgentJob[]; agentError: string; busy: boolean; update: UpdateStatus | null; updating: boolean; onUpdate: (restart: boolean) => void; onSettings: () => void;
+  snapshot: Snapshot; jobs: AgentJobSummary[]; agentError: string; busy: boolean; update: UpdateStatus | null; updating: boolean; onUpdate: (restart: boolean) => void; onSettings: () => void;
   /** Opens a run's result: its item on the right view, or the chat. */ onOpenRun: (job: RunRef) => void;
   refresh: () => Promise<void>; perform: (action: () => Promise<unknown>, success?: string) => Promise<void>; onMessage: (message: string) => void; onConflicts: (conflicts: unknown) => void; onReveal: (id: string) => void;
   /** A finished analysis filed its entries here. */ onOpenCollection?: (name: string) => void;

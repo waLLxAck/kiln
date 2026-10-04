@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import type { KnownProject, ProjectSource } from '../../../packages/deployment/projects';
 import { api } from './api';
 
@@ -14,7 +14,7 @@ export function useKnownProjects() {
   const [projects, setProjects] = useState<KnownProject[] | null>(null), [error, setError] = useState('');
   const reload = useCallback(async () => {
     try {
-      const jobs = await api<AgentJob[]>('agent.jobs');
+      const jobs = await api<AgentJobSummary[]>('agent.jobs');
       const recent = jobs.filter(job => job.kind === 'trial' && job.workspace).map(job => ({ path: job.workspace!, at: job.startedAt }));
       setProjects(await api<KnownProject[]>('projects.known', { recent })); setError('');
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }

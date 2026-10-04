@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { detectProviders } from '../providers/service';
+import { findExecutable } from '../providers/service';
+import { killTree, settled, treeOptions } from './process';
 import type { RunInput } from './codex';
 
 /**
@@ -40,7 +41,7 @@ export function shimCommandLine(executable: string, args: string[]) {
 }
 export async function runClaude(input: RunInput): Promise<unknown> {
   input.onStatus?.('Locating Claude Code');
-  const executable = detectProviders().find(p => p.id === 'claude')?.executable;
+  const executable = findExecutable('claude');
   if (!executable) throw new Error('Install Claude Code and run `claude` once in a terminal to sign in.');
   if (input.signal.aborted) throw new Error('Cancelled');
   const resultFile = path.join(input.folder, 'response.json'), cwd = input.workdir ?? input.folder;
@@ -50,12 +51,12 @@ export async function runClaude(input: RunInput): Promise<unknown> {
   const prompt = input.images.length ? `${input.prompt}\n\nAttached images (view them with the Read tool):\n${input.images.map(file => path.relative(cwd, file)).join('\n')}` : input.prompt;
   const result = await new Promise<unknown>((resolve, reject) => {
     const child = shim
-      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', shimCommandLine(executable, args)], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } })
-      : spawn(executable, args, { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } });
+      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', shimCommandLine(executable, args)], { cwd, ...treeOptions(), windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } })
+      : spawn(executable, args, { cwd, ...treeOptions(), stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: '' } });
     if (child.pid) input.onProcess?.(child.pid, true);
     let stderr = '', pending = '', bytes = 0, cancelled = false, final: { is_error?: boolean; result?: string; structured_output?: unknown } | null = null;
     const trace = fs.createWriteStream(path.join(input.folder, 'events.jsonl'));
-    const stop = () => { cancelled = true; if (process.platform === 'win32' && child.pid) { const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); killer.on('error', () => child.kill()); } else child.kill(); };
+    const stop = () => { if (cancelled) return; cancelled = true; killTree(child); };
     const timeoutMs = input.timeoutMs ?? 300000, timer = setTimeout(stop, timeoutMs);
     input.signal.addEventListener('abort', stop, { once: true });
     child.stdin.on('error', () => {});
@@ -72,15 +73,16 @@ export async function runClaude(input: RunInput): Promise<unknown> {
       }
     });
     child.stderr.on('data', data => { stderr = (stderr + data).slice(-4000); });
-    child.on('error', error => { clearTimeout(timer); input.signal.removeEventListener('abort', stop); trace.end(); reject(error); });
-    child.on('close', code => {
-      if (child.pid) input.onProcess?.(child.pid, false); clearTimeout(timer); input.signal.removeEventListener('abort', stop); trace.end();
+    const close = () => { clearTimeout(timer); input.signal.removeEventListener('abort', stop); trace.end(); };
+    // Settles when Claude Code exits, even if a process it started keeps the output pipes open.
+    settled(child).then(({ code }) => {
+      if (child.pid) input.onProcess?.(child.pid, false); close();
       if (cancelled) return reject(new Error(input.signal.aborted ? 'Cancelled' : `Claude Code timed out after ${Math.round(timeoutMs / 60000)} minutes. Retry this run.`));
       if (final?.is_error || (code && !final)) return reject(new Error(/authenticat|sign in|login/i.test(final?.result ?? stderr) ? 'Claude Code is not signed in for headless runs. Open a terminal, run `claude`, and sign in, then retry.' : /No conversation found/i.test(final?.result ?? stderr) ? 'Claude Code could not find this session on this machine, so the conversation cannot continue.' : `Claude Code exited (${code ?? 'error'}). ${(final?.result ?? stderr).slice(-1500)}`));
       if (final?.structured_output !== undefined) return resolve(final.structured_output);
       if (!input.schema) return resolve(final?.result ?? '');
       try { resolve(JSON.parse(final?.result ?? '')); } catch { reject(new Error('Claude Code returned no structured result. Check events.jsonl in the run folder.')); }
-    });
+    }, error => { close(); reject(error); });
     child.stdin.end(prompt);
   });
   await fs.promises.writeFile(resultFile, typeof result === 'string' ? result : JSON.stringify(result, null, 2));

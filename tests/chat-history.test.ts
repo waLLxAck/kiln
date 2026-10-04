@@ -42,7 +42,7 @@ test('a Claude chat shows its shell commands as steps', async () => {
       return 'Done';
     }, async () => []);
     const shown = service.chat({ itemId: item.id, message: 'Edit it again', conversationId: randomUUID() }); await wait(service);
-    const job = service.list().find(j => j.id === shown.id)!;
+    const job = service.job({ id: shown.id });
     assert.equal(job.steps.find(s => s.id === 'tool-1')!.text, `Bash kiln items update ${item.id} --file draft.md`);
   } finally { close(); }
 });

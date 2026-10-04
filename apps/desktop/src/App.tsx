@@ -57,7 +57,7 @@ import { ExperimentsPage } from './ExperimentsPage';
 import { invocationMessage } from './Invocation';
 import { SessionStartStatus } from './SessionStart';
 import type { InvocationResult } from '../../../packages/domain/router';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 import { selectedEntryTypes } from '../../../packages/agent/distill';
 import type { InstructionAppend } from './AddToInstructions';
@@ -73,7 +73,7 @@ export default function App() {
   const sidebar = usePanelWidth('kiln-sidebar-width', 250, 180, 360);
   // Paste, drop, the Capture button, Ctrl+N and the palette all open the capture dialog with their material.
   const [capture, setCapture] = useState<CaptureRequest>(); const captureCount = useRef(0);
-  const [jobs,setJobs] = useState<AgentJob[]>([]);
+  const [jobs,setJobs] = useState<AgentJobSummary[]>([]);
   /** An instruction item's snippet on its way to Config files, added there as an unsaved edit. */
   const [homeAppend, setHomeAppend] = useState<InstructionAppend | null>(null);
   const [agentSyncError, setAgentSyncError] = useState('');
@@ -142,7 +142,7 @@ export default function App() {
       if (pending) { again = true; return; }
       pending = true; lastPoll = Date.now();
       try {
-        const current = await api<AgentJob[]>('agent.jobs'); if (!active) return;
+        const current = await api<AgentJobSummary[]>('agent.jobs'); if (!active) return;
         const changed = knownJobs.current && current.some(j => knownJobs.current!.get(j.id) !== j.status && j.status !== 'running');
         knownJobs.current = new Map(current.map(j => [j.id,j.status])); setJobs(current); setAgentSyncError('');
         if (changed) await refresh();
@@ -280,7 +280,7 @@ export default function App() {
   const action = (name: string, trial?: Trial) => {
     if (name === 'delete-trial' && trial) {
       if (busy) return;
-      void perform(async () => { await api('trials.delete', { id: trial.id }); setJobs(await api<AgentJob[]>('agent.jobs')); await refresh(); }, 'Experiment deleted');
+      void perform(async () => { await api('trials.delete', { id: trial.id }); setJobs(await api<AgentJobSummary[]>('agent.jobs')); await refresh(); }, 'Experiment deleted');
       return;
     }
     if (name === 'purge' && detail) { setDialog({ name: 'purge', itemId: detail.item.id }); return; }

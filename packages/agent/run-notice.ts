@@ -1,4 +1,4 @@
-import type { AgentJob, AgentKind } from './service';
+import type { AgentJob, AgentJobSummary, AgentKind } from './service';
 
 /**
  * What the backend tells the desktop when a run ends, and the words used to announce it. Shared by the main
@@ -12,8 +12,8 @@ export type RunFinished = { id: string; itemId: string; kind: AgentKind; status:
 export const runKindLabel: Record<AgentKind, string> = { capture: 'Capture', trial: 'Experiment', derive: 'Skill draft', distill: 'Distillation', chat: 'Chat reply', score: 'Score', tune: 'Tune', 'distill-repo': 'Repository distillation' };
 const firstLine = (text: string, max = 120) => { const line = text.trim().split('\n')[0].trim(); return line.length > max ? line.slice(0, max - 1) + '…' : line; };
 
-/** The event for a finished job. `title` looks up an item's current title; a trashed or missing item falls back to the kind. */
-export function runFinished(job: AgentJob, title: (id: string) => string | undefined): RunFinished {
+/** The event for a finished job, from its full record or its `agent.jobs` summary. `title` looks up an item's current title; a trashed or missing item falls back to the kind. */
+export function runFinished(job: AgentJob | AgentJobSummary, title: (id: string) => string | undefined): RunFinished {
   const result = job.result as Record<string, unknown> | undefined;
   return {
     id: job.id, itemId: job.itemId, kind: job.kind, status: job.status, itemTitle: title(job.itemId) ?? runKindLabel[job.kind],

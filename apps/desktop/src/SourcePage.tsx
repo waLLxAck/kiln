@@ -1,7 +1,7 @@
 import { activeRun } from '../../../packages/agent/run-notice';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowRight, ChevronDown, ChevronRight, CircleSlash, Folder, Github, Layers3, Loader2, MessageSquare, Pencil, RotateCcw, ScanSearch, ScrollText, Sparkles, Star, X, ZoomIn } from 'lucide-react';
-import type { AgentJob } from '../../../packages/agent/service';
+import type { AgentJobSummary } from '../../../packages/agent/service';
 import { timestamp, youtubeId } from '../../../packages/agent/video-link';
 import { entryTypeList, selectedEntryTypes } from '../../../packages/agent/distill';
 import { repoSourceOf } from '../../../packages/domain/github-url';
@@ -15,7 +15,7 @@ import { entrySeconds, markerColumns, minuteTicks, readTranscript, skippedRanges
 import './source.css';
 
 export type SourcePageProps = {
-  detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; jobs: AgentJob[];
+  detail: ItemDetail; snapshot: Snapshot; providers: Provider[]; jobs: AgentJobSummary[];
   perform: (action: () => Promise<unknown>, message?: string) => Promise<void>; refresh: () => Promise<void>;
   /** Opens another item (an entry made from this source). */
   onSelect: (id: string) => void;
