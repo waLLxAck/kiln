@@ -54,6 +54,8 @@ export class Router {
   private organiseTimer?: ReturnType<typeof setTimeout>;
   /** Items whose desired installs changed since the last organisation job was queued. */
   private installsChanged = new Set<string>();
+  /** What organising calls touched since the last organisation job was considered (see `noteOrganised`). */
+  private organiseHint: { ids: Set<string>; all?: boolean; distinct?: boolean } = { ids: new Set() };
   readonly home: HomeFiles;
   /** What each harness loads when a session starts on this machine (home/session-start.ts); caches file reads between calls. */
   readonly sessionStart: SessionStartMeter;
@@ -104,21 +106,41 @@ export class Router {
     const watch = organisingMethods.has(method) && this.autoSyncReady();
     const before = watch ? this.wb.installs() : null;
     const result = this.route(method, args);
-    const settled = () => {
+    const settled = (value: unknown) => {
       if (before) {
         const after = this.wb.installs();
         for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) this.installsChanged.add(id);
+        this.noteOrganised(method, args, value);
         this.organiseSoon();
       }
       if (reportTriggers.has(method)) this.fleet.changed();
       if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull') this.fleet.afterPull();
     };
     // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
-    if (result instanceof Promise) return result.then(value => { settled(); return value; });
-    settled();
+    if (result instanceof Promise) return result.then(value => { settled(value); return value; });
+    settled(result);
     return result;
   }
   private autoSyncReady() { return this.wb.repositoryState().ready; }
+  /**
+   * Which items an organising call touched, from its input and result, so deciding whether to publish looks at those alone (see
+   * `Publisher.organise`). Collection changes can rename the collection of any item, so they ask for every published item.
+   */
+  private noteOrganised(method: string, args: unknown, result: unknown) {
+    if (method.startsWith('collections.')) { this.organiseHint.all = true; return; }
+    if (method === 'items.distinct' || method === 'items.consolidate' || method === 'items.unconsolidate') this.organiseHint.distinct = true;
+    const add = (value: unknown) => {
+      if (typeof value === 'string') this.organiseHint.ids.add(value);
+      else if (Array.isArray(value)) value.forEach(add);
+      else if (value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string') this.organiseHint.ids.add((value as { id: string }).id);
+    };
+    for (const source of [args, result]) {
+      if (Array.isArray(source)) { add(source); continue; }
+      if (!source || typeof source !== 'object') continue;
+      const record = source as Record<string, unknown>;
+      for (const key of ['id', 'ids', 'itemId', 'itemIds', 'keep', 'kept', 'merged', 'restored', 'moved', 'items']) add(record[key]);
+    }
+  }
   /** Organisation of published items follows them to GitHub a moment later, so a burst of moves makes one commit. */
   private organiseSoon() {
     clearTimeout(this.organiseTimer);
@@ -128,12 +150,12 @@ export class Router {
   /** Queues the organisation job now instead of after the pause. Returns it, or null when nothing needs publishing. */
   flushOrganisation() {
     clearTimeout(this.organiseTimer); this.organiseTimer = undefined;
-    const installIds = [...this.installsChanged]; this.installsChanged.clear();
-    try { return this.autoSyncReady() ? this.publisher.organise(installIds) : null; }
+    const installIds = [...this.installsChanged], hint = this.organiseHint; this.installsChanged.clear(); this.organiseHint = { ids: new Set() };
+    try { return this.autoSyncReady() ? this.publisher.organise(installIds, hint) : null; }
     catch (error) { this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) }); return null; }
   }
-  private pull() {
-    const result = pullFetched(this.wb);
+  private async pull() {
+    const result = await pullFetched(this.wb);
     if (result.status === 'pulled') this.log('sync.pulled', { count: result.count });
     return result;
   }

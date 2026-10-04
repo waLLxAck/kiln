@@ -8,11 +8,14 @@ import type { Workbench } from '../domain/workbench';
 import { revisionHash } from '../domain/content';
 import { atomicWrite, noLinks, safeRelative, withLock, writeJson } from '../storage/files';
 import { writeWorkingFiles } from '../storage/bundles';
-import { assertMergeable, itemPaths, localPaths } from './sync';
+import { assertMergeable, itemPaths, localPathsSync } from './sync';
+import { run } from './run';
 
+const base = ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0'];
 function git(root: string, args: string[]) {
-  return execFileSync('git', ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0', '-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 5_000_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', [...base, '-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 5_000_000, stdio: ['ignore', 'pipe', 'pipe'] });
 }
+const gitAsync = (root: string, args: string[]) => run('git', [...base, '-C', root, ...args], { maxBuffer: 5_000_000 });
 function unresolved(root: string) { return git(root, ['diff', '--name-only', '--diff-filter=U', '-z']).split('\0').filter(Boolean); }
 function stageItem(wb: Workbench, id: string, stage: number): Item | null {
   try { return itemSchema.parse(JSON.parse(git(wb.root, ['show', `:${stage}:workbench/items/${id}/item.json`]))); } catch { return null; }
@@ -25,14 +28,19 @@ export function conflicts(wb: Workbench) {
   const ids = [...new Set(paths.map(p => p.match(/^workbench\/items\/([a-f0-9-]+)\//)?.[1]).filter((id): id is string => Boolean(id)))];
   return { paths, items: ids.map(id => ({ id, base: stageItem(wb, id, 1), ours: stageItem(wb, id, 2), theirs: stageItem(wb, id, 3), baseText: stageText(wb, id, 1), oursText: stageText(wb, id, 2), theirsText: stageText(wb, id, 3), paths: paths.filter(p => p.startsWith(`workbench/items/${id}/`)) })), otherPaths: paths.filter(p => !/^workbench\/items\/[a-f0-9-]+\//.test(p)) };
 }
-export function mergeFetched(wb: Workbench, ref = '@{upstream}') {
+/**
+ * Starts a merge of what the last fetch brought. The checks run without the library lock and without blocking the thread; the
+ * merge itself, which changes working files, runs under the lock.
+ */
+export async function mergeFetched(wb: Workbench, ref = '@{upstream}') {
   invariant(ref === '@{upstream}' || /^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(ref), 'INVALID_REF', 'Choose a valid Git ref.');
+  let drivers = ''; try { drivers = await gitAsync(wb.root, ['config', '--get-regexp', '^merge\..*\.driver$']); } catch { /* No custom merge drivers configured. */ }
+  invariant(!drivers.trim(), 'CUSTOM_MERGE_DRIVER', 'This repository configures executable merge drivers. Merge it in your normal Git tool, then review the result in Kiln.');
+  await gitAsync(wb.root, ['rev-parse', '--verify', ref]);
+  // Drafts may stay while merging as long as GitHub changed none of the same items.
+  const { settle } = await assertMergeable(wb, ref);
   return withLock(wb.canonical, () => {
-    let drivers = ''; try { drivers = git(wb.root, ['config', '--get-regexp', '^merge\..*\.driver$']); } catch { /* No custom merge drivers configured. */ }
-    invariant(!drivers.trim(), 'CUSTOM_MERGE_DRIVER', 'This repository configures executable merge drivers. Merge it in your normal Git tool, then review the result in Kiln.');
-    git(wb.root, ['rev-parse', '--verify', ref]);
-    // Drafts may stay while merging as long as GitHub changed none of the same items.
-    assertMergeable(wb, ref);
+    settle();
     try { git(wb.root, ['merge', '--no-commit', '--no-ff', '--no-edit', ref]); }
     catch (error) { if (!unresolved(wb.root).length) throw error; }
     return conflicts(wb);
@@ -82,7 +90,7 @@ export function finishMerge(wb: Workbench) {
     // Drafts may be present during the merge: only its own conflict records join the commit, never other local activity, nor a
     // conflict record left behind by an earlier, abandoned merge about some other item.
     const merged = mergedOnBothSides(wb);
-    const own = localPaths(wb.root).filter(file => file.startsWith('workbench/activity/') && (() => { try { const record = JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { kind?: string; itemId?: string | null }; return record.kind === 'conflict_resolved' && Boolean(record.itemId && merged.has(record.itemId)); } catch { return false; } })());
+    const own = localPathsSync(wb.root).filter(file => file.startsWith('workbench/activity/') && (() => { try { const record = JSON.parse(fs.readFileSync(path.join(wb.root, file), 'utf8')) as { kind?: string; itemId?: string | null }; return record.kind === 'conflict_resolved' && Boolean(record.itemId && merged.has(record.itemId)); } catch { return false; } })());
     if (own.length) git(wb.root, ['add', '--', ...own]);
     return git(wb.root, ['commit', '-m', 'Merge library changes; preserve revision history']).trim();
   });

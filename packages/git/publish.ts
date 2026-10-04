@@ -5,12 +5,12 @@ import type { Workbench } from '../domain/workbench';
 import { invariant, WorkbenchError } from '../domain/errors';
 import { now, readJson, readRecords, writeJson } from '../storage/files';
 import { runCodex } from '../agent/codex';
-import { commitSnapshot, committedJson, gitStatus, push } from './service';
+import { commitSnapshot, committedJson, committedJsonSync, gitStatus, push } from './service';
 import { privateAttachment, portableSource, shareableTrial } from '../domain/privacy';
 import { applyInfrastructure, infrastructurePlan, standardStatus } from './standard';
 import type { PublishAction, PublishJob } from '../protocol/schema';
-import { organisationPlan } from './organise';
-import { mergeInProgress } from './sync';
+import { CommittedFiles, hintedFiles, organisationPlan, planFor, type OrganiseHint } from './organise';
+import { mergeInProgress } from './run';
 import { GitQueue } from './queue';
 export type { PublishAction, PublishJob, PublishStatus } from '../protocol/schema';
 export type ComposeInput = { action: PublishAction; title: string; kind: string; summary: string; diff: string; revision: string; model: string; effort: string; folder: string; signal: AbortSignal };
@@ -57,6 +57,11 @@ export class Publisher {
   private active = 0;
   private controllers = new Map<string, AbortController>();
   private readonly folder: string;
+  /** What the last commit has, for deciding without Git whether organising needs a job (organise.ts). */
+  readonly committed = new CommittedFiles();
+  /** Organising changes not yet looked at, collected while the committed files are being read. */
+  private hint = { ids: new Set<string>(), all: false, collections: false, distinct: false };
+  private loading = false;
   /** `queue` is shared with background fetches, pulls and machine reports; each job commits and pushes in its turn there. */
   constructor(private wb: Workbench, private log: (event: string, fields?: Record<string, unknown>) => void = () => {}, private composer: Composer | null = codexComposer, private queue = new GitQueue()) {
     this.folder = path.join(wb.local, 'publish'); fs.mkdirSync(path.join(this.folder, 'jobs'), { recursive: true });
@@ -77,36 +82,74 @@ export class Publisher {
     this.save(job); this.schedule(job); return job;
   }
   /**
-   * Background sync: publishes organisation of items already on GitHub (see organise.ts). The files are worked out again when the job
+   * Background sync: publishes organisation of items already on GitHub (see organise.ts). The files are worked out when the job
    * runs, so while one is still queued every further change joins it and a burst of moves makes one commit.
+   *
+   * Deciding whether a job is needed starts no Git process: only the files `hint` names (the items just moved, starred or
+   * reordered) are compared with the last commit, which is kept in memory. Items never published are skipped without reading
+   * anything. When HEAD moved since the last commit was read, it is read again in the background and the decision follows; this
+   * call then returns null.
    */
-  organise(installIds: string[] = []) {
+  organise(installIds: string[] = [], hint: OrganiseHint = { all: true }) {
     // Items whose install intent changed are remembered on disk until published, so a retry after a restart still carries them.
-    const pending = [...new Set([...this.pendingInstalls(), ...installIds])];
-    if (installIds.length) writeJson(path.join(this.folder, 'organise-installs.json'), pending);
-    const waiting = [...this.jobs.values()].find(j => j.action === 'organise' && j.status === 'queued');
-    if (waiting) return waiting;
-    if (mergeInProgress(this.wb.root) || !Object.keys(organisationPlan(this.wb, pending).files).length) return null;
+    if (installIds.length) writeJson(path.join(this.folder, 'organise-installs.json'), [...new Set([...this.pendingInstalls(), ...installIds])]);
+    for (const id of hint.ids ?? []) this.hint.ids.add(id);
+    this.hint.all ||= Boolean(hint.all); this.hint.collections ||= Boolean(hint.collections); this.hint.distinct ||= Boolean(hint.distinct);
+    if (!this.committed.fresh(this.wb.root)) { this.reload(); return null; }
+    return this.decide();
+  }
+  private waitingOrganisation() { return [...this.jobs.values()].find(j => j.action === 'organise' && j.status === 'queued'); }
+  /** Queues an organisation job when anything hinted (or any pending desired install) differs from the last commit. */
+  private decide(): PublishJob | null {
+    const waiting = this.waitingOrganisation();
+    if (waiting) { this.clearHint(); return waiting; }
+    // A merge in progress keeps the hint: what was organised meanwhile is published once the merge is finished.
+    if (mergeInProgress(this.wb.root)) return null;
+    const plan = planFor(this.wb, hintedFiles(this.wb, this.hint, this.committed), this.committed, this.pendingInstalls());
+    this.clearHint();
+    if (!Object.keys(plan.files).length) return null;
+    return this.queueOrganisation();
+  }
+  private queueOrganisation() {
     const job: PublishJob = { id: randomUUID(), itemId: '', revision: '', title: 'Library organisation', action: 'organise', status: 'queued', message: '', composer: '', commit: '', startedAt: now() };
     this.save(job); this.schedule(job); return job;
+  }
+  private clearHint() { this.hint = { ids: new Set(), all: false, collections: false, distinct: false }; }
+  /** Reads the last commit again, then decides on everything hinted meanwhile. */
+  private reload() {
+    if (this.loading) return;
+    this.loading = true;
+    this.committed.load(this.wb).then(() => {
+      this.loading = false;
+      try { if (this.wb.repositoryState().ready) this.decide(); }
+      catch (error) { this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) }); }
+    }, error => {
+      this.loading = false;
+      // Unreadable for now: let the job work it out from Git itself, as long as something was organised.
+      const asked = this.hint.all || this.hint.collections || this.hint.distinct || this.hint.ids.size > 0 || this.pendingInstalls().length > 0;
+      this.clearHint();
+      this.log('publish.organise.failed', { message: error instanceof Error ? error.message : String(error) });
+      if (asked && !this.waitingOrganisation()) this.queueOrganisation();
+    });
   }
   private pendingInstalls(): string[] {
     try { const value = readJson(path.join(this.folder, 'organise-installs.json')); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []; } catch { return []; }
   }
-  private publishOrganisation(job: PublishJob) {
+  private async publishOrganisation(job: PublishJob) {
     job.status = 'committing'; this.save(job);
     invariant(!mergeInProgress(this.wb.root), 'GIT_CONFLICT', 'Finish the merge from GitHub first, then retry.');
-    const installIds = this.pendingInstalls(), plan = organisationPlan(this.wb, installIds);
+    const installIds = this.pendingInstalls(), plan = await organisationPlan(this.wb, installIds, this.committed);
     job.message = plan.message; job.composer = 'fallback';
     // Changed back before the job ran, and nothing else waits to be pushed: no commit and no network needed.
-    if (!Object.keys(plan.files).length && !gitStatus(this.wb.root).ahead) { job.commit = gitStatus(this.wb.root).commit; job.status = 'done'; return; }
-    try { job.commit = Object.keys(plan.files).length ? commitSnapshot(this.wb.root, this.wb.canonical, plan.files, [], plan.message).commit : gitStatus(this.wb.root).commit; }
-    catch (error) { if (!(error instanceof WorkbenchError && error.code === 'NOTHING_TO_COMMIT')) throw error; job.commit = gitStatus(this.wb.root).commit; }
+    if (!Object.keys(plan.files).length) { const state = await gitStatus(this.wb.root); if (!state.ahead) { job.commit = state.commit; job.status = 'done'; return; } }
+    try { job.commit = Object.keys(plan.files).length ? (await commitSnapshot(this.wb.root, this.wb.canonical, plan.files, [], plan.message)).commit : (await gitStatus(this.wb.root)).commit; }
+    catch (error) { if (!(error instanceof WorkbenchError && error.code === 'NOTHING_TO_COMMIT')) throw error; job.commit = (await gitStatus(this.wb.root)).commit; }
     const later = this.pendingInstalls().filter(id => !installIds.includes(id));
     writeJson(path.join(this.folder, 'organise-installs.json'), later);
-    this.wb.invalidateGit();
+    await this.committed.load(this.wb).catch(() => {});
+    await this.wb.refreshGit();
     job.status = 'pushing'; this.save(job);
-    push(this.wb.root); this.wb.invalidateGit();
+    await push(this.wb.root); await this.wb.refreshGit();
     job.status = 'done';
     // Pushing sends every commit, so earlier organisation jobs that failed have now reached GitHub too.
     for (const old of this.jobs.values()) if (old.action === 'organise' && old.status === 'failed' && old.id !== job.id) { old.status = 'done'; old.error = undefined; this.save(old); }
@@ -156,7 +199,7 @@ export class Publisher {
     for (const approval of approvals) json(`${relative}/approvals/${approval.id}.json`, approval);
     if (job.action === 'unapprove') {
       const name = `${relative}/items/${job.itemId}/item.json`;
-      const published = committedJson(this.wb.root, name) as { revision?: string };
+      const published = committedJsonSync(this.wb.root, name) as { revision?: string };
       if (published.revision === job.revision) json(name, { ...published, status: 'captured' });
     }
     const desired = this.wb.installs()[job.itemId];
@@ -181,33 +224,35 @@ export class Publisher {
       job.status = 'committing'; this.save(job);
       await this.queue.run(() => this.commitAndPush(job));
     } catch (error) {
-      job.status = 'failed'; job.error = error instanceof Error ? error.message : String(error); this.wb.invalidateGit();
+      job.status = 'failed'; job.error = error instanceof Error ? error.message : String(error); await this.wb.refreshGit();
     } finally {
       job.finishedAt = now(); this.controllers.delete(job.id); this.save(job);
       this.log('publish.finished', { jobId: job.id, action: job.action, status: job.status, composer: job.composer, durationMs: Date.now() - started });
     }
   }
   /** The approval's commit and push, run in the job's turn in the Git queue. */
-  private commitAndPush(job: PublishJob) {
+  private async commitAndPush(job: PublishJob) {
     const snapshotFile = path.join(this.folder, 'snapshots', `${job.id}.json`);
     if (!fs.existsSync(snapshotFile)) this.snapshot(job);
     if (job.action === 'approve') invariant(this.wb.approvals().some(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local'), 'APPROVAL_REQUIRED', 'Approval was withdrawn before publishing.');
     const snapshot = readJson(snapshotFile) as { files: Record<string, string>; replace: string[]; install?: { path: string; providers: string[] } };
     // Merge this item's captured intent into the latest published manifest, so queued items cannot erase each other.
     if (snapshot.install) {
-      const installs = committedJson(this.wb.root, snapshot.install.path) as Record<string, unknown>;
+      const installs = await committedJson(this.wb.root, snapshot.install.path) as Record<string, unknown>;
       if (snapshot.install.providers.length) installs[job.itemId] = snapshot.install.providers; else delete installs[job.itemId];
       snapshot.files[snapshot.install.path] = Buffer.from(JSON.stringify(installs, null, 2) + '\n').toString('base64');
     }
-    try { job.commit = commitSnapshot(this.wb.root, this.wb.canonical, snapshot.files, snapshot.replace, job.message).commit; }
+    try { job.commit = (await commitSnapshot(this.wb.root, this.wb.canonical, snapshot.files, snapshot.replace, job.message)).commit; }
     catch (error) {
       // A retry after a successful commit but failed push has nothing new to commit; push what is there.
       if (!(error instanceof WorkbenchError && error.code === 'NOTHING_TO_COMMIT')) throw error;
-      job.commit = gitStatus(this.wb.root).commit;
+      job.commit = (await gitStatus(this.wb.root)).commit;
     }
-    this.wb.invalidateGit();
+    // The item is published now: organising it next is decided against this commit.
+    await this.committed.load(this.wb).catch(() => {});
+    await this.wb.refreshGit();
     job.status = 'pushing'; this.save(job);
-    push(this.wb.root); this.wb.invalidateGit();
+    await push(this.wb.root); await this.wb.refreshGit();
     job.status = 'done';
   }
 }

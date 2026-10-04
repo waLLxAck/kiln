@@ -87,6 +87,9 @@ parentPort!.on('message', request => {
     return;
   }
   // Read-only calls run beside the queue. Usage reads session logs in chunks and yields between them, so it never holds the queue.
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine', 'usage.scan', 'usage.report', 'usage.item', 'usage.prices'].includes(request.args[0])) void run();
+  // So do calls that wait on the network or the Git queue (pulls, merges, the Settings Git buttons, installing what is marked
+  // after its fetch, fetching a GitHub repository to import): the Git queue orders them, and their local changes are made in one
+  // synchronous step once the wait is over, so nothing queued behind them waits for GitHub.
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine', 'usage.scan', 'usage.report', 'usage.item', 'usage.prices', 'git.sync', 'sync.pull', 'git.merge', 'git.finishMerge', 'skills.sync', 'repos.import', 'repos.source'].includes(request.args[0])) void run();
   else queue = queue.then(() => run());
 });

@@ -1,12 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { promisify } from 'node:util';
 import { WorkbenchError, invariant } from '../domain/errors';
 import { repoName, type GitHubRepoLink } from '../domain/github-url';
+import { run } from './run';
 
-const exec = promisify(execFile);
 /** Folder under the library's machine-private root that holds fetched repositories, one folder per commit. */
 export const REPO_CACHE = 'repo-sources';
 /** A checkout larger than this (files, not Git objects) is removed again and refused. */
@@ -28,7 +26,9 @@ export const remoteFor = (link: Pick<GitHubRepoLink, 'owner' | 'repo'>) => { con
 async function git(args: string[], signal?: AbortSignal, timeout = 180_000) {
   const github = !process.env.KILN_GITHUB_REMOTE;
   const config = ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'core.symlinks=false', '-c', 'protocol.ext.allow=never', '-c', 'submodule.recurse=false', ...(github ? ['-c', 'credential.https://github.com.helper=', '-c', 'credential.https://github.com.helper=!gh auth git-credential'] : [])];
-  try { return (await exec('git', [...config, ...args], { windowsHide: true, timeout, signal, maxBuffer: 20_000_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_LFS_SKIP_SMUDGE: '1' } })).stdout.trim(); }
+  // `network` adds the no-prompt environment and configuration and gives up on a stalled transfer (run.ts); a timeout or
+  // cancellation stops the whole process tree, so a surviving git-remote-https cannot keep the import waiting.
+  try { return (await run('git', [...config, ...args], { timeoutMs: timeout, signal, maxBuffer: 20_000_000, network: true, env: { GIT_LFS_SKIP_SMUDGE: '1' } })).trim(); }
   catch (error) {
     if (signal?.aborted) throw new Error('Cancelled');
     const stderr = String((error as { stderr?: string }).stderr ?? (error as Error).message ?? '');
@@ -67,7 +67,7 @@ function prune(base: string, keep: string) {
 /** GitHub's size estimate, when GitHub CLI can tell; unknown sizes are fetched and checked afterwards. */
 async function diskUsageKb(link: GitHubRepoLink) {
   if (process.env.KILN_GITHUB_REMOTE) return 0;
-  try { return Number((await exec('gh', ['api', `repos/${repoName(link)}`, '--jq', '.size'], { windowsHide: true, timeout: 15_000, env: { ...process.env, GH_PROMPT_DISABLED: '1' } })).stdout.trim()) || 0; } catch { return 0; }
+  try { return Number((await run('gh', ['api', `repos/${repoName(link)}`, '--jq', '.size'], { timeoutMs: 15_000, env: { GH_PROMPT_DISABLED: '1' } })).trim()) || 0; } catch { return 0; }
 }
 /**
  * Shallow-fetches one commit of a repository into the machine-private cache (`<local>/repo-sources/<owner>__<repo>/<commit>`) and

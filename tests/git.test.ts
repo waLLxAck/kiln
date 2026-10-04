@@ -24,7 +24,7 @@ test('repository inventory and checkpoints preserve unrelated files, history and
   } finally { const local = wb?.local; wb?.close(); fs.rmSync(root, { recursive: true, force: true }); if (local) fs.rmSync(path.dirname(local), { recursive: true, force: true }); }
 });
 
-test('two offline revisions survive a three-way Git conflict and keep-both resolution', () => {
+test('two offline revisions survive a three-way Git conflict and keep-both resolution', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln merge '));
   const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', windowsHide: true });
   const privateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln merge private '));
@@ -38,7 +38,7 @@ test('two offline revisions survive a three-way Git conflict and keep-both resol
     const incoming = wb.update({ id: item.id, expect: item.revision, summary: 'Other device', value: { ...wb.getRevision(item.id), content: 'Incoming offline edit' } }); checkpoint(root, wb.canonical, 'Incoming');
     wb.close(); git(['checkout', baseBranch]); wb = new Workbench(root, privateRoot);
     const local = wb.update({ id: item.id, expect: item.revision, summary: 'Local device', value: { ...wb.getRevision(item.id), content: 'Local offline edit' } }); checkpoint(root, wb.canonical, 'Local');
-    const merged = mergeFetched(wb, 'other-device'); assert.equal(merged.items.length, 1); assert.equal(merged.items[0].baseText, 'Common ancestor');
+    const merged = await mergeFetched(wb, 'other-device'); assert.equal(merged.items.length, 1); assert.equal(merged.items[0].baseText, 'Common ancestor');
     assert.equal(merged.items[0].oursText, 'Local offline edit'); assert.equal(merged.items[0].theirsText, 'Incoming offline edit');
     resolveItemConflict(wb, { id: item.id, choice: 'both' }); assert.equal(conflicts(wb).paths.length, 0);
     finishMerge(wb); wb.refresh();

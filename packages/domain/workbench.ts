@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { analysisSchema, scoreSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, readRecords, safeRelative, withLock, writeJson } from '../storage/files';
 import { SearchIndex } from '../storage/search';
-import { gitStatus, isDedicated } from '../git/service';
+import { gitStatus, gitStatusSync, isDedicated, isDedicatedAsync, type GitState } from '../git/service';
 import { invariant, WorkbenchError } from './errors';
 import { closeMatches } from './fuzzy';
 import { resolveVariables, revisionHash, skillName, validateContent } from './content';
@@ -42,7 +42,10 @@ export class Workbench {
   readonly local: string;
   readonly index: SearchIndex;
   private dirty = true;
-  private gitCache?: { at: number; value: ReturnType<typeof gitStatus>; dedicated: boolean };
+  private gitCache?: { at: number; value: GitState; dedicated: boolean };
+  /** A background re-read of the Git state, while one runs; `gitGeneration` drops results that an invalidation overtook. */
+  private gitRefresh?: Promise<void>;
+  private gitGeneration = 0;
   private watcher?: fs.FSWatcher;
   private indexedItems: Item[] = [];
   private indexedAllItems: Item[] = [];
@@ -988,7 +991,18 @@ export class Workbench {
     invariant(on.length > 0, 'INVALID_SETTINGS', 'Keep at least one entry type for distillation.');
     return this.saveSettings({ ...this.settings(), distillOff: entryTypes.filter(type => !on.includes(type)) });
   }
-  invalidateGit() { this.gitCache = undefined; }
+  /** Forget the Git state; the next read gets it again before answering. */
+  invalidateGit() { this.gitCache = undefined; this.gitGeneration++; }
+  /**
+   * Reads the Git state again without blocking the thread. Background Git work (commits, pushes, fetches, pulls) awaits this after
+   * moving refs, so the next snapshot is current without starting Git itself.
+   */
+  refreshGit(): Promise<void> {
+    const generation = ++this.gitGeneration;
+    return Promise.all([gitStatus(this.root), isDedicatedAsync(this.root)]).then(([value, dedicated]) => {
+      if (generation === this.gitGeneration) this.gitCache = { at: Date.now(), value, dedicated };
+    }, () => { /* Unreadable for now: the next read tries again. */ });
+  }
   /** A library can publish approvals only when it has the standard layout, is a Git repository, and has a GitHub remote. */
   repositoryState(): RepositoryState {
     const git = this.cachedGitStatus();
@@ -996,8 +1010,13 @@ export class Workbench {
     const dedicated = standard && Boolean(this.gitCache?.dedicated);
     return { standard, dedicated, git: git.attached, remote: Boolean(git.remote), ready: dedicated && git.attached && Boolean(git.remote) };
   }
+  /**
+   * The Git state as last read. Only the first read (and the first after `invalidateGit`) waits for Git; after that a state older
+   * than ten seconds is returned at once and read again in the background.
+   */
   private cachedGitStatus() {
-    if (!this.gitCache || Date.now() - this.gitCache.at > 10000) this.gitCache = { at: Date.now(), value: gitStatus(this.root), dedicated: isDedicated(this.root) };
+    if (!this.gitCache) this.gitCache = { at: Date.now(), value: gitStatusSync(this.root), dedicated: isDedicated(this.root) };
+    else if (Date.now() - this.gitCache.at > 10000 && !this.gitRefresh) this.gitRefresh = this.refreshGit().finally(() => { this.gitRefresh = undefined; });
     return this.gitCache.value;
   }
   snapshot(): Snapshot {

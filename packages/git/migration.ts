@@ -44,7 +44,7 @@ function collectionFor(relative: string) {
 }
 /** SKILL.md files in a source: tracked files when it is a Git repository, otherwise a bounded walk of the folder. */
 function skillFiles(source: string) {
-  try { return execFileSync('git', ['-C', source, 'ls-files', '-z'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(file => /(^|\/)SKILL\.md$/.test(file) && !file.startsWith('workbench/')); }
+  try { return execFileSync('git', ['-C', source, 'ls-files', '-z'], { encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 64_000_000, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(file => /(^|\/)SKILL\.md$/.test(file) && !file.startsWith('workbench/')); }
   catch {
     const found: string[] = [];
     const walk = (folder: string, prefix: string, depth: number) => {
@@ -58,7 +58,7 @@ function skillFiles(source: string) {
     walk(source, '', 0); return found;
   }
 }
-function sourceCommit(source: string) { try { return execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'working-tree'; } }
+function sourceCommit(source: string) { try { return execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true, timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'working-tree'; } }
 /** Entries are keyed by source folder and relative path, so the same skill imported from two places stays two items. Paths inside the library itself keep their historical bare key. */
 const entryKey = (root: string, source: string, relative: string) => path.resolve(source) === path.resolve(root) ? relative : `${path.resolve(source)}::${relative}`;
 /**
