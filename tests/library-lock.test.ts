@@ -80,7 +80,9 @@ test('the library opens while another process holds it; start-up tidy-ups wait f
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-lock-open-'));
   const library = path.join(root, 'library'), local = path.join(root, 'private');
   try {
-    new Workbench(library, local).close();
+    const first = new Workbench(library, local); first.create({ title: 'Existing', kind: 'prompt', content: 'Text' }); const machine = first.local; first.close();
+    // Revisions already checked are not looked at again; forget that so the privacy tidy-up has work that needs the lock.
+    fs.rmSync(path.join(machine, 'revisions-checked.json'), { force: true });
     const lock = path.join(library, 'workbench', '.mutation.lock');
     leave(lock, record({ pid: process.ppid }));
     const wb = new Workbench(library, local);

@@ -8,8 +8,12 @@ import { revisionIdentity } from '../protocol/revision';
 export function revisionHash(value: Authoring & { hashVersion?: number; hash?: string }, version = value.hashVersion ?? (value.hash ? 1 : 2)) {
   return digest(revisionIdentity(value, version));
 }
+/** Bundles `bundleFiles` already accepted. Each is frozen, so it cannot have changed since; verified revisions share theirs. */
+const checkedBundles = new WeakSet<Record<string, string>>();
+/** Freezes an accepted bundle so `validateContent` need not decode every attachment of it again. */
+export function checkedBundle(files: Record<string, string>) { checkedBundles.add(Object.freeze(files)); return files; }
 export function validateContent(value: Authoring): string[] {
-  bundleFiles(value.files);
+  if (!checkedBundles.has(value.files)) bundleFiles(value.files);
   invariant(!Object.keys(value.files).some(p => ['skill.md', 'content.md'].includes(p.toLowerCase())), 'INVALID_PATH', 'The main content file cannot be replaced by an attachment.');
   return [...new Set(contentChecks(value).map(p => p.message))];
 }
