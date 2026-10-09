@@ -24,7 +24,7 @@ import { checkoutAt } from '../git/repo-source';
 import { detectLayout } from '../domain/repo-layout';
 import { bounded } from './process';
 import { jobSummary, type AgentJobSummary } from './job-summary';
-import { attachmentMaterial } from './attachments';
+import { attachmentMaterial, MAX_ATTACHMENT_TEXT } from './attachments';
 export type { AgentJobSummary, AgentResultSummary } from './job-summary';
 const captureResult = z.object({ title: z.string().min(1).max(160), summary: z.string().min(1), extractedText: z.string(), tags: z.array(z.string().min(1).max(60)).max(10), collection: z.enum(['Ideas','Techniques']), nextTest: z.string().min(1), limitations: z.string() });
 const trialResult = z.object({ output: z.string().min(1), judgement: z.enum(['pass','fail','uncertain']), note: z.string().min(1) });
@@ -445,7 +445,7 @@ export class AgentService {
       const cli = this.writeCli(workdir);
       this.writeContext(workdir, item, revision, source, extras);
       const attachments = await attachmentMaterial(revision.files, controller.signal, phase => this.progress(job, phase));
-      const sourceAttachments = source && source.id !== item.id ? await attachmentMaterial(source.revision.files, controller.signal, phase => this.progress(job, phase)) : '';
+      const sourceAttachments = source && source.id !== item.id ? await attachmentMaterial(source.revision.files, controller.signal, phase => this.progress(job, phase), MAX_ATTACHMENT_TEXT - attachments.length) : '';
       const prompt = `${itemChatPrompt({ cli, resumed: Boolean(previous), itemId: item.id, sourceId: source?.id ?? null, transcript: names.includes('transcript.md'), trials: true })}\n\n<source_material>\n${attachments}${sourceAttachments}\n</source_material>\n\n<user_message>\n${question}\n</user_message>`;
       // Found even when the turn fails or is cancelled: edits made before that are still in the library.
       return this.runners[provider]({ folder, workdir, prompt, images: [], model: job.model, effort: job.effort, persist: true, resume: previous?.threadId, writable: [this.wb.root, workdir], timeoutMs: 20 * 60_000, signal: controller.signal, onStatus: phase => this.progress(job, phase), onProcess: (pid, running) => this.observeProcess(job, pid, running), onEvent: event => { this.observe(job, event); this.log('agent.progress', { jobId: job.id, type: event.type }); } })
@@ -464,7 +464,7 @@ export class AgentService {
     void Promise.resolve().then(() => { this.progress(job, 'Resolving model and preparing context'); return this.resolveModel(job, controller.signal); }).then(() => { this.save(job, false); if (controller.signal.aborted) throw new Error('Cancelled'); return launch(); }).then(raw => {
       if (controller.signal.aborted) throw new Error('Cancelled');
       this.progress(job, 'Saving result'); finish(raw); job.status = 'completed'; job.phase = 'Completed';
-    }).catch(error => { job.status = controller.signal.aborted ? 'cancelled' : 'failed'; job.phase = job.status; job.error = error instanceof Error ? error.message : String(error); if (job.trialId) { try { this.wb.finishTrial({ id: job.trialId, judgement: 'uncertain', note: job.error, cancel: true }); } catch { /* Preserve the original run error. */ } } }).then(() => this.close(job));
+    }).catch(error => { job.status = controller.signal.aborted ? 'cancelled' : 'failed'; job.phase = job.status; if (error instanceof Error && error.cause !== undefined) this.log('agent.failure.cause', { jobId: job.id, cause: String(error.cause) }); job.error = error instanceof Error ? error.message : String(error); if (job.trialId) { try { this.wb.finishTrial({ id: job.trialId, judgement: 'uncertain', note: job.error, cancel: true }); } catch { /* Preserve the original run error. */ } } }).then(() => this.close(job));
     this.log('agent.started', { jobId: job.id, kind: job.kind, provider: job.provider });
   }
   /**

@@ -37,8 +37,31 @@ test('PDF and text attachments are available without file tools, in page order',
 });
 
 test('unreadable and scanned PDFs fail with recovery steps', async () => {
-  await assert.rejects(attachmentMaterial({ 'broken.pdf': Buffer.from('not a PDF').toString('base64') }, signal()), /Could not read PDF.*unlocked PDF/);
+  await assert.rejects(attachmentMaterial({ 'broken.pdf': Buffer.from('not a PDF').toString('base64') }, signal()), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /Could not read PDF.*unlocked PDF/);
+    assert.ok(error.cause, 'retain the PDF parser failure for diagnostics');
+    return true;
+  });
   await assert.rejects(attachmentMaterial({ 'scan.pdf': pdfFile(['']) }, signal()), /no selectable text.*OCR/);
+});
+
+test('chat applies one attachment text limit to the entry and its source', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-pdf-chat-limit-'));
+  const wb = new Workbench(path.join(root, 'library'), path.join(root, 'private'));
+  try {
+    const files = { 'notes.txt': Buffer.from('x'.repeat(290_000)).toString('base64') };
+    const source = wb.create({ title: 'Large source', kind: 'source', content: 'Read the attachment', files });
+    const entry = wb.createFrom({ id: source.id, revision: source.revision, item: { title: 'Large entry', kind: 'prompt', content: 'Apply the source', files } });
+    let called = false;
+    const chat = new AgentService(wb, () => {}, async () => { called = true; return 'Must not run'; }, async () => []);
+    const job = chat.chat({ itemId: entry.id, message: 'Apply everything' });
+    for (let i = 0; i < 500 && chat.running; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(chat.running, 0);
+    assert.equal(called, false);
+    assert.equal(chat.job({ id: job.id }).status, 'failed');
+    assert.match(chat.job({ id: job.id }).error!, /Split them into smaller documents/);
+  } finally { wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('large attachments fail instead of silently truncating; cancelled extraction stops', async () => {

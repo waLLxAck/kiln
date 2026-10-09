@@ -1,15 +1,16 @@
 import { getDocumentProxy } from 'unpdf';
 
-const MAX_PAGES = 1000, MAX_TEXT = 500_000;
+const MAX_PAGES = 1000;
+export const MAX_ATTACHMENT_TEXT = 500_000;
 const TEXT_FILE = /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|toml|xml|html?|log)$/i;
 
 /** Prepare readable attachments inside Kiln, without relying on the agent's file tools or external PDF utilities. */
-export async function attachmentMaterial(files: Record<string, string>, signal: AbortSignal, onStatus: (phase: string) => void = () => {}) {
+export async function attachmentMaterial(files: Record<string, string>, signal: AbortSignal, onStatus: (phase: string) => void = () => {}, remainingCharacters = MAX_ATTACHMENT_TEXT) {
   const sections: string[] = [];
   let length = 0;
   const append = (text: string) => {
     length += text.length;
-    if (length > MAX_TEXT) throw new Error('Attached documents contain too much text for one analysis. Split them into smaller documents and analyze them separately.');
+    if (length > remainingCharacters) throw new Error('Attached documents contain too much text for one analysis. Split them into smaller documents and analyze them separately.');
     sections.push(text);
   };
   for (const [name, encoded] of Object.entries(files)) {
@@ -18,8 +19,9 @@ export async function attachmentMaterial(files: Record<string, string>, signal: 
     const bytes = Buffer.from(encoded, 'base64');
     if (/\.pdf$/i.test(name)) {
       onStatus(`Reading PDF: ${name}`);
-      const pdf = await getDocumentProxy(new Uint8Array(bytes), { disableFontFace: true, maxImageSize: 16_000_000 }).catch(() => {
-        throw new Error(`Could not read PDF ${JSON.stringify(name)}. Check that it opens correctly and export an unlocked PDF with selectable text, then retry.`);
+      signal.throwIfAborted();
+      const pdf = await getDocumentProxy(new Uint8Array(bytes), { disableFontFace: true, maxImageSize: 16_000_000 }).catch(cause => {
+        throw new Error(`Could not read PDF ${JSON.stringify(name)}. Check that it opens correctly and export an unlocked PDF with selectable text, then retry.`, { cause });
       });
       try {
         if (pdf.numPages > MAX_PAGES) throw new Error(`PDF ${JSON.stringify(name)} has more than ${MAX_PAGES} pages. Split it into smaller documents and retry.`);
