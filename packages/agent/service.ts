@@ -272,7 +272,7 @@ export class AgentService {
   /** Fetches captions and metadata with yt-dlp, then saves them on the link item as a new revision so the transcript stays with the video. */
   private async prepareVideo(job: AgentJob, folder: string, signal: AbortSignal): Promise<VideoTranscript> {
     const revision = this.wb.getRevision(job.itemId);
-    const video = await bounded(signal, VIDEO_TIMEOUT_MS, `Fetching the video's captions took longer than ${VIDEO_TIMEOUT_MS / 60_000} minutes. Retry this run.`, step => this.transcripts({ url: revision.content.trim().split('\n')[0], folder, signal: step, onPhase: phase => { job.phase = phase; job.lastActivityAt = now(); this.save(job, false); } }));
+    const video = await bounded(signal, VIDEO_TIMEOUT_MS, `Fetching the video's captions took longer than ${VIDEO_TIMEOUT_MS / 60_000} minutes. Retry this run.`, step => this.transcripts({ url: revision.content.trim().split('\n')[0], folder, auth: this.wb.settings(), signal: step, onPhase: phase => { job.phase = phase; job.lastActivityAt = now(); this.save(job, false); } }));
     if (signal.aborted) throw new Error('Cancelled');
     job.phase = 'Transcript saved; asking the agent to distill it';
     const files = { ...revision.files, 'transcript.md': Buffer.from(transcriptMarkdown(video)).toString('base64') };

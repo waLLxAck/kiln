@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { capture } from './process';
+import { youtubeAuthSchema, type YouTubeAuth } from '../protocol/schema';
 
 /** Everything Kiln keeps from a video before asking an agent to distill it. */
 export type VideoTranscript = { id: string; url: string; title: string; channel: string; durationSeconds: number; uploadDate: string; description: string; chapters: { title: string; start: number }[]; transcript: string; language: string };
-export type TranscriptInput = { url: string; folder: string; signal: AbortSignal; onPhase: (phase: string) => void };
+export type TranscriptInput = { url: string; folder: string; signal: AbortSignal; onPhase: (phase: string) => void; auth?: Partial<YouTubeAuth> };
 export type TranscriptFetcher = (input: TranscriptInput) => Promise<VideoTranscript>;
 
 import { timestamp, youtubeId } from './video-link';
@@ -38,16 +39,32 @@ async function run(executable: string, args: string[], cwd: string, signal: Abor
   if (result.timedOut) throw new Error(`yt-dlp did not finish within ${Math.round(timeoutMs / 60000)} minutes.`);
   return { code: result.code, output: result.output };
 }
-/** Fetches captions and metadata with yt-dlp, the same way the shell `yt` helper does (auto-subs, English first, cookies.txt in the home folder when present). Nothing but subtitles and the info JSON is downloaded. */
-export const fetchTranscript: TranscriptFetcher = async ({ url, folder, signal, onPhase }) => {
+/** An explicitly chosen browser takes precedence over the legacy home cookie file. No browser is read by default. */
+export function youtubeCookieArgs(auth: Partial<YouTubeAuth> = {}, home = os.homedir()): string[] {
+  const { youtubeBrowser, youtubeBrowserProfile } = youtubeAuthSchema.parse(auth);
+  if (youtubeBrowser) return ['--cookies-from-browser', `${youtubeBrowser}${youtubeBrowserProfile ? `:${youtubeBrowserProfile}` : ''}`];
+  const cookies = path.join(home, 'cookies.txt');
+  return fs.existsSync(cookies) ? ['--cookies', cookies] : [];
+}
+/** Authentication failures should say how to recover inside Kiln, instead of exposing yt-dlp's command-line help. */
+export function youtubeDownloadError(code: number | null, output: string, browser = ''): Error {
+  if (/sign in to confirm.*not a bot/i.test(output)) return new Error(
+    'YouTube requires verification before Kiln can fetch this video’s captions. ' +
+    (browser ? `Open the video in ${browser}, sign in and complete any verification, then retry. Check Settings → YouTube for the correct browser and profile. ` : 'Open the video in your browser, sign in and complete any verification. In Settings → YouTube, choose that browser, save, then retry. ') +
+    'If browser cookies cannot be read, export YouTube cookies to cookies.txt in your home folder and select “No browser” in Settings. See https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies.'
+  );
+  return new Error(`yt-dlp exited (${code}). ${output.slice(-1200).trim()}`);
+}
+/** Fetches English captions and metadata with yt-dlp, using the chosen browser or ~/cookies.txt when present. Nothing but subtitles and the info JSON is downloaded. */
+export const fetchTranscript: TranscriptFetcher = async ({ url, folder, signal, onPhase, auth }) => {
   const id = youtubeId(url); if (!id) throw new Error('Not a YouTube link.');
   const out = path.join(folder, 'video'); fs.mkdirSync(out, { recursive: true });
   onPhase('Fetching transcript with yt-dlp');
   const args = ['--write-auto-subs', '--write-subs', '--write-info-json', '--skip-download', '--sub-langs', 'en-orig,en,en-US,en-GB', '--sub-format', 'vtt', '--js-runtimes', 'node', '--remote-components', 'ejs:github', '--quiet', '--no-warnings', '-o', '%(id)s.%(ext)s'];
-  const cookies = path.join(os.homedir(), 'cookies.txt'); if (fs.existsSync(cookies)) args.push('--cookies', cookies);
+  args.push(...youtubeCookieArgs(auth));
   args.push(`https://www.youtube.com/watch?v=${id}`);
   const result = await run('yt-dlp', args, out, signal, 180_000);
-  if (result.code !== 0) throw new Error(`yt-dlp exited (${result.code}). ${result.output.slice(-1200).trim()}`);
+  if (result.code !== 0) throw youtubeDownloadError(result.code, result.output, auth?.youtubeBrowser);
   const files = fs.readdirSync(out);
   const vtt = ['.en-orig.vtt', '.en.vtt', '.en-US.vtt', '.en-GB.vtt'].map(suffix => files.find(f => f.endsWith(suffix))).find(Boolean) ?? files.find(f => f.endsWith('.vtt'));
   if (!vtt) throw new Error('No English captions are available for this video, so there is nothing to distill.');

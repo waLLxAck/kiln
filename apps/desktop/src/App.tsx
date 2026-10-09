@@ -63,6 +63,7 @@ import type { AgentJobSummary } from '../../../packages/agent/service';
 import type { CodexModel } from '../../../packages/agent/codex';
 import { selectedEntryTypes } from '../../../packages/agent/distill';
 import type { InstructionAppend } from './AddToInstructions';
+import { YouTubeSettings } from './YouTubeSettings';
 import { DistillTypesSettings } from './DistillTypes';
 
 type Dialog = { name: string; workspace?: string; trial?: Trial; itemId?: string; itemIds?: string[]; provider?: ProviderId; targetId?: string; collection?: string; location?: ProjectLocation; /** A GitHub repository link for `repo-scan`. */ url?: string } | null;
@@ -653,6 +654,7 @@ export default function App() {
               <Field label="CLI commit messages" hint="Used for generated notes when running Kiln’s CLI directly. Desktop saves, approvals and installs use plain notes without invoking a model."><select aria-label="Commit message model" value={snapshot.settings.commitModel} disabled={!models?.length} onChange={e => save({ commitModel: e.target.value, commitEffort: '' })}>{snapshot.settings.commitModel && !commitChosen && <option value={snapshot.settings.commitModel}>{snapshot.settings.commitModel}</option>}{models?.map(m => <option key={m.slug} value={m.slug}>{m.name}</option>)}</select></Field>
               <Field label="Commit message effort"><select aria-label="Commit message effort" value={snapshot.settings.commitEffort} disabled={!commitChosen} onChange={e => save({ commitEffort: e.target.value })}><option value="">Model default{commitChosen?.defaultEffort ? ` (${commitChosen.defaultEffort})` : ''}</option>{commitChosen?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></Field>
             </form>; })()}</section>
+          <YouTubeSettings settings={snapshot.settings} perform={perform} refresh={refresh} />
           <DistillTypesSettings settings={snapshot.settings} perform={perform} refresh={refresh} />
           <section className="settings-card"><h3>Performance logs</h3><p>Local logs record operation timings, slow requests, window freezes, crashes, CPU and memory. Logs rotate automatically at 5 MB; one previous file is kept. No skill content or request inputs are recorded.</p><button className="button" onClick={() => void perform(() => api('desktop.openLogs'))}>Open performance logs</button></section>
           <UpdatesPanel update={update} working={updating} onPrepare={() => updateAction(false)} onRestart={() => updateAction(true)} onCheck={() => void perform(async () => { await checkUpdate(true); }, 'Checked for updates')} onSource={value => void perform(async () => setUpdate(await api('desktop.updateSource', value)))} />

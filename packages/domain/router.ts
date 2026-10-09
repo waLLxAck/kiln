@@ -175,6 +175,7 @@ export class Router {
       case 'snapshot': { const snapshot = this.wb.snapshot(); return { ...snapshot, publish: this.publisher.list(), stamps: { installations: this.deployments.installationsStamp(snapshot) } }; }
       case 'publish.jobs': return this.publisher.list();
       case 'publish.retry': return this.publisher.retry(z.object({ id: idSchema }).parse(args).id);
+      case 'settings.youtube': return this.wb.saveYouTubeAuth(args);
       case 'settings.distill': return this.wb.saveDistillTypes(args);
       case 'home.list': return this.home.list();
       case 'home.read': return this.home.read(z.object({ key: z.string() }).parse(args).key);

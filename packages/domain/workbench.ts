@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { analysisSchema, scoreSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
+import { youtubeAuthSchema, analysisSchema, scoreSchema, approvalSchema, authoringSchema, distinctSchema, hashSchema, idSchema, itemSchema, observationSchema, revisionSchema, statusSchema, targetSchema, trialSchema, type Activity, type Analysis, type Authoring, type DuplicateGroup, type Installs, type Item, type ItemDetail, type Observation, type ProviderId, type RepositoryState, type Revision, type Score, type ScoreSummary, type Settings, type SkillListing, type Snapshot, type Usage } from '../protocol/schema';
 import { atomicWrite, bundleFiles, digest, noLinks, now, readJson, safeRelative, withLock, writeJson } from '../storage/files';
 import { RecordFolder } from '../storage/records';
 import { SearchIndex } from '../storage/search';
@@ -1138,7 +1138,7 @@ export class Workbench {
   }
   settings(): Settings {
     const file = path.join(this.local, 'settings.json');
-    const stored = z.object({ shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.string()).catch([]).default([]) }).parse(fs.existsSync(file) ? readJson(file) : {});
+    const stored = z.object({ ...youtubeAuthSchema.shape, shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.string()).catch([]).default([]) }).parse(fs.existsSync(file) ? readJson(file) : {});
     // Unknown types (from a newer or older build) are ignored; turning every type off is read as the default, all on.
     const off = entryTypes.filter(type => stored.distillOff.includes(type));
     stored.distillOff = off.length < entryTypes.length ? off : [];
@@ -1297,8 +1297,12 @@ export class Workbench {
     });
   }
   saveSettings(input: unknown) {
-    const value = z.object({ shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.enum(entryTypes)).default([]).refine(off => new Set(off).size < entryTypes.length, 'Keep at least one entry type for distillation.') }).parse(input);
+    const value = z.object({ ...youtubeAuthSchema.shape, shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.enum(entryTypes)).default([]).refine(off => new Set(off).size < entryTypes.length, 'Keep at least one entry type for distillation.') }).parse(input);
     writeJson(path.join(this.local, 'settings.json'), value); return this.settings();
+  }
+  /** Browser choice and profile stay in machine-private settings; cookies are read by yt-dlp only. */
+  saveYouTubeAuth(input: unknown) {
+    return this.saveSettings({ ...this.settings(), ...youtubeAuthSchema.parse(input) });
   }
   /** Which entry types distillation produces, from the Settings checkboxes. Stored as the types turned off; at least one stays on. */
   saveDistillTypes(input: unknown) {
