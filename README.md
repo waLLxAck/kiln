@@ -32,7 +32,7 @@ Screenshots of Kiln on Windows with a made-up library; the agent's replies in th
 - **Approval** pins an exact revision and publishes it to your own Kiln repository on GitHub. Only approved revisions are installed; new edits become drafts.
 - **Config files**: agent instructions, permissions, MCP settings, hooks and shell profiles in one editor, with syntax checks and previous versions.
 - **A CLI** (`kiln`, from a source build) with JSON results, using the same library and approval rules as the desktop app.
-- **New in 0.25.4**: choose the browser you use for YouTube in Settings so video distillation can use its cookies when verification is required. You can select a profile, keep using `~/cookies.txt`, and follow clear recovery steps if YouTube blocks a request.
+- **New in 0.25.4**: PDF and text attachments are passed directly to the agent, with clear errors for PDFs that need OCR or unlocking. Choose the browser you use for YouTube in Settings so video distillation can use its cookies when verification is required. You can select a profile, keep using `~/cookies.txt`, and follow clear recovery steps if YouTube blocks a request.
 - **No API key**: agent runs use your existing, signed-in Codex or Claude Code CLI and its account usage. Editing, approval and installation do not call a model.
 
 The [user guide](docs/GUIDE.md) covers every feature in detail, along with limits and product boundaries.

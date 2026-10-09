@@ -254,6 +254,8 @@ The run's steps and CLI session stay on the machine that ran it. A summary of ea
 
 Material analysed before sources existed is filed as a source the next time the library opens: anything with a distillation note in its history, or a video with its transcript. Approved items are left as they are, because changing the kind creates a new revision; Kiln shows a warning for them instead.
 
+PDFs with selectable text and supported text files are read by Kiln before analysis and included directly in the agent’s input; PDF page numbers are preserved. This also works when asking about the source or an entry derived from it. Original files remain attached. If a PDF is locked, damaged or scanned, analysis fails with steps to unlock, re-export or OCR it. Split documents over 1,000 pages or 500,000 extracted characters into smaller parts. No external PDF utility is required.
+
 ## Distilling a YouTube video
 
 Paste a bare YouTube link into Capture and its main action becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` (auto-captions, English first; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries of the types chosen in Settings: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, only the insights that change what you would do, and rules for your agents' instruction files.

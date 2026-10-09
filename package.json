@@ -67,7 +67,8 @@
       "dist/build-info.json",
       "package.json",
       "assets/kiln.*",
-      "assets/kilnTemplate*.png"
+      "assets/kilnTemplate*.png",
+      "assets/licenses/*"
     ],
     "asar": true,
     "publish": [

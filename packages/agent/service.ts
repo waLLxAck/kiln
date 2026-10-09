@@ -24,6 +24,7 @@ import { checkoutAt } from '../git/repo-source';
 import { detectLayout } from '../domain/repo-layout';
 import { bounded } from './process';
 import { jobSummary, type AgentJobSummary } from './job-summary';
+import { attachmentMaterial } from './attachments';
 export type { AgentJobSummary, AgentResultSummary } from './job-summary';
 const captureResult = z.object({ title: z.string().min(1).max(160), summary: z.string().min(1), extractedText: z.string(), tags: z.array(z.string().min(1).max(60)).max(10), collection: z.enum(['Ideas','Techniques']), nextTest: z.string().min(1), limitations: z.string() });
 const trialResult = z.object({ output: z.string().min(1), judgement: z.enum(['pass','fail','uncertain']), note: z.string().min(1) });
@@ -443,7 +444,9 @@ export class AgentService {
       }
       const cli = this.writeCli(workdir);
       this.writeContext(workdir, item, revision, source, extras);
-      const prompt = `${itemChatPrompt({ cli, resumed: Boolean(previous), itemId: item.id, sourceId: source?.id ?? null, transcript: names.includes('transcript.md'), trials: true })}\n\n<user_message>\n${question}\n</user_message>`;
+      const attachments = await attachmentMaterial(revision.files, controller.signal, phase => this.progress(job, phase));
+      const sourceAttachments = source && source.id !== item.id ? await attachmentMaterial(source.revision.files, controller.signal, phase => this.progress(job, phase)) : '';
+      const prompt = `${itemChatPrompt({ cli, resumed: Boolean(previous), itemId: item.id, sourceId: source?.id ?? null, transcript: names.includes('transcript.md'), trials: true })}\n\n<source_material>\n${attachments}${sourceAttachments}\n</source_material>\n\n<user_message>\n${question}\n</user_message>`;
       // Found even when the turn fails or is cancelled: edits made before that are still in the library.
       return this.runners[provider]({ folder, workdir, prompt, images: [], model: job.model, effort: job.effort, persist: true, resume: previous?.threadId, writable: [this.wb.root, workdir], timeoutMs: 20 * 60_000, signal: controller.signal, onStatus: phase => this.progress(job, phase), onProcess: (pid, running) => this.observeProcess(job, pid, running), onEvent: event => { this.observe(job, event); this.log('agent.progress', { jobId: job.id, type: event.type }); } })
         .finally(() => { try { const changes = this.changesSince(before); if (changes.length) job.changes = changes; } catch (error) { this.log('agent.changes.failed', { jobId: job.id, error: String(error) }); } });
@@ -618,7 +621,7 @@ export class AgentService {
     const controller = new AbortController(); this.controllers.set(job.id, controller);
     const { names, images } = this.writeAttachments(folder, revision);
     const schema = kind === 'distill' ? distillSchema(job.entryTypes) : kind === 'distill-repo' ? repoDistillSchema(job.entryTypes) : z.toJSONSchema(kind === 'trial' ? trialResult : kind === 'score' ? scoreResult : deriveResult);
-    const fullPrompt = (kind === 'distill' ? distillPrompt(job.entryTypes) : kind === 'distill-repo' ? repoDistillPrompt(job.entryTypes) : prompts[kind]) + (workspace ? `\nThe user selected this project as your working directory: ${JSON.stringify(workspace)}. Inspect relevant project files read-only and apply the supplied material to this codebase. Prefer evidence from this project over a synthetic example. Do not edit files, execute project scripts or hooks, install dependencies, or claim tests ran when they did not. If the task requires writes or unavailable tools, report uncertain and explain the limitation.` : '') + (names.length ? `\nRead the attachment manifest at ${JSON.stringify(path.join(folder, 'attachments.md'))}; its attachment paths are relative to ${JSON.stringify(folder)}, not the project. Inspect relevant text/documents read-only; never execute imported scripts. Report any unreadable attachment as a limitation.` : kind === 'score' ? '' : kind === 'distill-repo' ? '' : '\nThere are no attached files. Read the supplied text and retrieve any source links with available read-only web tools.');
+    const fullPrompt = (kind === 'distill' ? distillPrompt(job.entryTypes) : kind === 'distill-repo' ? repoDistillPrompt(job.entryTypes) : prompts[kind]) + (workspace ? `\nThe user selected this project as your working directory: ${JSON.stringify(workspace)}. Inspect relevant project files read-only and apply the supplied material to this codebase. Prefer evidence from this project over a synthetic example. Do not edit files, execute project scripts or hooks, install dependencies, or claim tests ran when they did not. If the task requires writes or unavailable tools, report uncertain and explain the limitation.` : '') + (names.length ? `\nPDF and supported text attachments are included directly in source_material below; read them there without using file tools. Original files are also listed in the attachment manifest at ${JSON.stringify(path.join(folder, 'attachments.md'))}; its attachment paths are relative to ${JSON.stringify(folder)}, not the project. Inspect relevant text/documents read-only; never execute imported scripts. Report any unreadable attachment as a limitation.` : kind === 'score' ? '' : kind === 'distill-repo' ? '' : '\nThere are no attached files. Read the supplied text and retrieve any source links with available read-only web tools.');
     const guidance = kind === 'derive' || kind === 'score' ? `\n\n<kiln_guidance>\n${writingForAgents}\n</kiln_guidance>` : '';
     if (kind === 'derive') atomicWrite(path.join(folder, 'guidance.md'), writingForAgents);
     let video: VideoTranscript | undefined, workdir = workspace;
@@ -626,6 +629,7 @@ export class AgentService {
       let material = kind === 'score' ? `Kind: ${revision.kind}\nTitle: ${revision.title}\n\n${numberedContent(revision.content)}` : `Source: ${revision.source}\n${revision.content}`;
       if (kind === 'distill' && youtubeId(revision.content.trim().split('\n')[0])) { video = await this.prepareVideo(job, folder, controller.signal); material = `${transcriptMarkdown(video)}\n\nCaptured notes:\n${revision.content}`; }
       else if (kind === 'distill-repo') ({ workdir, material } = await this.prepareRepo(job, controller.signal));
+      material += await attachmentMaterial(revision.files, controller.signal, phase => this.progress(job, phase));
       this.save(job, false); if (controller.signal.aborted) throw new Error('Cancelled');
       // A distillation keeps its CLI session so the user can carry on the conversation afterwards; other runs leave nothing behind.
       if (workspace) experimentWorkspace(workspace); // The folder may disappear while model discovery is running.
