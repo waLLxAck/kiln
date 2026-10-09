@@ -130,7 +130,7 @@ Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Ki
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.25.3](releases/0.25.3.md).
+See [what changed in 0.25.4](releases/0.25.4.md).
 
 ## Quick search
 
@@ -254,9 +254,15 @@ The run's steps and CLI session stay on the machine that ran it. A summary of ea
 
 Material analysed before sources existed is filed as a source the next time the library opens: anything with a distillation note in its history, or a video with its transcript. Approved items are left as they are, because changing the kind creates a new revision; Kiln shows a warning for them instead.
 
+PDFs with selectable text and supported text files are read by Kiln before analysis and included directly in the agent’s input; PDF page numbers are preserved. This also works when asking about the source or an entry derived from it. Original files remain attached. If a PDF is locked, damaged or scanned, analysis fails with steps to unlock, re-export or OCR it. Split documents over 1,000 pages or 500,000 extracted characters into smaller parts. No external PDF utility is required.
+
 ## Distilling a YouTube video
 
-Paste a bare YouTube link into Capture and its main action becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` the same way the shell `yt` helper does (auto-captions, English first, `~/cookies.txt` when present; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries of the types chosen in Settings: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, only the insights that change what you would do, and rules for your agents' instruction files.
+Paste a bare YouTube link into Capture and its main action becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` (auto-captions, English first; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries of the types chosen in Settings: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, only the insights that change what you would do, and rules for your agents' instruction files.
+
+**YouTube verification.** If YouTube says “Sign in to confirm you’re not a bot”, open the video in your browser, sign in and complete any verification. Go to **Settings → YouTube**, choose that browser and click **Save YouTube settings**, then retry the failed distillation. If you use multiple profiles, enter the profile name or folder path. The browser choice stays in machine-private settings; `yt-dlp` reads the cookies locally when fetching captions. Kiln does not choose a browser automatically.
+
+The selected browser takes precedence over `~/cookies.txt`. With **No browser** selected, Kiln still uses that file if present, and otherwise leaves authentication to your `yt-dlp` configuration. If your browser’s cookies cannot be read, follow [yt-dlp’s YouTube cookie export instructions](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies), save the exported file as `cookies.txt` in your home folder and choose **No browser**. Cookies can expire; if verification returns, complete it in the selected browser or export fresh cookies.
 
 Each entry becomes its own item in a collection named from the video title (Unicode and whitespace normalized; a video ID suffix distinguishes collisions), linked back to the video with a timestamped URL and a one-line description (listed under it on the source page, and the row's tooltip in the library). Prompts are stored bare so Copy yields only the prompt. The video's source page shows the summary and takeaway, a timeline of the video with each entry at the minute it came from and the skipped parts shaded, the entries grouped by minute to keep or archive, and the transcript with links to each minute (see [Sources](#sources)). `yt-dlp` must be on PATH.
 

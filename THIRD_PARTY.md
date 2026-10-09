@@ -11,3 +11,5 @@ Kiln bundles the `writing-for-agents` skill (SKILL.md and SKILL-MECHANICS.md, fr
 Imported skill content retains its original source and licence metadata. The migration records the nearest upstream licence as item metadata; it does not copy licence text into skill folders. An unknown licence remains marked unknown; import does not relicense a skill or authorize its public redistribution. Public GitHub publishing is an explicit user action.
 
 The marketing site bundles Caveat, Familjen Grotesk, Instrument Sans and JetBrains Mono from the [Google Fonts repository](https://github.com/google/fonts/tree/main/ofl). These fonts use the SIL Open Font License 1.1. Their copyright notices are listed in `apps/marketing/src/fonts/README.md`, and each font file carries its copyright notice and licence URL in its name table.
+
+PDF text extraction bundles [unpdf](https://github.com/unjs/unpdf) (MIT) and its embedded [PDF.js](https://github.com/mozilla/pdf.js) (Apache-2.0). Their notices ship in `assets/licenses/LICENSE-unpdf` and `assets/licenses/LICENSE-pdfjs`.

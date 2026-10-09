@@ -4,12 +4,90 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AgentService } from '../packages/agent/service';
-import { cleanVtt, timestamp, transcriptMarkdown, youtubeId, type VideoTranscript } from '../packages/agent/youtube';
+import { cleanVtt, fetchTranscript, timestamp, transcriptMarkdown, youtubeCookieArgs, youtubeDownloadError, youtubeId, type VideoTranscript } from '../packages/agent/youtube';
 import { Workbench } from '../packages/domain/workbench';
+import { Router } from '../packages/domain/router';
 
 const fixture = () => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-test-')); return new Workbench(path.join(root, 'library'), path.join(root, 'private')); };
 const wait = async (service: AgentService) => { for (let i = 0; i < 300 && service.running; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(service.running, 0); };
 const video: VideoTranscript = { id: 'Q7n0PGbMW_U', url: 'https://www.youtube.com/watch?v=Q7n0PGbMW_U', title: 'Anthropic Is "Increasing" Your Limits', channel: 'Theo', durationSeconds: 920, uploadDate: '20260831', description: 'Limits went up 25%.', chapters: [{ title: 'Intro', start: 0 }, { title: 'The maths', start: 245 }], transcript: 'Starting September 14th, we are raising limits.\nHere is the maths.', language: 'en-orig' };
+
+test('YouTube cookie arguments require an explicit browser choice and prefer it over the home cookie file', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-cookies-'));
+  try {
+    assert.deepEqual(youtubeCookieArgs({}, home), []);
+    fs.writeFileSync(path.join(home, 'cookies.txt'), '# Netscape HTTP Cookie File\n');
+    assert.deepEqual(youtubeCookieArgs({}, home), ['--cookies', path.join(home, 'cookies.txt')]);
+    assert.deepEqual(youtubeCookieArgs({ youtubeBrowser: 'chrome' }, home), ['--cookies-from-browser', 'chrome']);
+    assert.deepEqual(youtubeCookieArgs({ youtubeBrowser: 'firefox', youtubeBrowserProfile: ' Personal Profile ' }, home), ['--cookies-from-browser', 'firefox:Personal Profile']);
+    assert.deepEqual(youtubeCookieArgs({ youtubeBrowser: '', youtubeBrowserProfile: 'old profile' }, home), ['--cookies', path.join(home, 'cookies.txt')]);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('YouTube bot checks explain recovery in Kiln, while unrelated downloader errors retain their details', () => {
+  for (const apostrophe of ['’', "'", '�']) {
+    const output = `ERROR: [youtube] Kl-I7sUcAOY: Sign in to confirm you${apostrophe}re not a bot. Use --cookies-from-browser or --cookies for the authentication.`;
+    const message = youtubeDownloadError(1, output).message;
+    assert.match(message, /Settings → YouTube/); assert.match(message, /save, then retry/); assert.match(message, /cookies.txt in your home folder/);
+    assert.doesNotMatch(message, /yt-dlp exited/);
+    assert.match(youtubeDownloadError(1, output, 'firefox').message, /Open the video in firefox/);
+  }
+  assert.equal(youtubeDownloadError(1, 'ERROR: Video unavailable').message, 'yt-dlp exited (1). ERROR: Video unavailable');
+});
+
+test('the transcript downloader passes browser cookies to yt-dlp and translates its bot-check failure', { skip: process.platform === 'win32' }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-downloader-'));
+  const previousPath = process.env.PATH;
+  try {
+    const executable = path.join(root, 'yt-dlp');
+    fs.writeFileSync(executable, `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.writeFileSync('args.json', JSON.stringify(process.argv.slice(2)));
+if (process.argv.includes('firefox:blocked')) {
+  console.error('ERROR: [youtube] Kl-I7sUcAOY: Sign in to confirm you’re not a bot.');
+  process.exit(1);
+}
+fs.writeFileSync('Kl-I7sUcAOY.en.vtt', 'WEBVTT\\n\\n00:00:00.000 --> 00:00:02.000\\nHello from captions\\n');
+fs.writeFileSync('Kl-I7sUcAOY.info.json', JSON.stringify({ title: 'Test video', channel: 'Test channel' }));
+`);
+    fs.chmodSync(executable, 0o755);
+    process.env.PATH = `${root}${path.delimiter}${previousPath ?? ''}`;
+    t.mock.method(os, 'homedir', () => root);
+    const input = { url: 'https://youtu.be/Kl-I7sUcAOY', folder: root, signal: new AbortController().signal, onPhase: () => {}, auth: { youtubeBrowser: 'firefox' as const, youtubeBrowserProfile: 'Personal Profile' } };
+    const fetched = await fetchTranscript(input);
+    assert.equal(fetched.title, 'Test video'); assert.match(fetched.transcript, /Hello from captions/);
+    const args: string[] = JSON.parse(fs.readFileSync(path.join(root, 'video', 'args.json'), 'utf8'));
+    assert.equal(args[args.indexOf('--cookies-from-browser') + 1], 'firefox:Personal Profile');
+    assert.ok(!args.includes('--cookies')); assert.ok(args.includes('--skip-download'));
+    await assert.rejects(fetchTranscript({ ...input, auth: { youtubeBrowser: 'firefox', youtubeBrowserProfile: 'blocked' } }), /Settings → YouTube/);
+  } finally { process.env.PATH = previousPath; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('YouTube authentication persists privately, preserves other settings and reaches video distillation', async () => {
+  const wb = fixture();
+  try {
+    assert.equal(wb.settings().youtubeBrowser, '');
+    const file = path.join(wb.local, 'settings.json');
+    fs.writeFileSync(file, JSON.stringify({ theme: 'dark', distillOff: ['tool'] }));
+    const router = new Router(wb, { composer: null });
+    router.call('settings.youtube', { youtubeBrowser: 'firefox', youtubeBrowserProfile: 'Kiln YouTube test profile' });
+    assert.equal(wb.settings().theme, 'dark'); assert.deepEqual(wb.settings().distillOff, ['tool']);
+    assert.equal(wb.settings().youtubeBrowser, 'firefox'); assert.equal(wb.settings().youtubeBrowserProfile, 'Kiln YouTube test profile');
+    assert.throws(() => router.call('settings.youtube', { youtubeBrowser: 'unknown' }));
+    assert.equal(wb.settings().youtubeBrowser, 'firefox', 'invalid settings leave the previous selection intact');
+    wb.saveDistillTypes({ types: ['insight'] });
+    assert.equal(wb.settings().youtubeBrowser, 'firefox', 'saving other settings preserves the browser');
+    let auth: unknown;
+    const service = new AgentService(wb, () => {}, async () => ({}), async () => [], async input => { auth = input.auth; throw new Error('Test stops after checking authentication'); });
+    service.capture({ text: video.url, files: {} }); await wait(service);
+    assert.deepEqual(auth, wb.settings());
+    assert.equal(service.list()[0].status, 'failed');
+    const exported = path.join(wb.local, 'export.json'); wb.exportLibrary(exported);
+    assert.equal(fs.readFileSync(exported, 'utf8').includes('Kiln YouTube test profile'), false, 'browser profile is not included in the portable library');
+    router.call('settings.youtube', { youtubeBrowser: '' });
+    assert.equal(wb.settings().youtubeBrowser, ''); assert.equal(wb.settings().youtubeBrowserProfile, '');
+  } finally { wb.close(); }
+});
 
 test('youtubeId recognises the link shapes people paste and rejects everything else', () => {
   for (const url of ['https://www.youtube.com/watch?v=Q7n0PGbMW_U', 'https://youtu.be/Q7n0PGbMW_U?si=abc', 'youtube.com/shorts/Q7n0PGbMW_U', 'https://m.youtube.com/watch?feature=share&v=Q7n0PGbMW_U', ' https://www.youtube.com/live/Q7n0PGbMW_U ']) assert.equal(youtubeId(url), 'Q7n0PGbMW_U', url);
