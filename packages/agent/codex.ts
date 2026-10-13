@@ -72,10 +72,12 @@ export function codexArguments(input: RunInput, files: { schema: string; result:
   const args = input.resume ? ['exec', 'resume', input.resume, '--all'] : ['exec', '-C', input.workdir ?? input.folder, '--color', 'never'];
   args.push('--ignore-user-config', '--skip-git-repo-check', '--json', '--output-last-message', files.result, '-c', 'approval_policy="never"', '-c', 'web_search="live"');
   if (!input.persist) args.push('--ephemeral');
-  // Codex has no Windows sandbox: workspace-write there rejects every command once approvals are off, so a run that must write goes unsandboxed.
+  // On Windows a run that must write goes unsandboxed: without a Windows sandbox, workspace-write rejects every command once approvals are off.
   const writable = input.writable?.length ? input.writable : input.workspaceWrite ? [input.workdir ?? input.folder] : [];
   if (writable.length) args.push('-c', process.platform === 'win32' ? 'sandbox_mode="danger-full-access"' : 'sandbox_mode="workspace-write"', '-c', `sandbox_workspace_write.writable_roots=${tomlPaths(writable)}`);
   else args.push('-c', 'sandbox_mode="read-only"');
+  // Without a Windows sandbox, read-only rejects every shell command, so the agent cannot even read files. The restricted-token sandbox lets reads through and still blocks writes.
+  if (!writable.length && process.platform === 'win32') args.push('-c', 'windows.sandbox="unelevated"');
   if (input.schema) args.push('--output-schema', files.schema);
   if (input.model) args.push('-m', input.model);
   if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`);

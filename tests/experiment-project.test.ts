@@ -29,6 +29,7 @@ for (const provider of ['codex', 'claude'] as const) test(`${provider}: project 
       inputs.push(input);
       assert.equal(fs.readFileSync(path.join(input.workdir!, 'entry.ts'), 'utf8'), 'export const answer = 42;');
       assert.equal(input.writable, undefined);
+      assert.equal(input.persist, true, 'Codex subagents need the parent session saved');
       assert.equal(fs.readFileSync(path.join(input.folder, 'attachments', 'notes.md'), 'utf8'), 'Review notes');
       assert.match(input.prompt, /Prefer evidence from this project/);
       assert.ok(input.prompt.includes(JSON.stringify(path.join(input.folder, 'attachments.md'))));
@@ -102,6 +103,7 @@ test('project CLI arguments select the working folder and preserve read-only per
   const codex = codexArguments(input, { schema: '/private/run/schema.json', result: '/private/run/response.json' });
   assert.deepEqual(codex.slice(0, 3), ['exec', '-C', '/projects/repo']);
   assert.ok(codex.includes('sandbox_mode="read-only"'));
+  assert.equal(codex.includes('windows.sandbox="unelevated"'), process.platform === 'win32', 'read-only Codex needs the Windows sandbox to run any command');
   const claude = claudeArguments(input);
   assert.deepEqual(claude.slice(claude.indexOf('--add-dir'), claude.indexOf('--add-dir') + 2), ['--add-dir', '/private/run']);
   assert.ok(claude.includes('Read,Glob,Grep,WebFetch,WebSearch'));
