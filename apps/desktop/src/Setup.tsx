@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Check, Download, ExternalLink, FolderGit2, Github, Loader2, Plus, RefreshCw, Upload } from 'lucide-react';
-import type { Provider, ProviderId, Snapshot, Target } from '../../../packages/protocol/schema';
+import { ArrowRight, Check, ExternalLink, FolderGit2, Github, Loader2, Plus, RefreshCw, Upload } from 'lucide-react';
+import type { Provider, Snapshot } from '../../../packages/protocol/schema';
 import type { DefaultRepository, GitHubState } from '../../../packages/git/github';
 import { api } from './api';
 import { Field, InlineError, KilnMark } from './components';
-import { LocalAgentsDialog, LocalSkillsDialog, RepositorySkillsDialog } from './Import';
+import { RepositorySkillsDialog } from './Import';
 
-import { SkillLocationSettings, ScanDialog } from './Skills';
-import { unmanagedSourceFolders } from './skill-folders';
-import { joinAnd } from './item-source';
-import { skillLocationLabel } from '../../../packages/providers/skill-locations';
+import { SkillLocationSettings } from './Skills';
 
 type Repo = { nameWithOwner: string; url: string; isPrivate: boolean; description: string };
 type Inspection = { root: string; exists: boolean; kiln: boolean; git: boolean; remote: string; items: number };
@@ -33,16 +30,8 @@ export function Setup({ snapshot, previous, onAttach, onRefresh, providers, onSe
   const [existing, setExisting] = useState<Inspection | null>(null);
   const [repos, setRepos] = useState<Repo[] | null>(null), [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(''), [error, setError] = useState('');
-  const [dialog, setDialog] = useState<'' | 'local' | 'repository' | 'agents'>(''), [imported, setImported] = useState<string[]>([]);
-  const [scanTarget, setScanTarget] = useState<{ provider: ProviderId; target: Target } | null>(null);
-  // Skill folders brought in by "Import my installed skills". While their folder is not managed, those skills read "Not installed".
-  const [sources, setSources] = useState<string[]>([]), [managed, setManaged] = useState('');
-  const importedDone = async (summary: string, paths: string[] = []) => { await onRefresh(); setImported(list => [...list, summary]); setSources(list => [...new Set([...list, ...paths])]); setDialog(''); };
-  const unmanaged = unmanagedSourceFolders(sources, providers, snapshot.targets);
-  const manageSources = () => run('locations', async () => {
-    for (const folder of unmanaged) await onSetLocation(folder.provider, true, folder.native);
-    setManaged(`Kiln now manages ${joinAnd(unmanaged.map(f => f.folder))}. Nothing was installed or changed; identical copies already there show as found.`);
-  });
+  const [dialog, setDialog] = useState<'' | 'repository'>(''), [imported, setImported] = useState<string[]>([]);
+  const importedDone = async (summary: string) => { await onRefresh(); setImported(list => [...list, summary]); setDialog(''); };
   const ready = snapshot.repository.ready;
   const [changing, setChanging] = useState(false);
   useEffect(() => { setChanging(false); }, [snapshot.root]);
@@ -123,20 +112,15 @@ export function Setup({ snapshot, previous, onAttach, onRefresh, providers, onSe
 
     <section className={`setup-step ${ready ? '' : 'disabled'}`}><div className="setup-step-head">{step(3, snapshot.targets.length > 0)}<h2>Choose your providers and folders <small>optional</small></h2></div>
       <p>Choose the folders you want to manage for your clients. Existing and new skills and agent definitions appear in your library automatically as drafts for review.</p>
-      <fieldset disabled={!ready || Boolean(busy)} style={{ border: 0, padding: 0, margin: 0 }}><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={(provider, on, native) => void run('locations', () => onSetLocation(provider, on, native))} onScan={(provider, target) => setScanTarget({ provider, target })} /></fieldset>
+      <fieldset disabled={!ready || Boolean(busy)} style={{ border: 0, padding: 0, margin: 0 }}><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={(provider, on, native) => void run('locations', () => onSetLocation(provider, on, native))} /></fieldset>
     </section>
-    <section className={`setup-step ${ready ? '' : 'disabled'}`}><div className="setup-step-head">{step(4, imported.length > 0)}<h2>Bring in the skills and agents you already have <small>optional</small></h2></div>
-      <p>Everything comes in as a draft; approve the ones you want on GitHub. Nothing is moved or deleted where it lives now.</p>
+    <section className={`setup-step ${ready ? '' : 'disabled'}`}><div className="setup-step-head">{step(4, imported.length > 0)}<h2>Import from another repository <small>optional</small></h2></div>
+      <p>Checked locations above bring in your installed skills and agents automatically. You can also import skills from another repository as drafts for review.</p>
       {imported.map(line => <div className="notice success" key={line}><Check size={14} /> {line}</div>)}
-      {unmanaged.length > 0 && <div className="notice" data-testid="manage-sources"><b>Manage these folders so Kiln can show the copies already there</b><p>Kiln doesn’t manage {unmanaged.map((f, i) => <span key={f.folder}>{i === 0 ? '' : i === unmanaged.length - 1 ? ' and ' : ', '}<code>{f.folder}</code></span>)} yet, so the skills you imported from there read “Not installed”. Managing a folder only lets Kiln recognise what is in it: nothing is installed, moved or changed. You can turn this off in step 3 or in Settings.</p><button className="button primary" disabled={!ready || Boolean(busy)} onClick={manageSources}>{`Manage the ${joinAnd(unmanaged.map(f => skillLocationLabel[f.location]))} folder${unmanaged.length === 1 ? '' : 's'}`}</button></div>}
-      {managed && !unmanaged.length && <div className="notice success"><Check size={14} /> {managed}</div>}
-      <div className="wrap-actions"><button className="button primary" disabled={!ready || Boolean(busy)} onClick={() => setDialog('local')}><Download size={15} />Import my installed skills</button><button className="button" disabled={!ready || Boolean(busy)} onClick={() => setDialog('agents')}><Download size={15} />Import my agents</button><button className="button" disabled={!ready || Boolean(busy)} onClick={() => setDialog('repository')}><Upload size={15} />Import from a skills repository…</button></div>
-      <p className="muted small">Discovery includes shared Agents, Claude, Codex-specific and Copilot skill folders, plus your configured locations. Agent imports discover Codex, Claude Code and Copilot definitions. A skills repository is a Git repository (or a clone of one) that holds SKILL.md folders; every skill in it is found, with its supporting and linked files.</p>
+      <div className="wrap-actions"><button className="button" disabled={!ready || Boolean(busy)} onClick={() => setDialog('repository')}><Upload size={15} />Import from a skills repository…</button></div>
+      <p className="muted small">A skills repository is a Git repository (or a clone of one) that holds SKILL.md folders; every skill in it is found, with its supporting and linked files.</p>
       <p>Review everything together in the library: select all or pick individual items to archive, move to trash, or preview removal of local copies. Approve drafts before letting Kiln manage their installed copies.</p><div className="setup-finish"><button className="button" disabled={!ready || Boolean(busy)} onClick={() => void run('finish', () => onDone(true))}>Review and bulk manage my library</button><button className="button primary" disabled={!ready || Boolean(busy)} onClick={() => void run('finish', () => onDone())}>Start using Kiln <ArrowRight size={15} /></button></div>
     </section>
-    {scanTarget && <ScanDialog provider={providers.find(p => p.id === scanTarget.provider)!} target={scanTarget.target} onClose={() => setScanTarget(null)} onImported={onRefresh} />}
-    {dialog === 'agents' && <LocalAgentsDialog onClose={() => setDialog('')} onDone={importedDone} />}
-    {dialog === 'local' && <LocalSkillsDialog onClose={() => setDialog('')} onDone={importedDone} />}
     {dialog === 'repository' && <RepositorySkillsDialog initialSource={previous && previous.standard && !previous.dedicated ? previous.root : ''} onClose={() => setDialog('')} onDone={importedDone} />}
   </div></div>;
 }

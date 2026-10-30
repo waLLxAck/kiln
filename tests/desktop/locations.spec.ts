@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { desktopEnv, showKind } from './fixture';
 
-test('shared locations, native copies and cleanup are clear in Settings and Library', async () => {
+test('locations use automatic discovery without import controls, and copies are clear in Library', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-locations-ui-'));
   const home = path.join(root, 'home');
   const shared = path.join(home, '.agents/skills/review');
@@ -33,15 +33,10 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
     await expect(card.getByText(`${home}/.claude/agents`, { exact: true })).toBeVisible();
     await expect(card.getByText('unavailable', { exact: true })).toHaveCount(0);
     await page.screenshot({ path: 'artifacts/locations-settings.png' });
-    await card.getByRole('button', { name: 'Inspect folders', exact: true }).nth(1).click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Broken link: its destination no longer exists.')).toBeVisible();
-    await dialog.getByRole('button', { name: 'Remove broken link', exact: true }).click();
-    await expect.poll(() => fs.lstatSync(broken, { throwIfNoEntry: false })).toBeUndefined();
-    await dialog.getByRole('button', { name: 'Remove empty folder', exact: true }).click();
-    await expect.poll(() => fs.existsSync(path.join(claude, 'empty'))).toBe(false);
-    await page.screenshot({ path: 'artifacts/locations-cleanup.png' });
-    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Import my (installed skills|agents)|Inspect (folders|skills folder)/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Import from a skills repository…', exact: true })).toBeVisible();
+    expect(fs.lstatSync(broken).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(claude, 'empty'))).toBe(true);
     await page.getByRole('button', { name: /^Library/ }).click();
     await showKind(page, 'skill');
     await page.locator(`.item-card[data-id="${item.id}"]`).click();
