@@ -153,7 +153,8 @@ button[aria-busy=true]::after { content: ''; display: inline-block; width: 12px;
 .badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--subtle); color: var(--text-2); font-size: 11px; font-weight: 600; letter-spacing: .01em; text-transform: capitalize; white-space: nowrap; width: max-content; line-height: 1; }
 .badge svg { width: 11px; height: 11px; }
 .badge.approved, .badge.pass, .badge.applied, .badge.current, .badge.detected, .badge.connected, .badge.ready, .badge.installed, .badge.attached { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
-.badge.testing, .badge.prepared, .badge.uncertain, .badge.review, .badge.replace { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+.badge.testing, .badge.prepared, .badge.uncertain, .badge.review, .badge.replace, .badge.publishing, .badge.reviewed_locally { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+.badge.publish_failed { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
 .badge.rejected, .badge.fail, .badge.drifted, .badge.partial, .badge.blocked, .badge.unavailable, .badge.deleted { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
 .badge.create, .badge.completed { color: var(--accent-text); background: var(--accent-tint); border-color: var(--accent-tint-2); }
 

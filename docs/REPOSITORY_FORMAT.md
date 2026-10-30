@@ -37,6 +37,10 @@ The stable item ID survives edits, renaming, Git sync, and export/import. An imm
 
 The infrastructure manifest records hashes of app-owned files. Update previews compare both current and proposed bytes; unmanaged or locally modified files block replacement. Future releases can ship new templates and infrastructure versions without accepting alternate library structures.
 
+Infrastructure ownership accepts Git's LF-to-CRLF checkout conversion as unchanged text. Approval commits keep infrastructure and library manifests in LF form without rewriting local checkouts. Real content edits still block automatic replacement and publishing.
+
+The desktop reserves the green Approved badge for a reviewed revision whose publication completed. Queued or active publication reads Publishing; a failed job reads Publish failed and retains its review for retry. A local-only library reads Reviewed locally. These publication states do not change immutable review evidence or rewrite existing installed copies.
+
 ## Legacy migration
 
 Migration enumerates tracked `SKILL.md` files, preserving each source path as provenance. It imports the skill directory's regular files and records the nearest upstream licence as item metadata rather than as a bundled file. Malformed skills are preserved as captured items and flagged for review rather than silently repaired or omitted. Bundles over 25 MB or unsafe paths block import with an explicit error.

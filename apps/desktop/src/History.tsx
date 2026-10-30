@@ -4,6 +4,7 @@ import { skillLocationLabel } from '../../../packages/providers/skill-locations'
 import type { Installation, ItemDetail, ProviderId, PublishJob, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge, providerName } from './components';
+import { approvalStatus } from './approval-status';
 import { LineDiff } from './Diff';
 import { buildHistory, dayLabel, historyFilters, timeLabel, type HistoryEvent, type HistoryFilter } from './history-model';
 
@@ -83,7 +84,7 @@ export function History({ detail, snapshot, installations, perform, refresh, onA
     switch (event.type) {
       case 'revision': {
         const who = { person: [<User size={12} key="i" />, event.revision.author || 'You'], agent: [<Bot size={12} key="i" />, 'Agent'], import: [<FileInput size={12} key="i" />, 'Imported'], outside: [<Wrench size={12} key="i" />, 'Edited outside Kiln'], kiln: [<Wrench size={12} key="i" />, 'Kiln'] }[event.author];
-        return <>{chip}<span className="history-author">{who}</span>{event.approved && <Badge status="approved" />}{event.current && <span className="badge current">current</span>}</>;
+        return <>{chip}<span className="history-author">{who}</span>{event.approved && <Badge status={approvalStatus({ id: item.id, revision: event.revision.hash }, snapshot)} />}{event.current && <span className="badge current">current</span>}</>;
       }
       case 'test': return <>{chip}<span>{event.trial.provider === 'manual' ? 'Manual handoff' : providerName[event.trial.provider]}{event.trial.model ? ` · ${event.trial.model}` : ''} · {event.trial.case === 'typical' ? 'typical case' : 'boundary case'}</span></>;
       case 'approved': {

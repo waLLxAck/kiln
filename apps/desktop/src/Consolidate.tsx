@@ -3,6 +3,7 @@ import { Check, Download, Loader2, Merge } from 'lucide-react';
 import type { DuplicateGroup, Installation, Item, ItemDetail, Snapshot } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge, Modal } from './components';
+import { approvalStatus } from './approval-status';
 import { LoadError, useLoad, Waiting } from './Loading';
 import { LineDiff } from './Diff';
 import { locationLabel } from './library-filters';
@@ -55,7 +56,7 @@ export function ConsolidateDialog({ group, snapshot, installations, where, perfo
   const copiesHere = (item: Item) => installations.filter(c => c.itemId === item.id && (c.state !== 'external' || c.matches)).map(c => `${c.scope === 'project' ? snapshot.targets.find(t => t.id === c.targetId)?.name ?? 'a project' : c.location ? locationLabel[c.location] : c.provider}${c.state === 'drifted' ? ' (edited)' : ''}`);
   const tests = (item: Item) => { const d = details?.[item.id]; if (!d) return '…'; const runs = experimentsOf(d.trials).filter(t => t.status === 'completed'), judged = reviews(d.trials); if (!runs.length) return 'none'; const passed = runs.filter(t => verdictOf(t, judged) === 'pass').length; return `${runs.length} · ${passed} passed`; };
   const used = (item: Item) => { const n = snapshot.usage[item.id]; return n ? `copied ${n.copied}× · used ${n.used}×` : 'not yet'; };
-  const status = (item: Item) => approvedNow(item) ? <Badge status="approved" /> : snapshot.approvals.some(a => a.itemId === item.id && a.trust === 'local') ? <span className="cons-inline"><Badge status={item.status === 'testing' ? 'testing' : 'draft'} /><small className="muted">approved earlier</small></span> : <Badge status={item.status === 'testing' ? 'testing' : 'draft'} />;
+  const status = (item: Item) => approvedNow(item) ? <Badge status={approvalStatus(item, snapshot)} /> : snapshot.approvals.some(a => a.itemId === item.id && a.trust === 'local') ? <span className="cons-inline"><Badge status={item.status === 'testing' ? 'testing' : 'draft'} /><small className="muted">reviewed earlier</small></span> : <Badge status={item.status === 'testing' ? 'testing' : 'draft'} />;
   const textNote = (item: Item) => {
     if (!chosen) return '…';
     if (item.id === text) return <b>This text</b>;

@@ -6,10 +6,43 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { MAX_ATTACHMENT_BYTES } from '../packages/protocol/limits';
 import { Workbench } from '../packages/domain/workbench';
-import { initialiseRepository, standardStatus, infrastructurePlan, applyInfrastructure } from '../packages/git/standard';
+import { initialiseRepository, standardStatus, infrastructurePlan, applyInfrastructure, infrastructureFiles } from '../packages/git/standard';
 import { migrationPlan, applyMigration } from '../packages/git/migration';
 import { DeploymentService } from '../packages/deployment/service';
-import { bundleFiles, readJson, writeJson } from '../packages/storage/files';
+import { bundleFiles, hash, readJson, writeJson } from '../packages/storage/files';
+
+test('infrastructure ownership ignores checkout line endings but preserves real edits', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln CRLF '));
+  try {
+    const { root } = initialiseRepository({ parent, name: 'library' });
+    for (const [relative, content] of Object.entries(infrastructureFiles)) fs.writeFileSync(path.join(root, relative), content.replace(/\r?\n/g, '\r\n'));
+    const plan = infrastructurePlan(root);
+    assert.ok(plan.files.every(file => file.operation === 'unchanged' && !file.blocked));
+    const guide = path.join(root, 'KILN.md');
+    const edited = fs.readFileSync(guide, 'utf8') + '\r\nLocal instructions.\r\n';
+    fs.writeFileSync(guide, edited);
+    const changed = infrastructurePlan(root);
+    assert.equal(changed.files.find(file => file.relative === 'KILN.md')!.blocked, true);
+    assert.throws(() => applyInfrastructure(root, changed.hash), /locally modified/);
+    assert.equal(fs.readFileSync(guide, 'utf8'), edited);
+  } finally { fs.rmSync(parent, { recursive: true, force: true }); }
+});
+
+test('owned older infrastructure can be upgraded after a CRLF checkout', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln CRLF upgrade '));
+  try {
+    const { root } = initialiseRepository({ parent, name: 'library' });
+    const guide = 'Older managed guide.\n';
+    fs.writeFileSync(path.join(root, 'KILN.md'), guide.replace(/\n/g, '\r\n'));
+    const ownerFile = path.join(root, '.kiln/infrastructure.json');
+    const owners = readJson(ownerFile) as { version: number; files: Record<string, string> };
+    owners.files['KILN.md'] = hash(guide); writeJson(ownerFile, owners);
+    const plan = infrastructurePlan(root), entry = plan.files.find(file => file.relative === 'KILN.md')!;
+    assert.equal(entry.operation, 'update'); assert.equal(entry.blocked, false);
+    applyInfrastructure(root, plan.hash);
+    assert.equal(fs.readFileSync(path.join(root, 'KILN.md'), 'utf8'), infrastructureFiles['KILN.md']);
+  } finally { fs.rmSync(parent, { recursive: true, force: true }); }
+});
 
 test('new repositories share the versioned layout and infrastructure updates respect ownership', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'Kiln standard '));

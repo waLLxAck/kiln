@@ -4,6 +4,7 @@ import { ArrowUp, Check, ChevronDown, ChevronRight, Circle, CircleArrowUp, Exter
 import type { Installation, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { api, date, shortHash } from './api';
 import { Badge } from './components';
+import { approvalStatus } from './approval-status';
 import { multiMachine } from './features';
 import { EventGlyph, eventTitle, PublishState, trialVerdict } from './History';
 import type { HistoryEvent } from './history-model';
@@ -67,7 +68,8 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
   const approvals = detail.approvals.filter(a => a.trust === 'local');
   const currentApproved = approvals.some(a => a.revision === item.revision);
   const lastApproved = [...approvals].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const publishJob = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision);
+  const publishJob = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision && j.action === 'approve');
+  const publishedApproval = lastApproved && approvalStatus({ id: item.id, revision: lastApproved.revision }, snapshot) === 'approved';
   const copies = installations.filter(copy => copy.itemId === item.id);
   const receipts = snapshot.receipts.filter(r => r.itemId === item.id);
   const judged = reviews(detail.trials);
@@ -129,7 +131,7 @@ export function ItemRail({ detail, snapshot, providers, installations, events, s
     {!isSource && <Section id="status" title="Approval"
       more={approvals.length > 0 ? <div className="rail-more">{[...approvals].reverse().map(a => <div className="rail-approval" key={a.id}><b>{shortHash(a.revision)} · approved by {a.reviewer}</b><span>{a.scope}{a.note ? ` · ${a.note}` : ''}</span>{a.waivedChecks && <span>Checks waived: {a.waivedChecks}</span>}<small>{date(a.createdAt)}</small></div>)}</div> : undefined}
       moreLabel={`See all ${approvals.length} approval${approvals.length === 1 ? '' : 's'}`}>
-      <Row label="Approved revision">{lastApproved ? <code title={currentApproved ? 'The current revision' : 'GitHub and installs keep this revision until you approve the draft.'}>{shortHash(lastApproved.revision)}</code> : <span className="muted">None yet</span>}</Row>
+      <Row label={publishedApproval ? 'Approved revision' : 'Reviewed revision'}>{lastApproved ? <code title={currentApproved ? 'The current revision' : publishedApproval ? 'GitHub and installs keep this revision until you approve the draft.' : 'Review saved locally; publication has not finished.'}>{shortHash(lastApproved.revision)}</code> : <span className="muted">None yet</span>}</Row>
       {!currentApproved && lastApproved && <Row label="Draft"><code title="Only on this machine until you approve it">{shortHash(item.revision)}</code></Row>}
       {currentApproved && <Row label="Published"><PublishState compact job={publishJob} ahead={snapshot.git.ahead} onRetry={() => void perform(async () => { if (publishJob) await api('publish.retry', { id: publishJob.id }); await refresh(); })} /></Row>}
       <Row label="Evidence"><span className="muted">{completed} completed test{completed === 1 ? '' : 's'} · copied {copied}×</span></Row>

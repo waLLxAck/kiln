@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, 
 import { ArrowLeft, ArrowRight, CircleArrowUp, Copy, Download, ExternalLink, FileInput, FilePlus2, Files, FlaskConical, Folder, Gauge, Hash, Merge, MessageSquare, MoreHorizontal, Paperclip, Pencil, Plus, RotateCcw, ScanSearch, ShieldCheck, Sparkles, Star, Trash2, TriangleAlert, WandSparkles, X, ZoomIn } from 'lucide-react';
 import type { Installation, Item, ItemDetail, Provider, ProviderId, Snapshot, Trial } from '../../../packages/protocol/schema';
 import { statusLabel } from './library-filters';
+import { approvalStatus } from './approval-status';
 import { api, date, variablesIn } from './api';
 import { isTextFile, scoreable } from '../../../packages/domain/text';
 import { activeRun } from '../../../packages/agent/run-notice';
@@ -172,7 +173,7 @@ export function Detail({ jobs, detail, snapshot, providers, sameTitle, installat
     if (name === 'analyze') analyse(); else if (name === 'edit') startEdit(); else if (name === 'ask') onAsk?.(); else if (name === 'open') openItem(); else if (name === 'history') setView('history'); else onAction(name, trial);
   };
 
-  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? 'approved' : item.status === 'testing' ? 'testing' : 'draft';
+  const status = item.deletedAt ? 'deleted' : shelved ? item.status : currentApproved ? approvalStatus(item, snapshot) : item.status === 'testing' ? 'testing' : 'draft';
   // The source page has its own Analyze button beside Ask and the transcript, so the header doesn't repeat it.
   const showPrimary = !(sourcePage && primary === 'analyze');
   const collection = item.collection.replaceAll('/', ' / ');

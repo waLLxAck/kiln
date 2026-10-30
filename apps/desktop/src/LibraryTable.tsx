@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Copy, Download, Files, FlaskConical, Star, T
 import type { Approval, Installation, Item, ScoreSummary, SkillListing, Snapshot, Trial, Usage } from '../../../packages/protocol/schema';
 import { ContextMenu, KindIcon, type MenuEntry } from './components';
 import { date } from './api';
+import type { ApprovalStatus } from './approval-status';
 import { InstalledCell, StatusCell, TestCell, type Location } from './Library';
 import { LibraryHead, useColumnLayout } from './LibraryHead';
 import { gridTracks, visibleColumns, type ColumnKey } from './library-columns';
@@ -15,7 +16,7 @@ import { ScoreBadge } from './Score';
 import { useListKeys } from './keyboard';
 import type { useItemDrag } from './ItemDrag';
 
-type Row = { item: Item; published: boolean; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number; /** Other copies of it in the library (a duplicate group). */ copies?: number; /** In Trash after a consolidation: the title of the item it was merged into ('' when that is gone too). */ mergedInto?: string };
+type Row = { item: Item; publication: ApprovalStatus; trial?: Trial; /** Where `trial` ran, from this machine's job records. */ place?: string; from?: { label: string; full: string }; made?: number; /** Other copies of it in the library (a duplicate group). */ copies?: number; /** In Trash after a consolidation: the title of the item it was merged into ('' when that is gone too). */ mergedInto?: string };
 type Props = {
   groups: { key: string; label: string; items: Item[] }[]; group: GroupKey; scope: string; usage: Usage; collectionShown: boolean;
   row: (item: Item) => Row; locations: Location[]; installations: Installation[]; approvals: Approval[];
@@ -105,7 +106,7 @@ const tooltip = (text: () => string) => (event: MouseEvent<HTMLElement>) => { ev
  * poll. Its handlers ask `context` for the table's latest props when they run, so a row that skipped a render never acts on
  * an old selection.
  */
-const LibraryRow = memo(function LibraryRow({ item, published, trial, place, from, made, copies, mergedInto, columns, selected, picked, focusable, menuOpen, swipes, locations, installations, approvals, listing, score, usage, usageSort, context }: RowProps) {
+const LibraryRow = memo(function LibraryRow({ item, publication, trial, place, from, made, copies, mergedInto, columns, selected, picked, focusable, menuOpen, swipes, locations, installations, approvals, listing, score, usage, usageSort, context }: RowProps) {
   const latest = () => context.current!;
   // The description is left out of the row to save space; it stays discoverable as the row's tooltip.
   const about = item.description || (item.kind === 'link' ? site(item) : item.tags.slice(0, 3).map(t => `#${t}`).join('  '));
@@ -115,7 +116,7 @@ const LibraryRow = memo(function LibraryRow({ item, published, trial, place, fro
   const cells: Record<ColumnKey, ReactNode> = {
     title: <span className="lib-title"><span className={`item-kind ${item.kind}`} title={`${item.kind} · drag onto a collection to move it`}><KindIcon kind={item.kind} size={14} /></span><span className="item-title">{item.title}</span>{item.favourite && <Star size={12} className="lib-star" fill="currentColor" aria-label="Favourite" />}<DraftMark id={item.id} />{from && <span className="lib-from" title={`From ${from.full}`}>from {from.label}</span>}{copies ? <span className="lib-dup" aria-label={`${copies + 1} copies`} title={`${copies} other ${copies === 1 ? 'copy' : 'copies'} of this ${item.kind} in your library. Open it to consolidate.`}><Files size={11} aria-hidden="true" />{copies + 1}</span> : null}{usageLabel && <span className="lib-usage" title="Activity recorded by Kiln">{usageLabel}</span>}{mergedInto !== undefined && <span className="lib-from" title="Consolidated: restore it to have it back as its own item">merged into {mergedInto || 'a deleted item'}</span>}</span>,
     collection: <span className="muted" title={item.collection}>{item.collection.replaceAll('/', ' / ') || <span className="faint">—</span>}</span>,
-    status: <StatusCell item={item} approvals={approvals} published={published} made={made} />,
+    status: <StatusCell item={item} approvals={approvals} publication={publication} made={made} />,
     installed: <InstalledCell item={item} locations={locations} installations={installations} />,
     model: <InvocationToggle item={item} listing={listing} onToggle={(target, model) => latest().props.onInvocation(target, model)} />,
     test: <TestCell item={item} trial={trial} place={place} />,

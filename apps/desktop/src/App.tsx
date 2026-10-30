@@ -1,4 +1,5 @@
 import { useViewMemory, useScrollMemory, useSavedViews } from './view-memory';
+import { approvalStatus } from './approval-status';
 import { BulkRemovalDialog } from './BulkLibrary';
 import { inStage, matchesQuery, narrowest, parseTyped, railCounts, sameToken, stages, statusLabel, tokenLabel, type QueryToken, type Stage } from './library-filters';
 import { primarySkillLabel } from '../../../packages/providers/skill-locations';
@@ -545,8 +546,11 @@ export default function App() {
       { label: 'Delete collection…', icon: <Trash2 />, danger: true, shortcut: 'D', hint: inside ? `Asks whether its ${inside} item${inside === 1 ? '' : 's'} stay in the library or move to the trash.` : 'Removes this empty collection from the sidebar.', onSelect: () => setDialog({ name: 'delete-collection', collection: name }) },
     ];
   };
-  /** Approved and pushed: the last publish job for this item finished, or there is none and nothing waits to be pushed. */
-  const published = (item: Item) => { if (item.status !== 'approved') return false; const job = snapshot.publish.find(j => j.itemId === item.id && j.revision === item.revision); return job ? job.status === 'done' : snapshot.git.ahead === 0; };
+  const publication = (item: Item) => {
+    const approvals = snapshot.approvals.filter(approval => approval.itemId === item.id && approval.trust === 'local' && !approval.revokedAt).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+    const revision = approvals.find(approval => approval.revision === item.revision)?.revision ?? approvals[0]?.revision ?? item.revision;
+    return approvalStatus({ id: item.id, revision }, snapshot);
+  };
   const purgeTarget = dialog?.name === 'purge' ? snapshot.items.find(i => i.id === dialog.itemId) : undefined;
   const installTarget = dialog?.name === 'skill-install' ? { item: snapshot.items.find(i => i.id === dialog.itemId), provider: providers.find(p => p.id === dialog.provider), target: snapshot.targets.find(t => t.id === dialog.targetId) } : null;
   // The chat is about the focused item. A video, or an entry distilled from one, brings the transcript along; the video is recognised by the tags prepareVideo adds.
@@ -600,7 +604,7 @@ export default function App() {
       onLeave={() => { if (!shown.length) return; if (!shown.some(i => i.id === selected)) select(shown[0].id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.item-card.selected')?.focus()); }} />
     {bulkItems.length > 1 && <BulkBar items={bulkItems} entries={bulkEntries(bulkItems)} busy={busy} onClear={() => setBulkIds([])} />}
     {tokens.some(t => t.facet === 'kind' && t.value === 'skill') && !configured.length && <div className="setup-banner"><Download size={18} /><span>Choose shared Agents and Claude folders for skill installation. Client-specific copies are available in Settings.</span><button className="button" onClick={() => navigate('settings')}>Set up</button></div>}
-    <LibraryTable groups={groups} group={group} scope={snapshot.root + viewKey} usage={snapshot.usage} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, published: published(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
+    <LibraryTable groups={groups} group={group} scope={snapshot.root + viewKey} usage={snapshot.usage} collectionShown={Boolean(collection) && collection !== UNFILED} row={item => ({ item, publication: publication(item), trial: lastTrial.get(item.id), place: lastTrial.has(item.id) ? trialPlace(lastTrial.get(item.id)!, places) : undefined, from: sameTitle.get(item.id), made: madeCount.get(item.id), copies: copiesOf(item), mergedInto: item.deletedAt && item.mergedInto ? snapshot.items.find(i => i.id === item.mergedInto && !i.deletedAt)?.title ?? '' : undefined })}
       locations={configured} installations={installations} approvals={snapshot.approvals} invocation={snapshot.invocation} onInvocation={setInvocation} scores={snapshot.scores} selected={selected} picked={bulkItems.length > 1 ? bulkIds : []} sort={relevance ? null : order} onSort={key => searchText ? setSearchSort(nextSort(relevance ? null : order, key)) : setSort(current => nextSort(current ?? defaultSort, key))}
       onClick={clickRow} onMenu={openMenu} onFocusRow={select} onPick={pickRange} onOpen={openItem} onSelectAll={selectAll} shortcut={rowShortcut}
       canSwipe={item => !item.deletedAt && item.status !== 'archived'} onArchive={archiveItem} drag={itemDrag} onCopy={item => void perform(() => copyItem(item))} onTest={testItem} installEntries={installMenu}

@@ -4,6 +4,7 @@ import { ArrowLeft, Check, ChevronDown, ChevronUp, Github, RefreshCw, Rows3 } fr
 import type { Approval, Installation, Item, Provider, Target, Trial } from '../../../packages/protocol/schema';
 import { Badge, ContextMenu, statusHelp, type MenuEntry } from './components';
 import { date } from './api';
+import type { ApprovalStatus } from './approval-status';
 import { skillState } from './Skills';
 import { installable } from './library-filters';
 import { outdatedCopies } from './item-page';
@@ -22,12 +23,12 @@ export const locationName = (item: Item, provider: Provider) => item.kind === 'a
  * Draft, Testing or Approved in plain words. An approved revision shows whether it reached GitHub; a draft on top of an earlier
  * approval says so, because what is installed is still the approved one. A source is material, so it shows what was made from it.
  */
-export function StatusCell({ item, approvals, published, made = 0 }: { item: Item; approvals: Approval[]; published: boolean; made?: number }) {
+export function StatusCell({ item, approvals, publication, made = 0 }: { item: Item; approvals: Approval[]; publication: ApprovalStatus; made?: number }) {
   if (item.kind === 'source') return <span className="lib-made" title="Items made from this source">{made} made</span>;
   if (['archived', 'rejected'].includes(item.status)) return <Badge status={item.status} />;
   const earlier = item.status !== 'approved' && approvals.some(a => a.itemId === item.id && a.revision !== item.revision && a.trust === 'local' && !a.revokedAt);
-  if (item.status === 'approved' || earlier) return <span className="lib-status" title={earlier ? 'The current revision is a draft on top of the approved one. Installs use the approved revision.' : published ? 'Approved and on GitHub' : 'Approved; the push to GitHub has not finished'}>
-    <span className="lib-pill ok"><Check size={11} />Approved</span>{earlier ? <span className="lib-newer">+ newer draft</span> : <Github size={13} className={`lib-pushed ${published ? 'on' : 'pending'}`} aria-label={published ? 'On GitHub' : 'Push pending'} />}
+  if (item.status === 'approved' || earlier) return <span className="lib-status" title={statusHelp[publication]}>
+    {publication === 'approved' ? <span className="lib-pill ok"><Check size={11} />Approved</span> : <Badge status={publication} />}{earlier ? <span className="lib-newer">+ newer draft</span> : publication === 'approved' && <Github size={13} className="lib-pushed on" aria-label="On GitHub" />}
   </span>;
   return item.status === 'testing' ? <span className="lib-pill warn" title={statusHelp.testing}>Testing</span> : <span className="lib-pill" title={statusHelp.captured}>Draft</span>;
 }

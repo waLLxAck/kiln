@@ -12,6 +12,9 @@ export const statusHelp: Record<string, string> = {
   captured: 'A draft. New in the library and only on this machine; nothing has been tried yet.',
   testing: 'A draft with at least one experiment started for this revision. Still only on this machine.',
   approved: 'You approved this exact revision. It is committed to your Kiln repo on GitHub and can be installed.',
+  publishing: 'Review recorded. This revision is not approved on GitHub until the commit and push finish.',
+  publish_failed: 'Publishing failed. Your review is saved locally; retry publishing to finish approval on GitHub.',
+  reviewed_locally: 'Review saved on this machine. Connect the library to GitHub to publish it.',
   rejected: 'Kept for reference but hidden from the main library.',
   archived: 'Finished with. Hidden from the main library.',
 };

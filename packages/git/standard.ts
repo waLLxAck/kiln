@@ -129,8 +129,10 @@ export function infrastructurePlan(root: string) {
   const owners = fs.existsSync(ownerFile) ? (readJson(ownerFile) as { files: Record<string, string> }).files : {};
   const files = Object.entries(infrastructureFiles).map(([relative, content]) => {
     const file = path.join(root, relative); noLinks(file);
-    const current = fs.existsSync(file) ? hash(fs.readFileSync(file)) : null;
-    return { relative, current, proposed: hash(content), operation: current === hash(content) ? 'unchanged' : current ? 'update' : 'create', blocked: Boolean(current && current !== hash(content) && owners[relative] !== current) };
+    const bytes = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    const current = bytes === null ? null : hash(bytes), normalized = bytes === null ? null : hash(bytes.toString('utf8').replace(/\r\n/g, '\n'));
+    const proposed = hash(content), unchanged = current === proposed || normalized === proposed;
+    return { relative, current, proposed, operation: unchanged ? 'unchanged' : current ? 'update' : 'create', blocked: Boolean(current && !unchanged && owners[relative] !== current && owners[relative] !== normalized) };
   });
   return { version: INFRASTRUCTURE_VERSION, root, files, hash: digest(files) };
 }

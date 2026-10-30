@@ -203,7 +203,7 @@ export class Publisher {
     const files: Record<string, string> = {}, replace: string[] = [];
     const json = (name: string, value: unknown) => { files[name] = Buffer.from(JSON.stringify(value, null, 2) + '\n').toString('base64'); };
     for (const name of ['kiln.json', '.kiln/infrastructure.json', ...infrastructure.files.map(f => f.relative), `${relative}/.gitignore`]) {
-      files[name] = fs.readFileSync(path.join(this.wb.root, name)).toString('base64');
+      files[name] = Buffer.from(fs.readFileSync(path.join(this.wb.root, name), 'utf8').replace(/\r\n/g, '\n')).toString('base64');
     }
     const approvals = this.wb.approvals(true).filter(a => a.itemId === job.itemId && a.revision === job.revision && a.trust === 'local');
     const publishedItem = job.action === 'unapprove' ? committedJsonSync(this.wb.root, `${relative}/items/${job.itemId}/item.json`) as { revision?: string } : null;

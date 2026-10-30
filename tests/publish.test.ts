@@ -25,6 +25,64 @@ function fixture() {
 }
 const approveArgs = (item: { id: string; revision: string }) => ({ id: item.id, revision: item.revision, reviewer: 'Human', scope: 'Test', note: 'Reviewed', waivedChecks: 'Fixture' });
 
+test('approval publishes after Windows checkout changes infrastructure line endings', async () => {
+  const f = fixture();
+  try {
+    const guide = path.join(f.library, 'KILN.md');
+    const original = fs.readFileSync(guide, 'utf8');
+    fs.writeFileSync(guide, original.replace(/\r?\n/g, '\r\n'));
+    const router = new Router(f.wb, { composer: null });
+    const item = f.wb.create({ title: 'Windows approval', kind: 'skill', content: skill('windows-approval') });
+    router.approve(approveArgs(item)); await router.publisher.idle();
+    const [job] = router.publisher.list();
+    assert.equal(job.status, 'done', job.error);
+    assert.equal(execFileSync('git', ['-C', f.origin, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), job.commit);
+    assert.equal(execFileSync('git', ['-C', f.origin, 'show', 'HEAD:KILN.md'], { encoding: 'utf8' }), original);
+    assert.equal(fs.readFileSync(guide, 'utf8'), original.replace(/\r?\n/g, '\r\n'));
+  } finally { f.close(); }
+});
+
+test('a real CRLF clone can approve and publish without changing its infrastructure', async () => {
+  const f = fixture();
+  let wb: Workbench | undefined;
+  try {
+    f.git('push', '-q', '-u', 'origin', 'HEAD');
+    const clone = path.join(f.root, 'windows-clone');
+    execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=true', f.origin, clone], { windowsHide: true });
+    assert.ok(fs.readFileSync(path.join(clone, 'KILN.md'), 'utf8').includes('\r\n'));
+    wb = new Workbench(clone, path.join(f.root, 'clone-private'));
+    const router = new Router(wb, { composer: null });
+    const item = wb.create({ title: 'Cloned approval', kind: 'skill', content: skill('cloned-approval') });
+    router.approve(approveArgs(item)); await router.publisher.idle();
+    const [job] = router.publisher.list();
+    assert.equal(job.status, 'done', job.error);
+    assert.equal(execFileSync('git', ['-C', f.origin, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), job.commit);
+    const changed = execFileSync('git', ['-C', clone, 'diff', '--name-only', 'HEAD^', 'HEAD'], { encoding: 'utf8' });
+    assert.ok(!changed.includes('KILN.md') && !changed.includes('.kiln/') && !changed.includes('.github/'));
+    assert.equal(execFileSync('git', ['-C', clone, 'status', '--porcelain', '--', '.kiln', '.github', 'KILN.md', 'kiln.json'], { encoding: 'utf8' }).trim(), '');
+  } finally { wb?.close(); f.close(); }
+});
+
+test('a blocked infrastructure snapshot can be retried without approving again or overwriting edits', async () => {
+  const f = fixture();
+  try {
+    const guide = path.join(f.library, 'KILN.md'), original = fs.readFileSync(guide, 'utf8');
+    const edited = original + '\nLocal instructions.\n'; fs.writeFileSync(guide, edited);
+    const router = new Router(f.wb, { composer: null });
+    const item = f.wb.create({ title: 'Retried approval', kind: 'skill', content: skill('retried-approval') });
+    router.approve(approveArgs(item)); await router.publisher.idle();
+    const [failed] = router.publisher.list();
+    assert.equal(failed.status, 'failed'); assert.match(failed.error!, /locally modified repository infrastructure/);
+    assert.equal(failed.commit, ''); assert.equal(fs.readFileSync(guide, 'utf8'), edited);
+    fs.writeFileSync(guide, original.replace(/\r?\n/g, '\r\n'));
+    router.publisher.retry(failed.id); await router.publisher.idle();
+    const [done] = router.publisher.list();
+    assert.equal(done.id, failed.id); assert.equal(done.status, 'done', done.error);
+    assert.equal(f.wb.approvals().length, 1);
+    assert.equal(execFileSync('git', ['-C', f.origin, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), done.commit);
+  } finally { f.close(); }
+});
+
 test('approve commits only that item with the agent-written message and pushes it; other drafts stay local', async () => {
   const f = fixture();
   try {
