@@ -6,6 +6,7 @@ import { agentFolder } from '../../packages/domain/agent-folder';
 import { agentBundle, agentKey } from '../../packages/domain/agents-import';
 import { contentKey, IGNORED_SKILL_ENTRIES, skillBundle } from '../../packages/domain/skills-import';
 import { factsCache } from '../../packages/domain/revision-facts';
+import { DeploymentService } from '../../packages/deployment/service';
 import { targetSkillsFolder } from '../../packages/providers/skill-locations';
 import { digest, writeJson } from '../../packages/storage/files';
 
@@ -28,7 +29,9 @@ export class LocalDiscovery {
   private closed = false;
   private ledger: string;
   private debounceMs: number;
+  private deployments: DeploymentService;
   constructor(private wb: Workbench, private changed: (ids: string[]) => void, private options: Options = {}) {
+    this.deployments = new DeploymentService(wb);
     this.debounceMs = options.debounceMs ?? 750;
     this.ledger = path.join(wb.local, 'discovery', `${digest(normal(wb.root))}.json`);
     try {
@@ -127,6 +130,13 @@ export class LocalDiscovery {
     let dirty = false;
     if (ready.length) {
       const known = new Set<string>(), sources = new Set<string>(), facts = factsCache(this.wb);
+      // A copy installed by Kiln is already managed, even if it was edited before discovery first saw it.
+      // Historical receipts also prevent deleted items from coming back through an old installation.
+      const installed = new Set<string>();
+      for (const receipt of this.deployments.receipts()) {
+        installed.add(normal(receipt.destination));
+        try { installed.add(normal(fs.realpathSync(receipt.destination))); } catch { /* An old installation may be gone. */ }
+      }
       const items = this.wb.listItems(true).filter(item => item.kind === 'skill' || item.kind === 'agent');
       const missing = items.filter(item => this.origins.get(item.id)?.revision !== item.revision);
       for (let offset = 0; offset < missing.length; offset += 5000) {
@@ -146,7 +156,7 @@ export class LocalDiscovery {
       facts.save();
       for (const candidate of ready) {
         try {
-          if (!sources.has(candidate.identity)) {
+          if (!sources.has(candidate.identity) && !installed.has(normal(candidate.file)) && !installed.has(normal(fs.realpathSync(candidate.file)))) {
             const value = candidate.kind === 'skill' ? skillBundle(candidate.file, `local:${candidate.file}`) : agentBundle(candidate.file, candidate.provider);
             const key = `${candidate.kind}:${candidate.kind === 'skill' ? contentKey(value) : agentKey(value)}`;
             if (!known.has(key)) {

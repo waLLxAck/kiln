@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Workbench } from '../packages/domain/workbench';
 import { LocalDiscovery } from '../apps/desktop/local-discovery';
+import { DeploymentService } from '../packages/deployment/service';
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: Check changes carefully.\n---\nRead the diff.\n`;
 function writeSkill(folder: string, name: string) {
@@ -80,6 +81,21 @@ test('previous manual imports are recognised through private provenance even aft
     assert.deepEqual(discovery.scan(true).imported, []);
     assert.equal(f.wb.listItems().length, 1);
     assert.equal(f.wb.getRevision(item.id).content, skill('edited-in-kiln'));
+  } finally { discovery.close(); f.close(); }
+});
+
+test('installed copies edited before the first discovery scan remain attached to their existing item', () => {
+  const f = fixture(), discovery = new LocalDiscovery(f.wb, () => {}, { watch: false });
+  try {
+    const target = f.wb.enroll({ name: 'Agents', provider: 'codex', root: f.home, scope: 'personal' });
+    const item = f.wb.create({ kind: 'skill', title: 'Review', content: skill('review') });
+    const deployment = new DeploymentService(f.wb);
+    const result = deployment.installSkill({ itemId: item.id, targetId: target.id, confirm: true });
+    fs.appendFileSync(path.join(result.destination, 'SKILL.md'), '\nEdited outside Kiln before discovery.');
+    assert.deepEqual(discovery.scan(true).imported, []);
+    assert.equal(f.wb.listItems().length, 1);
+    assert.equal(f.wb.getRevision(item.id).content, skill('review'));
+    assert.equal(deployment.installations(item.id)[0].state, 'drifted');
   } finally { discovery.close(); f.close(); }
 });
 
