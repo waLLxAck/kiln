@@ -335,6 +335,7 @@ if (singleInstance) void app.whenReady().then(async () => {
   process.env.KILN_APP_VERSION = app.getVersion();
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
   backend = new Backend(defaultLibrary(), privateRoot(), log, { node: process.execPath, script: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'cli', 'workbench.cjs') : path.join(app.getAppPath(), 'dist', 'cli', 'workbench.cjs') });
+  backend.onLibraryChanged = () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('kiln:library-changed'); };
   // The window opens while the worker opens the library. Its calls wait for this, apart from `backend.status`, which says what Kiln is doing.
   const openBackend = () => {
     const opened = backend.opened.then(() => backend.call<{ local: string; canonical: string }>('paths')).then(paths => { ({ local, canonical } = paths); });

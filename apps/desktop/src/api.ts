@@ -1,8 +1,8 @@
 import type { Bridge } from '../../../packages/protocol/schema';
 declare global { interface Window { kiln: Bridge } }
 const inflight = new Map<string, Promise<unknown>>();
-/** Reads shared while one is on its way, and given up after a while so a lost reply can't pin a screen for good. */
-const readMethods = new Set(['snapshot', 'items.read', 'items.list', 'items.origins', 'deploy.installations', 'github.status', 'repository.status', 'repository.migrationPlan', 'providers.detect', 'agent.jobs', 'publish.jobs', 'context.sessionStart', 'home.list', 'home.read', 'backend.status']);
+/** Reads and repeatable location discovery share an in-flight call and wait for backend readiness. Lost replies time out. */
+const readMethods = new Set(['snapshot', 'locations.refresh', 'items.read', 'items.list', 'items.origins', 'deploy.installations', 'github.status', 'repository.status', 'repository.migrationPlan', 'providers.detect', 'agent.jobs', 'publish.jobs', 'context.sessionStart', 'home.list', 'home.read', 'backend.status']);
 const READ_TIMEOUT_MS = 20_000;
 let opening: Promise<unknown> | undefined;
 function ready(): Promise<unknown> {
@@ -12,7 +12,7 @@ function ready(): Promise<unknown> {
   });
 }
 /** Reads that wait on the network or a folder scan by design, and the status probe, which must answer quickly or not at all. */
-const readTimeouts: Record<string, number> = { 'github.status': 45_000, 'repository.migrationPlan': 60_000, 'deploy.installations': 60_000, 'backend.status': 5_000 };
+const readTimeouts: Record<string, number> = { 'locations.refresh': 120_000, 'github.status': 45_000, 'repository.migrationPlan': 60_000, 'deploy.installations': 60_000, 'backend.status': 5_000 };
 /** `fresh` skips a matching read already on its way (an explicit Retry); `timeoutMs` overrides the read timeout, or gives any other call one. */
 export type CallOptions = { fresh?: boolean; timeoutMs?: number };
 /** Rejects with `TIMEOUT: …` once the reply is `ms` late; the call itself may still finish in the backend. */

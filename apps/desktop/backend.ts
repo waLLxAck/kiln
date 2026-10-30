@@ -32,6 +32,7 @@ export class Backend {
   private closing = false;
   /** Called once for every agent run that ends, with what the worker knows about it. */
   onAgentFinished?: (event: RunFinished) => void;
+  onLibraryChanged?: () => void;
   private pending = new Map<number, Pending>();
   /** Calls given up on; a late answer is logged rather than delivered. */
   private abandoned = new Set<number>();
@@ -83,6 +84,7 @@ export class Backend {
     if (reply.ready) { this.ready = true; this.readyAt = at; this.log('worker.ready', { durationMs: at - this.spawnedAt, restarts: this.restarts.length }); this.markOpened(); return; }
     if (reply.fatal) { this.fatal = reply.fatal; return; }
     if (reply.agentFinished) { this.onAgentFinished?.(reply.agentFinished); return; }
+    if (reply.libraryChanged) { this.onLibraryChanged?.(); return; }
     if (reply.telemetry) { if (reply.telemetry.event === 'agent.process') { const { pid, running } = reply.telemetry.fields; if (running) this.agentProcesses.add(pid); else this.agentProcesses.delete(pid); } this.log(reply.telemetry.event, reply.telemetry.fields); return; }
     const id = reply.id ?? reply.started, entry = this.pending.get(id);
     if (!entry) { if (reply.id && this.abandoned.delete(reply.id)) this.log('backend.late', { id: reply.id }); return; }

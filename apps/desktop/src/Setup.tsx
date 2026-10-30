@@ -122,7 +122,7 @@ export function Setup({ snapshot, previous, onAttach, onRefresh, providers, onSe
     </section>
 
     <section className={`setup-step ${ready ? '' : 'disabled'}`}><div className="setup-step-head">{step(3, snapshot.targets.length > 0)}<h2>Choose your providers and folders <small>optional</small></h2></div>
-      <p>Choose the folders you want to manage for your clients. You can import existing skills and agent definitions before installing anything.</p>
+      <p>Choose the folders you want to manage for your clients. Existing and new skills and agent definitions appear in your library automatically as drafts for review.</p>
       <fieldset disabled={!ready || Boolean(busy)} style={{ border: 0, padding: 0, margin: 0 }}><SkillLocationSettings providers={providers} targets={snapshot.targets} onSet={(provider, on, native) => void run('locations', () => onSetLocation(provider, on, native))} onScan={(provider, target) => setScanTarget({ provider, target })} /></fieldset>
     </section>
     <section className={`setup-step ${ready ? '' : 'disabled'}`}><div className="setup-step-head">{step(4, imported.length > 0)}<h2>Bring in the skills and agents you already have <small>optional</small></h2></div>

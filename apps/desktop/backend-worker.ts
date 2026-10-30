@@ -5,6 +5,7 @@ import { Workbench } from '../../packages/domain/workbench';
 import { Router } from '../../packages/domain/router';
 import { WorkbenchError } from '../../packages/domain/errors';
 import { pureReads, requestName } from './backend-routes';
+import { LocalDiscovery } from './local-discovery';
 import { z } from 'zod';
 const log = (event: string, fields?: Record<string, unknown>) => parentPort!.postMessage({ telemetry: { event, fields } });
 const failure = (error: unknown) => ({ code: error instanceof WorkbenchError ? error.code : error instanceof z.ZodError ? 'INVALID_INPUT' : 'OPERATION_FAILED', message: error instanceof Error ? error.message : String(error) });
@@ -35,6 +36,8 @@ const newAgentService = (workbench: Workbench) => {
   return service;
 };
 let agent = newAgentService(wb!);
+const discover = () => new LocalDiscovery(wb, ids => parentPort!.postMessage({ libraryChanged: { imported: ids.length } }), { log });
+let discovery = discover();
 parentPort!.postMessage({ ready: true });
 // One owner and one queue preserve ordering across both desktop windows.
 let queue = Promise.resolve();
@@ -49,9 +52,10 @@ parentPort!.on('message', request => {
         if (agent.running || agent.queued) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
         const next = open(request.args[0]);
-        router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb);
+        discovery.close(); router.fleet.stop(); wb.close(); wb = next; router = new Router(wb, routerOptions); agent = newAgentService(wb); discovery = discover();
         data = { local: wb.local, canonical: wb.canonical };
       } else if (request.method === 'paths') data = { local: wb.local, canonical: wb.canonical };
+      else if (request.method === 'rpc' && request.args[0] === 'locations.refresh') data = discovery.scan(true);
       else if (request.method === 'rpc' && request.args[0] === 'agent.capture') data = agent.capture(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.start') data = agent.start(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.chat') data = agent.chat(request.args[1]);
@@ -73,6 +77,7 @@ parentPort!.on('message', request => {
       }
       // Pull and Push now read the Git state again themselves, in the background (router.ts), so it is not thrown away here.
       if (request.method === 'rpc' && ['git.sync','git.checkpoint','git.merge','git.finishMerge'].includes(request.args[0])) wb.invalidateGit();
+      if (request.method === 'rpc' && ['targets.enroll', 'targets.remove'].includes(request.args[0])) discovery.scan(true);
       for (const id of ids) parentPort!.postMessage({ id, data });
     } catch (error) {
       for (const id of ids) parentPort!.postMessage({ id, error: failure(error) });

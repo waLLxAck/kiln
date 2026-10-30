@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { desktopEnv, showKind } from './fixture';
 
-test('agents live in Library, import intact, edit as drafts and install for their client', async () => {
+test('agents appear automatically in Library, edit as drafts and install for their client', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-agents-ui-'));
   const home = path.join(root, 'home'), folder = path.join(home, '.copilot/agents'); fs.mkdirSync(folder, { recursive: true });
   const source = path.join(folder, 'reviewer.md');
@@ -17,14 +17,7 @@ test('agents live in Library, import intact, edit as drafts and install for thei
     await expect(page.getByRole('button', { name: 'Add agents', exact: true })).toHaveCount(0);
     const target = await page.evaluate(async home => window.kiln.call<any>('targets.enroll', { name: 'Copilot agents', provider: 'copilot', root: home, scope: 'personal' }), home);
     await page.reload();
-    await page.getByRole('button', { name: 'Settings & repository', exact: true }).click();
-    await page.getByText('Client-specific locations', { exact: true }).click();
-    await page.getByRole('button', { name: 'Find skills and agents not in the library', exact: true }).click();
-    await expect(page.getByText('careful-reviewer', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Import all (1)', exact: true }).click();
-    await expect(page.getByRole('dialog').getByText('imported', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Done', exact: true }).click();
-    await page.getByRole('button', { name: /^Library/ }).click();
+    await expect(page.locator('.item-card').filter({ hasText: 'careful-reviewer' })).toBeVisible();
     const imported = await page.evaluate(async () => (await window.kiln.call<any>('snapshot')).items.find((i: any) => i.kind === 'agent'));
     expect(imported.agent).toEqual({ provider: 'copilot', filename: 'reviewer.md' });
     await page.reload();

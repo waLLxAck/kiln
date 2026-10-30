@@ -157,6 +157,7 @@ export default function App() {
   const refresh = useMemo(() => coalesce(async () => {
     lastLoad.current = Date.now();
     setStartupSince(lastLoad.current);
+    await api('locations.refresh');
     setSnapshot(await api<Snapshot>('snapshot', {}, { fresh: true }));
   }), []);
   // Jobs as the screens see them: replaced only when something they show changed, so an idle poll redraws nothing.
@@ -193,6 +194,7 @@ export default function App() {
   // Keep these changes from the Installs rail, Machines and Compare; its dialog is rendered with the others below.
   const keeper = useKeepChanges({ items: snapshot?.items ?? [], installations, perform, refresh, onMessage: setMessage });
   useEffect(() => { void perform(refresh); }, []);
+  useEffect(() => { const changed = () => void refresh().catch(e => setError(errorText(e))); window.addEventListener('kiln:library-changed', changed); return () => window.removeEventListener('kiln:library-changed', changed); }, [refresh]);
   // Detection is optional and starts after the library opens; its failure belongs to the agents card, not the startup screen.
   useEffect(() => {
     if (!snapshot?.root) return;

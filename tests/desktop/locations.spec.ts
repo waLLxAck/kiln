@@ -20,10 +20,10 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
   try {
     const page = await app.firstWindow();
     await expect(page.getByRole('combobox', { name: 'Search library' })).toBeVisible();
-    const item = await page.evaluate(async ({ home, content }) => {
+    const item = await page.evaluate(async ({ home }) => {
       for (const provider of ['codex', 'claude']) await window.kiln.call('targets.enroll', { name: provider, provider, root: home, scope: 'personal' });
-      return window.kiln.call<any>('items.create', { title: 'Review', kind: 'skill', content });
-    }, { home, content });
+      return (await window.kiln.call<any>('snapshot')).items.find((item: any) => item.kind === 'skill');
+    }, { home });
     await page.reload();
     await page.getByRole('button', { name: 'Settings & repository', exact: true }).click();
     await expect(page.getByLabel('Manage Agents', { exact: true })).toBeChecked();
@@ -33,7 +33,7 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
     await expect(card.getByText(`${home}/.claude/agents`, { exact: true })).toBeVisible();
     await expect(card.getByText('unavailable', { exact: true })).toHaveCount(0);
     await page.screenshot({ path: 'artifacts/locations-settings.png' });
-    await card.getByRole('button', { name: 'Find skills and agents not in the library' }).nth(1).click();
+    await card.getByRole('button', { name: 'Inspect folders', exact: true }).nth(1).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Broken link: its destination no longer exists.')).toBeVisible();
     await dialog.getByRole('button', { name: 'Remove broken link', exact: true }).click();
@@ -44,7 +44,7 @@ test('shared locations, native copies and cleanup are clear in Settings and Libr
     await dialog.getByRole('button', { name: 'Done', exact: true }).click();
     await page.getByRole('button', { name: /^Library/ }).click();
     await showKind(page, 'skill');
-    await page.locator('.item-card').filter({ hasText: 'Review' }).click();
+    await page.locator(`.item-card[data-id="${item.id}"]`).click();
     // The item page has no tabs: installs live in the rail's Installs section, open by default.
     const installs = page.getByRole('region', { name: 'Installs', exact: true });
     await expect(installs.getByRole('button', { name: /^Installs/ })).toHaveAttribute('aria-expanded', 'true');
