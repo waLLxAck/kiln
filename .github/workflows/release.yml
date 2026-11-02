@@ -99,23 +99,7 @@ jobs:
           xvfb-run --auto-servernum node scripts/smoke-packaged.mjs "$executable"
       - name: Inspect the macOS apps
         if: runner.os == 'macOS'
-        run: |
-          version=$(node -p "require('./package.json').version")
-          for arch in arm64 x64; do
-            mount="$RUNNER_TEMP/kiln-$arch"
-            hdiutil attach "release/Kiln-$version-$arch.dmg" -nobrowse -readonly -mountpoint "$mount"
-            app="$mount/Kiln.app"
-            lipo -archs "$app/Contents/MacOS/Kiln"
-            codesign -dv --verbose=2 "$app" 2>&1 | tee "$RUNNER_TEMP/codesign-$arch.txt"
-            grep -q 'Signature=adhoc' "$RUNNER_TEMP/codesign-$arch.txt"
-            codesign --verify --deep --strict --verbose=2 "$app"
-            # Not notarized, so Gatekeeper is expected to reject it; print the verdict for the record.
-            spctl --assess --type execute --verbose=2 "$app" || true
-            # The runner is Apple silicon: the arm64 app must start; the x64 one only can if Rosetta is installed.
-            if [ "$arch" = arm64 ]; then node scripts/smoke-packaged.mjs "$app/Contents/MacOS/Kiln"
-            else node scripts/smoke-packaged.mjs "$app/Contents/MacOS/Kiln" || echo "::warning::The x64 app did not start on this arm64 runner (Rosetta may be missing)"; fi
-            hdiutil detach "$mount"
-          done
+        run: bash scripts/inspect-macos.sh
       - uses: actions/upload-artifact@v4
         with:
           name: kiln-${{ runner.os }}
