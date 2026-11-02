@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
  * from the Dock, Finder or a desktop launcher inherits a minimal PATH that usually has none of these.
  */
 export function commonBinFolders(home: string, platform: NodeJS.Platform): string[] {
-  if (platform === 'win32') return [];
+  if (platform === 'win32') return [path.win32.join(home, '.local', 'bin'), path.win32.join(home, 'AppData', 'Local', 'Programs', 'OpenAI', 'Codex', 'bin')];
   return [
     ...(platform === 'darwin' ? ['/opt/homebrew/bin', '/opt/homebrew/sbin'] : ['/home/linuxbrew/.linuxbrew/bin']),
     '/usr/local/bin',
@@ -48,6 +48,6 @@ export function loginShellPath(shell = process.env.SHELL || os.userInfo().shell 
 
 /** The PATH a desktop app on macOS or Linux should use: the login shell's, then what it was started with, then the usual CLI folders. */
 export async function desktopPath(platform: NodeJS.Platform = process.platform, home = os.homedir(), current = process.env.PATH, shell: () => Promise<string | null> = () => loginShellPath()): Promise<string> {
-  if (platform === 'win32') return current ?? '';
+  if (platform === 'win32') return mergePath([current, ...commonBinFolders(home, platform)], ';');
   return mergePath([await shell(), current, commonBinFolders(home, platform).join(':')], ':');
 }

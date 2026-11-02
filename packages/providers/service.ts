@@ -15,6 +15,7 @@ const MISS_TTL_MS = 30_000;
 const VERSION_TTL_MS = 10 * 60_000;
 const found = new Map<string, { executable: string | null; at: number }>();
 const versions = new Map<string, { at: number; value: Promise<{ version: string; error?: string }> }>();
+export function resetProviderDetection() { found.clear(); versions.clear(); }
 const isShim = (file: string) => /\.(cmd|bat)$/i.test(file);
 
 /**
@@ -25,7 +26,8 @@ export function findExecutable(id: ProviderId, searchPath = process.env.PATH ?? 
   const key = `${platform}\0${id}\0${searchPath}`, cached = found.get(key);
   if (cached && (cached.executable ? fs.existsSync(cached.executable) : Date.now() - cached.at < MISS_TTL_MS)) return cached.executable;
   const extensions = platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
-  const executable = searchPath.split(platform === 'win32' ? ';' : path.delimiter).filter(Boolean).flatMap(dir => extensions.map(ext => path.join(dir.replace(/^"|"$/g, ''), id + ext))).find(file => { try { return fs.statSync(file).isFile(); } catch { return false; } }) ?? null;
+  const directories = searchPath.split(platform === 'win32' ? ';' : path.delimiter).filter(Boolean);
+  const executable = extensions.flatMap(ext => directories.map(dir => path.join(dir.replace(/^"|"$/g, ''), id + ext))).find(file => { try { return fs.statSync(file).isFile(); } catch { return false; } }) ?? null;
   found.set(key, { executable, at: Date.now() });
   return executable;
 }

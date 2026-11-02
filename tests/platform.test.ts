@@ -17,9 +17,9 @@ test('the desktop PATH on macOS and Linux prefers the login shell, keeps the inh
   const linux = await desktopPath('linux', '/home/ada', '/usr/bin', async () => null);
   assert.equal(linux.split(':')[0], '/usr/bin');
   assert.ok(linux.split(':').includes('/home/linuxbrew/.linuxbrew/bin') && !linux.includes('/opt/homebrew'));
-  // Windows keeps its PATH untouched and never asks a shell.
-  assert.equal(await desktopPath('win32', 'C:\\Users\\ada', 'C:\\Windows', async () => { throw new Error('not called'); }), 'C:\\Windows');
-  assert.deepEqual(commonBinFolders('C:\\Users\\ada', 'win32'), []);
+  // Windows keeps inherited entries first, adds native installer locations, and never asks a shell.
+  assert.equal((await desktopPath('win32', 'C:\\Users\\ada', 'C:\\Windows', async () => { throw new Error('not called'); })).split(';')[0], 'C:\\Windows');
+  assert.equal(commonBinFolders('C:\\Users\\ada', 'win32').length, 2);
 });
 
 test('the login shell PATH is read between markers, ignoring what startup files print', () => {

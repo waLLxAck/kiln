@@ -48,6 +48,7 @@ parentPort!.on('message', request => {
     for (const id of ids) parentPort!.postMessage({ started: id });
     try {
       let data;
+      if (request.method === 'rpc' && ['agent.start', 'agent.capture', 'agent.chat'].includes(request.args[0]) && router.clients.installing) throw new Error('Wait for the CLI installation or update to finish before starting an agent.');
       if (request.method === 'attach') {
         if (agent.running || agent.queued) throw new Error('Wait for or cancel active Codex runs before changing libraries.');
         if (router.publisher.busy) throw new Error('An approval is still being pushed to GitHub. Wait for it to finish before changing libraries.');
@@ -56,6 +57,10 @@ parentPort!.on('message', request => {
         data = { local: wb.local, canonical: wb.canonical };
       } else if (request.method === 'paths') data = { local: wb.local, canonical: wb.canonical };
       else if (request.method === 'rpc' && request.args[0] === 'locations.refresh') data = discovery.scan(true);
+      else if (request.method === 'rpc' && request.args[0] === 'providers.install') {
+        if (agent.running || agent.queued) throw new Error('Wait for active agent runs to finish before installing or updating a CLI.');
+        data = await router.call(request.args[0], request.args[1]); agent.invalidateModels();
+      }
       else if (request.method === 'rpc' && request.args[0] === 'agent.capture') data = agent.capture(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.start') data = agent.start(request.args[1]);
       else if (request.method === 'rpc' && request.args[0] === 'agent.chat') data = agent.chat(request.args[1]);
@@ -97,6 +102,6 @@ parentPort!.on('message', request => {
   // So do calls that wait on the network or the Git queue (pulls, merges, the Settings Git buttons, installing what is marked
   // after its fetch, fetching a GitHub repository to import): the Git queue orders them, and their local changes are made in one
   // synchronous step once the wait is over, so nothing queued behind them waits for GitHub.
-  if (request.method === 'rpc' && ['agent.jobs', 'agent.job', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine', 'usage.scan', 'usage.report', 'usage.item', 'usage.prices', 'git.sync', 'sync.pull', 'sync.push', 'git.merge', 'git.finishMerge', 'skills.sync', 'repos.import', 'repos.source'].includes(request.args[0])) void run();
+  if (request.method === 'rpc' && ['agent.jobs', 'agent.job', 'agent.chatHistory', 'agent.models', 'agent.cancel', 'publish.jobs', 'github.status', 'github.repositories', 'github.kilnRepositories', 'github.defaultRepository', 'github.loginStatus', 'providers.detect', 'providers.updates', 'providers.install', 'settings.youtubeSources', 'repository.defaultParent', 'repository.inspect', 'sync.status', 'sync.fetch', 'fleet.view', 'repos.scan', 'repos.preview', 'repos.registries', 'repos.mine', 'usage.scan', 'usage.report', 'usage.item', 'usage.prices', 'git.sync', 'sync.pull', 'sync.push', 'git.merge', 'git.finishMerge', 'skills.sync', 'repos.import', 'repos.source'].includes(request.args[0])) void run();
   else queue = queue.then(() => run());
 });

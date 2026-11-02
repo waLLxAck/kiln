@@ -10,7 +10,9 @@ import { readInvocation, setModelInvocation } from './invocation';
 import { checkpoint, gitDiff, gitStatus, inventory, sync } from '../git/service';
 import { Publisher, type Composer } from '../git/publish';
 import { codexDescriber, type Describer } from '../agent/summarise';
-import { detectProviders } from '../providers/service';
+import { detectProviders, resetProviderDetection } from '../providers/service';
+import { OfficialClients } from '../providers/clients';
+import { browserSources } from '../providers/browsers';
 import { WorkbenchError } from './errors';
 import { conflicts, finishMerge, mergeFetched, resolveItemConflict } from '../git/conflicts';
 import { findDefaultRepository, githubLoginStatus, githubState, listGitHubRepositories, listKilnRepositories, cloneGitHub, publishGitHub, startGitHubLogin } from '../git/github';
@@ -42,6 +44,7 @@ const reportTriggers = new Set(['skills.invocation', 'skills.install', 'skills.r
  */
 export type InvocationResult = { itemId: string; title: string; revision: string; changed: boolean; approval: 'carried' | 'draft'; invocation: SkillInvocation; update: UpdateResult | null };
 export class Router {
+  readonly clients: OfficialClients;
   readonly deployments: DeploymentService;
   readonly publisher: Publisher;
   /**
@@ -78,6 +81,7 @@ export class Router {
     this.publisher = new Publisher(wb, options.log, options.composer, this.gitQueue, this.fetcher);
     this.describer = options.describer !== undefined ? options.describer : options.composer === null ? null : codexDescriber;
     this.log = options.log ?? (() => {});
+    this.clients = new OfficialClients({ stateFile: path.join(path.dirname(wb.local), 'official-clients.json'), onProcess: (pid, running) => this.log('agent.process', { pid, running }) });
     this.fleet = new FleetService(wb, this.deployments, { ...options.fleet, log: this.log }, { queue: this.gitQueue, fetcher: this.fetcher });
     this.home = options.home ?? new HomeFiles({ privateRoot: path.dirname(wb.local), projects: () => wb.targets().filter(t => t.scope === "project").map(t => t.root) });
     this.repos = new RepoImports(wb);
@@ -176,6 +180,7 @@ export class Router {
       case 'publish.jobs': return this.publisher.list();
       case 'publish.retry': return this.publisher.retry(z.object({ id: idSchema }).parse(args).id);
       case 'settings.youtube': return this.wb.saveYouTubeAuth(args);
+      case 'settings.youtubeSources': return browserSources(undefined, undefined, undefined, this.wb.settings());
       case 'settings.distill': return this.wb.saveDistillTypes(args);
       case 'home.list': return this.home.list();
       case 'home.read': return this.home.read(z.object({ key: z.string() }).parse(args).key);
@@ -290,7 +295,12 @@ export class Router {
       case 'deploy.drift': return this.deployments.drift();
       case 'deploy.compare': return this.deployments.compare(args);
       case 'deploy.recover': return this.deployments.recover();
-      case 'providers.detect': return detectProviders();
+      case 'providers.detect': {
+        if (z.object({ refresh: z.boolean().default(false) }).parse(args).refresh) resetProviderDetection();
+        return detectProviders();
+      }
+      case 'providers.updates': return this.clients.updates(z.object({ force: z.boolean().default(false) }).parse(args).force);
+      case 'providers.install': return this.clients.install(args);
       case 'observations.list': return this.wb.observations();
       case 'git.inventory': return inventory(z.object({ root: z.string().min(1) }).parse(args).root);
       case 'git.diff': return gitDiff(this.wb.root);

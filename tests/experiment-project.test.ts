@@ -89,6 +89,7 @@ test('changing the project while an item is running never silently reuses a diff
 test('a folder removed during model resolution fails the trial without starting a provider', async () => {
   const f = fixture();
   try {
+    f.wb.saveSettings({ ...f.wb.settings(), codexModel: '', codexEffort: '' });
     let launched = false;
     const service = new AgentService(f.wb, () => {}, async () => { launched = true; }, async () => { fs.rmdirSync(f.workspace); return []; });
     const job = service.start({ id: f.item.id, kind: 'trial', provider: 'codex', workspace: f.workspace });

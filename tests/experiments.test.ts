@@ -18,7 +18,7 @@ test('a 0.22.0 settings file with experiment switches still opens, and the switc
     assert.equal(wb.settings().theme, 'dark');
     assert.equal('experiments' in wb.settings(), false);
     fs.writeFileSync(path.join(wb.local, 'settings.json'), JSON.stringify({ experiments: 'yes please' }));
-    assert.equal(wb.settings().theme, 'light');
+    assert.equal(wb.settings().theme, 'dark');
   } finally { wb.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 test('saving preferences drops the old experiments map from the file', () => {

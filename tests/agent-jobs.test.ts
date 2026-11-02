@@ -97,7 +97,7 @@ test('agent.jobs lists summaries without steps or bulky results; agent.job retur
     assert.deepEqual(summary.result, { judgement: 'pass' }, 'only what lists show of the result');
     assert.equal((full.result as typeof verdict).output, verdict.output);
     assert.equal(jobSignature(summary), jobSignature(full), 'a summary and its record have the same signature');
-    assert.equal(summary.status, 'completed'); assert.ok(summary.lastActivityAt); assert.equal(summary.model, 'gpt-test');
+    assert.equal(summary.status, 'completed'); assert.ok(summary.lastActivityAt); assert.equal(summary.model, 'gpt-6.1-sol');
     assert.ok(JSON.stringify(service.list()).length * 10 < JSON.stringify(full).length, 'the list is a small fraction of the record');
     assert.throws(() => service.job({ id: randomUUID() }), /no longer on this machine/);
     // Progress is batched, and the record on disk ends complete.
@@ -136,6 +136,7 @@ test('a failed final save frees the slot: the queued run starts, every run is an
 test('a model catalog that hangs can be cancelled, and a failed one is not kept', async (t) => {
   const { wb } = fixture();
   try {
+    wb.saveSettings({ ...wb.settings(), codexModel: '', codexEffort: '' });
     let asked = 0; const ran: string[] = [];
     const service = new AgentService(wb, () => {}, async input => { ran.push(input.folder); return verdict; }, () => { asked++; return new Promise<never>(() => {}); });
     const item = wb.create({ title: 'Prompt', kind: 'prompt', content: 'Try it' });

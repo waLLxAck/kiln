@@ -124,13 +124,19 @@ Setup checks the signed-in GitHub CLI account for `my-kiln` and offers **Use thi
 
 After installing, start Kiln from its Start Menu or Desktop shortcut on Windows, from Applications on macOS, or from the AppImage, the unpacked tar.gz or your applications menu on Linux. (For builds you made yourself, see [DEVELOPMENT.md](DEVELOPMENT.md#run-a-local-build).)
 
-While the library opens, Kiln shows its progress and waits before starting ordinary reads, including Quick search. If opening fails or takes more than two minutes, **Retry** tries again. Agent detection starts after the library is available; detection failures appear under **Settings → Official agents**, where **Detect again** retries without blocking the library.
+While the library opens, Kiln shows its progress and waits before starting ordinary reads, including Quick search. If opening fails or takes more than two minutes, **Retry** tries again. Agent detection starts after the library is available; detection failures appear under **Settings → Official agents**, where **Check for updates** retries without blocking the library.
 
 Closing the window keeps Kiln in the tray (the menu bar on macOS); use **Quit Kiln** there to exit, or Cmd+Q on macOS. Linux desktops without a tray (GNOME without an AppIndicator extension) show no icon: quit from **File → Quit** (press Alt to show the menu bar), and opening Kiln again brings the window back.
 
+Dark mode is the default. Saved light, dark or system theme choices stay available in Settings.
+
+**Settings → Official agents** shows each detected CLI’s version. **Install Codex** and **Install Claude Code** run the [official Codex](https://learn.chatgpt.com/docs/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup) native installers when a CLI is missing. **Check for updates** looks up the latest versions; when a newer release exists, **Update to …** installs it and refreshes detection. Installation is explicit, and sign-in remains in the official client. Finish active agent runs before updating.
+
+The main Codex default is **GPT‑6.1 Sol / xhigh**. CLI commit messages default to **GPT‑6 Luna / low**; desktop saves and approvals use plain notes without a model. Custom selections stay saved.
+
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.25.7](releases/0.25.7.md).
+See [what changed in 0.25.8](releases/0.25.8.md).
 
 ## Quick search
 
@@ -260,7 +266,7 @@ PDFs with selectable text and supported text files are read by Kiln before analy
 
 Paste a bare YouTube link into Capture and its main action becomes **Distill video**. Kiln fetches the captions and metadata with `yt-dlp` (auto-captions, English first; nothing else is downloaded), keeps the cleaned transcript as `transcript.md` on the video's source item, and asks the chosen agent for library entries of the types chosen in Settings: ready-to-paste prompts, tools with what they do and their official URL, techniques as numbered steps, resources, only the insights that change what you would do, and rules for your agents' instruction files.
 
-**YouTube verification.** If YouTube says “Sign in to confirm you’re not a bot”, open the video in your browser, sign in and complete any verification. Go to **Settings → YouTube**, choose that browser and click **Save YouTube settings**, then retry the failed distillation. If you use multiple profiles, enter the profile name or folder path. The browser choice stays in machine-private settings; `yt-dlp` reads the cookies locally when fetching captions. Kiln does not choose a browser automatically.
+**YouTube verification.** If YouTube says “Sign in to confirm you’re not a bot”, open the video in your browser, sign in and complete any verification. Go to **Settings → YouTube**, choose that browser and click **Save YouTube settings**, then retry the failed distillation. Only browsers and profile folders found on this machine are listed. Choose a profile folder, or use **Most recently used profile**. The browser choice stays in machine-private settings; `yt-dlp` reads the cookies locally when fetching captions. Kiln does not choose a browser automatically.
 
 The selected browser takes precedence over `~/cookies.txt`. With **No browser** selected, Kiln still uses that file if present, and otherwise leaves authentication to your `yt-dlp` configuration. If your browser’s cookies cannot be read, follow [yt-dlp’s YouTube cookie export instructions](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies), save the exported file as `cookies.txt` in your home folder and choose **No browser**. Cookies can expire; if verification returns, complete it in the selected browser or export fresh cookies.
 

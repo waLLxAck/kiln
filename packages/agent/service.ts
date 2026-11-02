@@ -251,6 +251,7 @@ export class AgentService {
     this.flushTimer.unref?.();
   }
   /** Codex models the installed CLI offers. A list that loaded is kept for ten minutes; a failure yields an empty list and is asked again after thirty seconds. */
+  invalidateModels() { this.catalogCache = undefined; this.catalogFailedAt = 0; }
   models(): Promise<CodexModel[]> {
     if (this.catalogCache && Date.now() - this.catalogCache.at < CATALOG_TTL_MS) return Promise.resolve(this.catalogCache.models);
     if (Date.now() - this.catalogFailedAt < CATALOG_RETRY_MS) return Promise.resolve([]);

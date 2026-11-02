@@ -48,7 +48,7 @@ app.on('will-quit', () => { globalShortcut.unregisterAll(); backend?.close(); })
 /** Quick search: a list beside a preview with variable fields needs more room than a plain list. */
 const PALETTE = { width: 860, height: 560 };
 function createWindow(compact: boolean) {
-  const window = new BrowserWindow({ width: compact ? PALETTE.width : 1440, height: compact ? PALETTE.height : 940, minWidth: compact ? 600 : 1000, minHeight: compact ? 350 : 650, show: false, icon: path.join(app.getAppPath(), 'assets/kiln.png'), title: 'Kiln', backgroundColor: '#f5f5f8', autoHideMenuBar: true, ...(compact ? { frame: false, resizable: false, skipTaskbar: true } : {}), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+  const window = new BrowserWindow({ width: compact ? PALETTE.width : 1440, height: compact ? PALETTE.height : 940, minWidth: compact ? 600 : 1000, minHeight: compact ? 350 : 650, show: false, icon: path.join(app.getAppPath(), 'assets/kiln.png'), title: 'Kiln', backgroundColor: '#17171d', autoHideMenuBar: true, ...(compact ? { frame: false, resizable: false, skipTaskbar: true } : {}), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
@@ -330,7 +330,7 @@ async function desktopCall(method: string, args: unknown, sender: BrowserWindow)
 if (singleInstance) void app.whenReady().then(async () => {
   // Apps opened from the Dock, Finder or a desktop launcher get a minimal PATH; take the login shell's so codex, claude, git and gh are found.
   // Set before the backend worker starts, which copies the environment.
-  if (app.isPackaged && process.platform !== 'win32') { process.env.PATH = await desktopPath(); log('path.resolved', { entries: process.env.PATH.split(':').length }); }
+  if (app.isPackaged) { process.env.PATH = await desktopPath(); log('path.resolved', { entries: process.env.PATH.split(path.delimiter).length }); }
   // Machine reports name the app version they were written by.
   process.env.KILN_APP_VERSION = app.getVersion();
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.

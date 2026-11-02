@@ -46,10 +46,11 @@ export type Captured = { code: number | null; output: string; stdout: string; st
  * Runs a short command to the end and keeps the last `limit` characters of its output (`output` interleaves both streams). A timeout or
  * the signal stops its whole tree; the promise still settles if a grandchild keeps the pipes open. Rejects only when it cannot start.
  */
-export function capture(executable: string, args: string[], options: { timeoutMs: number; signal?: AbortSignal; cwd?: string; env?: NodeJS.ProcessEnv; limit?: number }): Promise<Captured> {
+export function capture(executable: string, args: string[], options: { timeoutMs: number; signal?: AbortSignal; cwd?: string; env?: NodeJS.ProcessEnv; limit?: number; onProcess?: (pid: number, running: boolean) => void }): Promise<Captured> {
   const limit = options.limit ?? 1_000_000;
   if (options.signal?.aborted) return Promise.resolve({ code: null, output: '', stdout: '', stderr: '', timedOut: false, cancelled: true });
   const child = spawn(executable, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'], ...treeOptions() });
+  if (child.pid) options.onProcess?.(child.pid, true);
   let stdout = '', stderr = '', output = '', timedOut = false, cancelled = false;
   const keep = (text: string, data: unknown) => (text + String(data)).slice(-limit);
   child.stdout!.on('data', data => { stdout = keep(stdout, data); output = keep(output, data); });
@@ -57,7 +58,7 @@ export function capture(executable: string, args: string[], options: { timeoutMs
   const cancel = () => { cancelled = true; killTree(child); };
   const timer = setTimeout(() => { timedOut = true; killTree(child); }, options.timeoutMs);
   options.signal?.addEventListener('abort', cancel, { once: true });
-  const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); };
+  const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); if (child.pid) options.onProcess?.(child.pid, false); };
   return settled(child).then(({ code }) => { cleanup(); return { code, output, stdout, stderr, timedOut, cancelled }; }, error => { cleanup(); throw error; });
 }
 

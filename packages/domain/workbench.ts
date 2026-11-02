@@ -1138,7 +1138,13 @@ export class Workbench {
   }
   settings(): Settings {
     const file = path.join(this.local, 'settings.json');
-    const stored = z.object({ ...youtubeAuthSchema.shape, shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('light'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.string()).catch([]).default([]) }).parse(fs.existsSync(file) ? readJson(file) : {});
+    const exists = fs.existsSync(file), previous = z.record(z.string(), z.unknown()).parse(exists ? readJson(file) : {});
+    const stored = z.object({ ...youtubeAuthSchema.shape, shortcut: z.string().min(1).default('CommandOrControl+Shift+Space'), launchAtLogin: z.boolean().default(false), theme: z.enum(['light', 'dark', 'system']).default('dark'), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default('gpt-6.1-sol'), codexEffort: z.string().max(20).default('xhigh'), commitModel: z.string().max(80).default('gpt-6-luna'), commitEffort: z.string().max(20).default('low'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.string()).catch([]).default([]) }).parse(previous);
+    if (previous.defaultsVersion !== 1) {
+      if (!previous.codexModel && !previous.codexEffort) { stored.codexModel = 'gpt-6.1-sol'; stored.codexEffort = 'xhigh'; }
+      if ((!previous.commitModel || previous.commitModel === 'gpt-5.6-luna') && (!previous.commitEffort || previous.commitEffort === 'medium')) { stored.commitModel = 'gpt-6-luna'; stored.commitEffort = 'low'; }
+      if (exists) writeJson(file, { ...previous, ...stored, defaultsVersion: 1 });
+    }
     // Unknown types (from a newer or older build) are ignored; turning every type off is read as the default, all on.
     const off = entryTypes.filter(type => stored.distillOff.includes(type));
     stored.distillOff = off.length < entryTypes.length ? off : [];
@@ -1297,8 +1303,8 @@ export class Workbench {
     });
   }
   saveSettings(input: unknown) {
-    const value = z.object({ ...youtubeAuthSchema.shape, shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default(''), codexEffort: z.string().max(20).default(''), commitModel: z.string().max(80).default('gpt-5.6-luna'), commitEffort: z.string().max(20).default('medium'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.enum(entryTypes)).default([]).refine(off => new Set(off).size < entryTypes.length, 'Keep at least one entry type for distillation.') }).parse(input);
-    writeJson(path.join(this.local, 'settings.json'), value); return this.settings();
+    const value = z.object({ ...youtubeAuthSchema.shape, shortcut: z.string().min(1).max(100), launchAtLogin: z.boolean(), theme: z.enum(['light', 'dark', 'system']), agentProvider: z.enum(['codex', 'claude']).default('codex'), codexModel: z.string().max(80).default('gpt-6.1-sol'), codexEffort: z.string().max(20).default('xhigh'), commitModel: z.string().max(80).default('gpt-6-luna'), commitEffort: z.string().max(20).default('low'), updateSource: z.string().max(1000).default(''), distillOff: z.array(z.enum(entryTypes)).default([]).refine(off => new Set(off).size < entryTypes.length, 'Keep at least one entry type for distillation.') }).parse(input);
+    writeJson(path.join(this.local, 'settings.json'), { ...value, defaultsVersion: 1 }); return this.settings();
   }
   /** Browser choice and profile stay in machine-private settings; cookies are read by yt-dlp only. */
   saveYouTubeAuth(input: unknown) {
