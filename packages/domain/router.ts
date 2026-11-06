@@ -183,7 +183,9 @@ export class Router {
       try { pull = await this.gitQueue.run(() => this.pull()); }
       catch (error) { pull = { status: 'unavailable', reason: error instanceof Error ? error.message : String(error) }; }
     } else pull = { status: 'unavailable', reason: 'This library is not a Git repository on GitHub; installing what it already has.' };
+    const history = this.fleet.seenApprovals();
     const installs = await this.fleet.sync({ force, newApprovals: true, fetchAgeMs: 60_000 });
+    const warning = 'problem' in history ? `Newly approved skills were not checked: Kiln's record of approvals it has already seen can't be read (${history.problem}). Repair or delete fleet/seen-approved.json in Kiln's private data, then sync again.` : '';
     // Publish every install wish that differs from the last commit, including ones left unpublished before this run.
     if (this.autoSyncReady()) {
       const file = path.relative(this.wb.root, path.join(this.wb.canonical, 'installs.json')).split(path.sep).join('/');
@@ -191,7 +193,7 @@ export class Router {
       const current = this.wb.installs();
       for (const id of new Set([...Object.keys(committed), ...Object.keys(current)])) if (JSON.stringify(committed[id]) !== JSON.stringify(current[id])) this.installsChanged.add(id);
     }
-    return { fetchError, pull, installs };
+    return { fetchError, pull, installs, ...(warning ? { warning } : {}) };
   }
   /** Pushes this machine's commits, merging GitHub's first when it has moved on, and marks failed approvals that went with them done. */
   private async pushWaiting() {

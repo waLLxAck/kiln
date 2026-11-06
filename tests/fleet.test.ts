@@ -475,10 +475,19 @@ test('a new approval waits until a location is set up, and a skipped location st
     const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
     a.router.approve(approveArgs(item)); await a.router.publisher.idle();
     assert.deepEqual((await sync()).installs, [], 'no Claude or Agents location yet');
+    // A damaged history: the pass is skipped with a warning and the file is left for the person to repair.
+    const seenFile = path.join(a.wb.local, 'fleet', 'seen-approved.json');
+    fs.mkdirSync(path.dirname(seenFile), { recursive: true }); fs.writeFileSync(seenFile, '{not json');
+    a.wb.enroll({ name: 'Claude', root: a.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    const damaged = await a.router.call('library.sync', {}) as Synced & { warning?: string };
+    assert.deepEqual(damaged.installs, []);
+    assert.match(damaged.warning ?? '', /seen-approved\.json/);
+    assert.equal(fs.readFileSync(seenFile, 'utf8'), '{not json');
+    fs.rmSync(seenFile);
     assert.equal(a.wb.installs()[item.id], undefined);
 
     // A different folder of the same name is already in Agents: Claude installs, Agents is skipped but stays wanted.
-    for (const provider of ['claude', 'codex'] as const) a.wb.enroll({ name: provider === 'claude' ? 'Claude' : 'Agents', root: a.home, provider, scope: 'personal', profile: 'Personal' });
+    a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
     const theirs = path.join(a.home, '.agents', 'skills', 'careful-review'); fs.mkdirSync(theirs, { recursive: true }); fs.writeFileSync(path.join(theirs, 'SKILL.md'), 'someone else’s skill');
     assert.deepEqual((await sync()).installs.map(e => [e.provider, e.result, e.newApproval]), [['claude', 'installed approved revision', true], ['codex', 'skipped: a different folder of this name is already there', true]]);
     assert.deepEqual(a.wb.installs()[item.id], ['claude', 'codex']);

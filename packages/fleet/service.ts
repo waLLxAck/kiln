@@ -215,12 +215,19 @@ export class FleetService {
    * looked at once (`seen-approved.json`, machine-private), so a skill removed on purpose stays removed; one found while neither
    * location is set up here stays new until one is.
    */
+  private get seenFile() { return path.join(this.folder, 'seen-approved.json'); }
+  /** The approvals `newApprovals` already looked at, or why they can't be read (that pass is then skipped and the file left as it is). */
+  seenApprovals(): { seen: Set<string> } | { problem: string } {
+    try {
+      const parsed = z.array(z.string()).safeParse(fs.existsSync(this.seenFile) ? readJson(this.seenFile) : []);
+      return parsed.success ? { seen: new Set(parsed.data) } : { problem: 'it is not a list of item IDs' };
+    } catch (error) { return { problem: error instanceof Error ? error.message : String(error) }; }
+  }
   private newApprovals(options: SyncOptions) {
-    const file = path.join(this.folder, 'seen-approved.json'), entries: SyncEntry[] = [];
-    let stored: unknown = [];
-    // A damaged file is treated as empty: the receipt and installs.json checks below still keep removed skills removed.
-    try { if (fs.existsSync(file)) stored = readJson(file); } catch (error) { this.log('fleet.seen.unreadable', { message: error instanceof Error ? error.message : String(error) }); }
-    const seen = new Set(z.array(z.string()).catch([]).parse(stored));
+    const file = this.seenFile, entries: SyncEntry[] = [], history = this.seenApprovals();
+    // Rebuilding a damaged history could take a skill removed here for a new one; leave it for the person to repair or delete.
+    if ('problem' in history) { this.log('fleet.seen.unreadable', { message: history.problem }); return entries; }
+    const { seen } = history;
     const installs = this.wb.installs(), targets = this.wb.targets(), handled = new Set(this.deployments.receipts().map(r => r.itemId));
     const places = (['claude', 'codex'] as const).flatMap(provider => { const target = this.deployments.personalTarget(provider, targets); return target ? [{ provider, target }] : []; });
     for (const itemId of new Set(this.wb.approvals().filter(a => a.trust === 'local').map(a => a.itemId))) {
@@ -234,7 +241,7 @@ export class FleetService {
       }
       seen.add(itemId);
     }
-    writeJson(file, [...seen].sort());
+    try { writeJson(file, [...seen].sort()); } catch (error) { this.log('fleet.seen.unwritable', { message: error instanceof Error ? error.message : String(error) }); }
     if (entries.length) this.changed();
     return entries;
   }

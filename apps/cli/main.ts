@@ -119,7 +119,7 @@ Manual trials need no API key.
 Deployment requires an enrolled root, exact approval and confirm:true.
 `;
 /** `kiln sync` in a form that reads at a glance: what the pull did, then installs by outcome, one line per skill and place. */
-function syncSummary(wb: Workbench, synced: { fetchError: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] }) {
+function syncSummary(wb: Workbench, synced: { fetchError: string; warning?: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] }) {
   const title = (id: string) => { try { return wb.getItem(id).title; } catch { return id; } };
   const { pull } = synced;
   const pulled = pull.status === 'pulled' || pull.status === 'merged' ? `${pull.status} ${pull.count} commit${pull.count === 1 ? '' : 's'} from GitHub`
@@ -144,7 +144,7 @@ function syncSummary(wb: Workbench, synced: { fetchError: string; pull: { status
     }
     else groups.failed.push(`${line(e)}: ${e.result.replace(/^failed: /, '')}`);
   }
-  return { pull: pulled, ...(synced.fetchError ? { fetchError: synced.fetchError } : {}), ...(pull.pushError ? { pushError: pull.pushError } : {}), installed: groups.installed, replaced: groups.replaced, skipped: groups.skipped, failed: groups.failed, alreadyCurrent: current, ...(trashed ? { inTrash: trashed } : {}), ...(forceable ? { hint: `kiln sync --force sets the ${forceable} edited, deleted, linked or differing folder${forceable === 1 ? '' : 's'} above aside (kept under the private replaced folder) and installs the approved revisions.` } : {}), ...(groups.installed.length || groups.replaced.length ? { note: 'Start a new agent session to load the new skills.' } : {}) };
+  return { pull: pulled, ...(synced.fetchError ? { fetchError: synced.fetchError } : {}), ...(synced.warning ? { warning: synced.warning } : {}), ...(pull.pushError ? { pushError: pull.pushError } : {}), installed: groups.installed, replaced: groups.replaced, skipped: groups.skipped, failed: groups.failed, alreadyCurrent: current, ...(trashed ? { inTrash: trashed } : {}), ...(forceable ? { hint: `kiln sync --force sets the ${forceable} edited, deleted, linked or differing folder${forceable === 1 ? '' : 's'} above aside (kept under the private replaced folder) and installs the approved revisions.` } : {}), ...(groups.installed.length || groups.replaced.length ? { note: 'Start a new agent session to load the new skills.' } : {}) };
 }
 if (args.includes('--help') || args.length === 0) { process.stdout.write(help); process.exit(0); }
 async function main() {
@@ -234,7 +234,7 @@ try {
   else if (resource === 'usage' && action === 'item') result = router.call('usage.item', { itemId: id, days: Number(option('days', '30')) || 30 });
   else if (resource === 'library' && action === 'sync') {
     const started = new Date().toISOString();
-    const synced = await router.call('library.sync', { force: Boolean(option('force')) }) as { fetchError: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] };
+    const synced = await router.call('library.sync', { force: Boolean(option('force')) }) as { fetchError: string; warning?: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] };
     // installs.json gains the newly approved skills; commit and push that before exiting, as the desktop would shortly after.
     router.flushOrganisation(); await router.publisher.idle();
     const organised = router.publisher.list().find(job => job.action === 'organise' && job.startedAt >= started);
