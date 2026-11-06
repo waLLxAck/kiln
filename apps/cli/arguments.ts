@@ -17,6 +17,7 @@ const commandOptions: Record<string, string[]> = {
   'approvals approve': ['input', 'human-reviewed'],
   'library export': ['file'],
   'library import': ['file'],
+  'library sync': ['force'],
   'home list': [],
   'home read': [],
   'home backups': [],
@@ -50,7 +51,8 @@ const knownOptions = new Set([...globalOptions, ...Object.values(commandOptions)
 export function parseArguments(args: string[]) {
   const positional: string[] = [], options = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
-    const token = args[i];
+    // -f is the one short flag: --force, as in `kiln sync -f`.
+    const token = args[i] === '-f' ? '--force' : args[i];
     if (!token.startsWith('-')) { positional.push(token); continue; }
     const name = token.slice(2);
     if (!token.startsWith('--') || !knownOptions.has(name)) throw new WorkbenchError('INVALID_INPUT', `Unknown option: ${token}. See --help.`);
@@ -60,6 +62,8 @@ export function parseArguments(args: string[]) {
     if (!value || value.startsWith('--')) throw new WorkbenchError('INVALID_INPUT', `Missing value for ${token}.`);
     options.set(name, value);
   }
+  // `kiln sync` is the everyday command for catching a machine up; it is `library sync`.
+  if (positional.length === 1 && positional[0] === 'sync') positional.unshift('library');
   const [resource, action, ...ids] = positional;
   if (!resource || !action) throw new WorkbenchError('INVALID_INPUT', 'Provide a resource and action. See --help.');
   const command = `${resource} ${action}`;

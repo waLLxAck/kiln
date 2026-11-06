@@ -18,7 +18,8 @@ const MAX_MACHINES = 200, MAX_REPORT_BYTES = 2_000_000;
 export type FleetOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Version of the running app; empty keeps the one already published (the CLI doesn't know it). */ appVersion?: string; /** Quiet time after a change before the report is published. */ debounceMs?: number; /** A report older than this is published again even when nothing changed, so "last reported" stays meaningful. */ heartbeatMs?: number; /** Minimum time between fetches when the Machines view opens; a report rides a background fetch younger than this. */ fetchEveryMs?: number };
 /** The Git queue and background fetch shared with approvals and background sync, so reports never race them. */
 export type FleetGit = { queue: GitQueue; fetcher: BackgroundFetch };
-export type SyncEntry = { itemId: string; provider?: ProviderId | 'codex-native'; location?: string; label?: string; result: string };
+export type SyncEntry = { itemId: string; provider?: ProviderId | 'codex-native'; location?: string; label?: string; result: string; /** Installed because it was approved since this machine last looked, not because the library listed it. */ newApproval?: true };
+export type SyncOptions = { /** Set copies edited here aside and install the approved revision over them. */ force?: boolean; /** Also install skills approved since the last sync that nothing lists yet (`newApprovals`). */ newApprovals?: boolean; /** A fetch younger than this counts (one the caller just made). */ fetchAgeMs?: number };
 
 /**
  * The fleet: this machine's identity, its report in the library, and the other machines' reports.
@@ -198,13 +199,43 @@ export class FleetService {
    * Fetches first: marks are made on other machines and pushed to GitHub, and nobody should have to pull just to see them.
    * Offline, it installs what the last fetch saw.
    */
-  async sync(): Promise<SyncEntry[]> {
-    if (await this.tracking() && this.wb.repositoryState().ready) await this.background.fetcher.fetch();
+  async sync(options: SyncOptions = {}): Promise<SyncEntry[]> {
+    if (await this.tracking() && this.wb.repositoryState().ready) await this.background.fetcher.fetch(options.fetchAgeMs ?? 0);
     const wanted = await this.wantedAsync();
     // One read of the approvals for every entry below, instead of several per install (DeploymentService.batch).
-    return this.deployments.batch(() => this.syncWanted(this.deployments.syncInstalls(), wanted));
+    return this.deployments.batch(() => {
+      const entries = this.syncWanted(this.deployments.syncInstalls(options), wanted, options);
+      return options.newApprovals ? [...entries, ...this.newApprovals(options)] : entries;
+    });
   }
-  private syncWanted(entries: SyncEntry[], wanted: Awaited<ReturnType<FleetService['wantedAsync']>>) {
+  /**
+   * Skills approved (on any machine) that nothing lists yet: no entry in installs.json and no Kiln install, past or present, on this
+   * machine. Each goes into this machine's Claude and Agents folders and into installs.json, so other machines follow. An item is
+   * looked at once (`seen-approved.json`, machine-private), so a skill removed on purpose stays removed; one that couldn't be installed
+   * is tried again next time.
+   */
+  private newApprovals(options: SyncOptions) {
+    const file = path.join(this.folder, 'seen-approved.json'), entries: SyncEntry[] = [];
+    const seen = new Set(z.array(z.string()).catch([]).parse(fs.existsSync(file) ? readJson(file) : []));
+    const installs = this.wb.installs(), targets = this.wb.targets(), handled = new Set(this.deployments.receipts().map(r => r.itemId));
+    for (const itemId of new Set(this.wb.approvals().filter(a => a.trust === 'local').map(a => a.itemId))) {
+      if (seen.has(itemId)) continue;
+      let item; try { item = this.wb.getItem(itemId); } catch { continue; }
+      if (item.deletedAt || item.kind !== 'skill' || installs[itemId] || handled.has(itemId)) { seen.add(itemId); continue; }
+      let done = true;
+      for (const provider of ['claude', 'codex'] as const) {
+        const target = this.deployments.personalTarget(provider, targets); if (!target) continue;
+        const result = this.deployments.installApproved(itemId, target, options);
+        entries.push({ itemId, provider, label: target.name, result, newApproval: true });
+        if (/^(installed|already installed|replaced)/.test(result)) this.wb.setInstall(itemId, provider, true); else done = false;
+      }
+      if (done) seen.add(itemId);
+    }
+    writeJson(file, [...seen].sort());
+    if (entries.length) this.changed();
+    return entries;
+  }
+  private syncWanted(entries: SyncEntry[], wanted: Awaited<ReturnType<FleetService['wantedAsync']>>, options: SyncOptions = {}) {
     const locations = targetLocations(this.wb.targets(), os.homedir()), targets = this.wb.targets();
     const token = (key: string): ProviderId | 'codex-native' | undefined => key === 'agents' ? 'codex' : key === 'codex' ? 'codex-native' : key === 'claude' || key === 'copilot' ? key : undefined;
     for (const [itemId, keys] of Object.entries(wanted)) for (const key of keys) {
@@ -213,7 +244,7 @@ export class FleetService {
       let item; try { item = this.wb.getItem(itemId); } catch { entries.push({ ...entry, result: 'skipped: not in this library yet; pull from GitHub first' }); continue; }
       if (!target) { entries.push({ ...entry, result: 'skipped: location not set up on this machine' }); continue; }
       if (item.kind === 'agent' && locationClient(key) !== item.agent?.provider) { entries.push({ ...entry, result: 'skipped: this location doesn’t suit the agent’s client' }); continue; }
-      entries.push({ ...entry, result: this.deployments.installApproved(itemId, target) });
+      entries.push({ ...entry, result: this.deployments.installApproved(itemId, target, options) });
     }
     this.changed();
     return entries;

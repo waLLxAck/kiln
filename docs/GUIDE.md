@@ -136,7 +136,7 @@ The main Codex default is **GPT‑6.1 Sol / xhigh**. CLI commit messages default
 
 The default quick-search shortcut is **Ctrl+Shift+Space** (**Cmd+Shift+Space** on macOS) and can be changed in Settings. Global shortcuts may not work under Wayland on Linux.
 
-See [what changed in 0.25.8](releases/0.25.8.md).
+See [what changed in 0.25.9](releases/0.25.9.md).
 
 ## Quick search
 
@@ -165,6 +165,7 @@ The footer shows the keys for the highlighted row, and each one can be clicked. 
 4. **Test** opens the experiments grid, where you run an experiment with Codex or Claude Code (or a manual handoff); output and the agent assessment are saved automatically against the exact revision. **Create skill** asks the chosen agent to draft a SKILL.md from a prompt, image or note using Kiln's bundled writing-for-agents guidance; the draft arrives as a new unapproved skill linked to its source.
 5. Every skill shows one toggle per configured location. **Install** copies the approved version into the agent's skills folder (approving the current draft first if needed); new agent sessions see it. **Approve & install** does both for every configured location in one click. **Remove** deletes only that copy. An identical folder Kiln did not create is adopted rather than rewritten; a junction is replaced by a real copy; a differing folder is set aside under Kiln's private data only after you confirm. **Install into project…** in the item's Installs section installs into any project folder (see [Installing into projects](#installing-into-projects)), and [Machines](#machines) shows every copy on this machine in one matrix.
 6. Installed skills are recorded in `workbench/installs.json` inside the library. On another machine, clone the library, turn on the same locations and press **Install everything marked for this machine**, or run `workbench skills sync`. Sync installs the latest locally trusted approved revision, even when a newer draft exists. It never creates an approval; missing or imported-only approvals are reported for review.
+7. To catch a machine up after adding or approving skills on another one, run `kiln sync`. It fetches and pulls the library from GitHub, installs everything `skills sync` would, and installs skills approved since this machine's last `kiln sync` that nothing lists yet into its Claude and Agents folders, adding them to `installs.json` so your other machines follow. A skill that was ever installed and then removed on this machine is not brought back. Copies edited on this machine (or a different folder of the same name) are skipped and listed; `kiln sync --force` (or `-f`) moves them into Kiln's machine-private `replaced` folder and installs the approved revision. If the pull is refused or you are offline, Kiln says so and installs what the library already has.
 7. **Approve** commits that item (and only that item) and pushes it to GitHub in the background; the desktop uses a plain "Approve …" commit message without invoking an agent. Automatic approval publishing commits only the exact reviewed snapshot, excluding earlier private drafts and edits made while publishing. Explicit CLI Git checkpoints still commit all managed working files. If a push fails, the item's Approval section says so and offers **Retry**; **Settings → Kiln repository** shows anything still waiting.
 
 ### Sync with GitHub
@@ -531,6 +532,7 @@ npm run cli -- items list --kind source
 npm run cli -- items list --from <source id>
 npm run cli -- --library "C:\path\to\library" github status
 npm run cli -- --library "C:\path\to\library" deploy installations
+npm run cli -- --library "C:\path\to\library" sync
 npm run cli -- --library "C:\path\to\library" skills sync
 npm run cli -- --library "C:\path\to\library" skills invocation <id> --model off
 npm run cli -- --library "C:\path\to\library" context start --project "C:\code\my-game"

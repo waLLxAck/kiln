@@ -183,6 +183,18 @@ test('CLI keeps global flags and JSON router operations available', () => {
   assert.equal(parseArguments(['items', 'create', '--file', 'draft.md', '--author', 'CLI', '--key', 'key']).option('author'), 'CLI');
 });
 
+test('kiln sync is library sync; -f and --force force it, and it takes nothing else', () => {
+  for (const args of [['sync'], ['library', 'sync']]) { const parsed = parseArguments(args); assert.deepEqual([parsed.resource, parsed.action, parsed.option('force')], ['library', 'sync', '']); }
+  for (const flag of ['-f', '--force']) assert.equal(parseArguments(['sync', flag]).option('force'), 'true');
+  for (const args of [['sync', '--all'], ['sync', '-x']]) assert.throws(() => parseArguments(args), { code: 'INVALID_INPUT' }, args.join(' '));
+  const plain = new Workbench(path.join(root, 'sync-plain'), path.join(root, 'sync-plain-private')); plain.close();
+  const result = spawnSync(process.execPath, [cli, '--library', path.join(root, 'sync-plain'), '--local', path.join(root, 'sync-plain-private'), 'sync'], { encoding: 'utf8', windowsHide: true, timeout: 30_000, env: { ...process.env, KILN_HOME: path.join(root, 'sync-home') } });
+  assert.equal(result.status, 0, result.stderr);
+  const summary = JSON.parse(result.stdout).data;
+  assert.match(summary.pull, /^not pulled: This library is not a Git repository/);
+  assert.deepEqual([summary.installed, summary.skipped, summary.failed, summary.alreadyCurrent], [[], [], [], 0]);
+});
+
 test('CLI help shows collection-first discovery and batch examples', () => {
   const result = run(['--help']);
   assert.equal(result.status, 0);

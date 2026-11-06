@@ -608,24 +608,28 @@ export class DeploymentService {
     this.wb.record('imported', `Imported “${data.name}” from ${target.name}`, item.id, item.revision);
     return item;
   }
-  /** Brings this machine in line with the desired installs recorded in the library. Missing personal environments are reported, not created. */
-  syncInstalls() {
+  /**
+   * Brings this machine in line with the desired installs recorded in the library. Missing personal environments are reported, not created.
+   * `force` sets copies edited here aside (kept under the private `replaced` folder) and installs the approved revision over them.
+   */
+  syncInstalls(options: { force?: boolean } = {}) {
     return this.batch(() => {
       const installs = this.wb.installs(), targets = this.wb.targets(); const report: { itemId: string; provider: ProviderId | 'codex-native'; result: string }[] = [];
       for (const [itemId, providers] of Object.entries(installs)) for (const provider of providers) {
         const target = this.personalTarget(provider, targets);
         if (!target) { report.push({ itemId, provider, result: 'skipped: skill location not set up on this machine' }); continue; }
-        report.push({ itemId, provider, result: this.installApproved(itemId, target) });
+        report.push({ itemId, provider, result: this.installApproved(itemId, target, options) });
       }
       return report;
     });
   }
   /**
    * Installs the latest locally trusted approved revision of an item into one target, as sync does: an identical copy is
-   * adopted, a Kiln-owned unchanged copy is updated, anything else is refused by the plan. Never approves; returns the outcome
-   * in words rather than throwing, so one bad entry doesn't stop a batch.
+   * adopted, a Kiln-owned unchanged copy is updated, anything else (a copy edited here, a different folder of the same name) is
+   * skipped, or with `force` set aside and replaced. Never approves; returns the outcome in words rather than throwing, so one
+   * bad entry doesn't stop a batch.
    */
-  installApproved(itemId: string, target: Target) {
+  installApproved(itemId: string, target: Target, options: { force?: boolean } = {}) {
     try {
       const item = this.wb.getItem(itemId); if (item.deletedAt) return 'skipped: item is in the trash';
       const approval = this.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
@@ -637,9 +641,15 @@ export class DeploymentService {
         if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
         return 'already installed';
       }
-      const plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
+      let plan = this.plan({ itemId, revision: revision.hash, targetId: target.id }), kept: string | null = null;
+      if (plan.blocked) {
+        const edited = plan.blocked.startsWith('TARGET_DRIFTED');
+        if (!options.force) return edited ? 'skipped: edited on this machine since Kiln installed it' : 'skipped: a different folder of this name is already there';
+        kept = this.setAside(rendered.destination, target);
+        plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
+      }
       this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
-      return 'installed approved revision';
+      return kept ? `replaced: the previous copy is kept in ${kept}` : 'installed approved revision';
     } catch (error) { return `failed: ${error instanceof Error ? error.message : String(error)}`; }
   }
   drift() {
