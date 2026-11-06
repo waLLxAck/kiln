@@ -30,10 +30,11 @@ import { factsCache } from './revision-facts';
 
 import { BackgroundFetch, pullFetched, pushToGitHub, type PullResult } from '../git/sync';
 import { GitQueue } from '../git/queue';
+import { git } from '../git/run';
 
 const sourceSchema = z.object({ source: z.string().min(1).optional() });
 /** Methods that can change how published items are organised or which installs are wanted; see `Router.organiseSoon`. */
-const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'items.consolidate', 'items.unconsolidate', 'items.distinct', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
+const organisingMethods = new Set(['items.move', 'items.reorder', 'items.meta', 'items.update', 'items.consolidate', 'items.unconsolidate', 'items.distinct', 'collections.save', 'collections.create', 'collections.rename', 'collections.move', 'collections.delete', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.sync', 'library.sync', 'skills.import', 'deploy.apply', 'deploy.uninstall', 'deploy.rollback', 'deploy.approveKept']);
 export type RouterOptions = { log?: (event: string, fields?: Record<string, unknown>) => void; /** Overrides the commit-message writer (tests inject a stub); `null` skips the agent and uses the plain message. */ composer?: Composer | null; /** Writes revision notes the user left empty; defaults to the commit-message model, `null` (or `composer: null`) keeps the placeholder. */ describer?: Describer | null; home?: HomeFiles; /** Machine reports: app version, publish timing. Reporting after changes starts only with `fleet.start`. */ fleet?: Omit<FleetOptions, 'log'> };
 /** Calls that change what this machine's report says; each schedules a publish once reporting has started. */
 const reportTriggers = new Set(['skills.invocation', 'skills.install', 'skills.remove', 'skills.removeAllLocal', 'skills.update', 'skills.updateOutdated', 'deploy.apply', 'deploy.rollback', 'deploy.uninstall', 'deploy.recover', 'deploy.keepCopy', 'deploy.approveKept', 'projects.install', 'projects.forget', 'targets.enroll', 'targets.remove', 'approvals.approve', 'approvals.unapprove', 'items.purge', 'items.restore', 'items.consolidate', 'items.unconsolidate']);
@@ -118,7 +119,7 @@ export class Router {
         this.organiseSoon();
       }
       if (reportTriggers.has(method)) this.fleet.changed();
-      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull' || method === 'sync.push') this.fleet.afterPull();
+      if (method === 'git.sync' || method === 'git.merge' || method === 'git.finishMerge' || method === 'sync.pull' || method === 'sync.push' || method === 'library.sync') this.fleet.afterPull();
     };
     // Calls that wait for the Git queue (pulls, merges, installing what is marked) are followed up once they have run.
     if (result instanceof Promise) return result.then(value => { settled(value); return value; });
@@ -168,6 +169,31 @@ export class Router {
     if (result.status === 'blocked' || result.status === 'diverged' || !(await gitStatus(this.wb.root)).ahead) { await this.publisher.settle(); return result; }
     try { await this.pushWaiting(); return result; }
     catch (error) { const pushError = error instanceof Error ? error.message : String(error); this.log('sync.push.failed', { message: pushError }); return { ...result, pushError }; }
+  }
+  /**
+   * Catches this machine up with GitHub in one step (`kiln sync`): fetch, pull, then install what the library asks of this machine
+   * and the skills approved since the last sync (`FleetService.sync`). Copies edited here are skipped unless `force` sets them aside.
+   * When the fetch fails (offline) or the pull is refused, that is reported and what this checkout already has is installed anyway.
+   */
+  private async syncLibrary(input: unknown) {
+    const { force } = z.object({ force: z.boolean().default(false) }).parse(input ?? {});
+    let fetchError = '', pull: Awaited<ReturnType<Router['pull']>> | { status: 'unavailable'; reason: string };
+    if (this.autoSyncReady()) {
+      fetchError = (await this.fetcher.fetch()).error;
+      try { pull = await this.gitQueue.run(() => this.pull()); }
+      catch (error) { pull = { status: 'unavailable', reason: error instanceof Error ? error.message : String(error) }; }
+    } else pull = { status: 'unavailable', reason: 'This library is not a Git repository on GitHub; installing what it already has.' };
+    const history = this.fleet.seenApprovals();
+    const installs = await this.fleet.sync({ force, newApprovals: true, fetchAgeMs: 60_000 });
+    const warning = 'problem' in history ? `Newly approved skills were not checked: Kiln's record of approvals it has already seen can't be read (${history.problem}). Repair or delete fleet/seen-approved.json in Kiln's private data, then sync again.` : '';
+    // Publish every install wish that differs from the last commit, including ones left unpublished before this run.
+    if (this.autoSyncReady()) {
+      const file = path.relative(this.wb.root, path.join(this.wb.canonical, 'installs.json')).split(path.sep).join('/');
+      let committed: Record<string, unknown> = {}; try { committed = JSON.parse(await git(this.wb.root, ['show', `HEAD:${file}`])); } catch { /* Never committed. */ }
+      const current = this.wb.installs();
+      for (const id of new Set([...Object.keys(committed), ...Object.keys(current)])) if (JSON.stringify(committed[id]) !== JSON.stringify(current[id])) this.installsChanged.add(id);
+    }
+    return { fetchError, pull, installs, ...(warning ? { warning } : {}) };
   }
   /** Pushes this machine's commits, merging GitHub's first when it has moved on, and marks failed approvals that went with them done. */
   private async pushWaiting() {
@@ -241,6 +267,7 @@ export class Router {
       case 'skills.cleanEntry': return this.deployments.cleanScanEntry(args);
       case 'skills.import': return this.deployments.importExternal(args);
       case 'skills.sync': return this.fleet.sync();
+      case 'library.sync': return this.syncLibrary(args);
       // This machine's id and name only: no Git, nothing published (Machines while it manages this machine alone).
       case 'fleet.identity': return this.fleet.identity();
       case 'fleet.view': return this.fleet.view(args);

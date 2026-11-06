@@ -5,11 +5,17 @@ import { Router } from '../../packages/domain/router';
 import { WorkbenchError } from '../../packages/domain/errors';
 import { defaultLibrary, privateRoot } from '../../packages/storage/config';
 import { parseArguments } from './arguments';
+import type { SyncEntry } from '../../packages/fleet/service';
 
 const args = process.argv.slice(2);
 const help = `Kiln workbench · schema version 1
 
 kiln <resource> <action> [ids...] [options]  (also: workbench)
+
+sync [--force | -f]         # catch this machine up: fetch and pull the library from GitHub, then install every skill installs.json
+                            # lists, everything marked for this machine, and skills approved since the last sync (also added to
+                            # installs.json so other machines follow). Copies edited on this machine are skipped and listed;
+                            # --force sets them aside (kept under the private replaced folder) and installs the approved revision
 
 collections list            # names, item counts (count: directly inside, total: with subfolders), empty ones included; unfiled count
 items list [--collection "Name" [--recursive] | --unfiled] [--query text] [--status captured] [--kind source] [--from <id>] [--limit 50] [--offset 0] [--full]
@@ -112,6 +118,34 @@ Use --library <folder> and --local <folder> to override storage. Unknown/unsuppo
 Manual trials need no API key.
 Deployment requires an enrolled root, exact approval and confirm:true.
 `;
+/** `kiln sync` in a form that reads at a glance: what the pull did, then installs by outcome, one line per skill and place. */
+function syncSummary(wb: Workbench, synced: { fetchError: string; warning?: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] }) {
+  const title = (id: string) => { try { return wb.getItem(id).title; } catch { return id; } };
+  const { pull } = synced;
+  const pulled = pull.status === 'pulled' || pull.status === 'merged' ? `${pull.status} ${pull.count} commit${pull.count === 1 ? '' : 's'} from GitHub`
+    : pull.status === 'current' ? 'already up to date with GitHub' + (synced.fetchError ? ' as of the last fetch' : '')
+    : pull.status === 'blocked' ? `not pulled: GitHub changed ${pull.items?.length ? pull.items.map(i => i.title).join(', ') : 'files'} that have unsaved edits here; open Kiln to merge`
+    : pull.status === 'diverged' ? 'not pulled: this machine and GitHub both changed the same items; open Kiln → Merge from GitHub'
+    : `not pulled: ${pull.reason ?? pull.status}`;
+  const place = (e: SyncEntry) => e.label ?? e.location ?? ({ claude: 'Claude', codex: 'Agents', 'codex-native': 'Codex', copilot: 'Copilot' } as const)[e.provider ?? 'claude'];
+  const line = (e: SyncEntry) => `${title(e.itemId)} → ${place(e)}${e.newApproval ? ' (newly approved)' : ''}`;
+  const groups = { installed: [] as string[], replaced: [] as string[], skipped: [] as string[], failed: [] as string[] };
+  let current = 0, trashed = 0, forceable = 0;
+  for (const e of synced.installs) {
+    if (e.result === 'already installed') current++;
+    // installs.json still names items merged or moved to the trash; there is nothing to do for them.
+    else if (e.result === 'skipped: item is in the trash') trashed++;
+    else if (e.result === 'installed approved revision') groups.installed.push(line(e));
+    else if (e.result.startsWith('replaced')) groups.replaced.push(`${line(e)}: ${e.result.replace(/^replaced: /, '')}`);
+    else if (e.result.startsWith('skipped')) {
+      groups.skipped.push(`${line(e)}: ${e.result.replace(/^skipped: /, '')}`);
+      // Only folder conflicts are what --force resolves; a location not set up here is not.
+      if (/^skipped: (edited|deleted|a different folder|a link)/.test(e.result)) forceable++;
+    }
+    else groups.failed.push(`${line(e)}: ${e.result.replace(/^failed: /, '')}`);
+  }
+  return { pull: pulled, ...(synced.fetchError ? { fetchError: synced.fetchError } : {}), ...(synced.warning ? { warning: synced.warning } : {}), ...(pull.pushError ? { pushError: pull.pushError } : {}), installed: groups.installed, replaced: groups.replaced, skipped: groups.skipped, failed: groups.failed, alreadyCurrent: current, ...(trashed ? { inTrash: trashed } : {}), ...(forceable ? { hint: `kiln sync --force sets the ${forceable} edited, deleted, linked or differing folder${forceable === 1 ? '' : 's'} above aside (kept under the private replaced folder) and installs the approved revisions.` } : {}), ...(groups.installed.length || groups.replaced.length ? { note: 'Start a new agent session to load the new skills.' } : {}) };
+}
 if (args.includes('--help') || args.length === 0) { process.stdout.write(help); process.exit(0); }
 async function main() {
 let wb: Workbench | undefined;
@@ -198,6 +232,14 @@ try {
     result = !report ? scan : action === 'skills' ? { days: report.days, since: report.since, skills: report.skills, unused: report.unused } : action === 'spend' ? { days: report.days, since: report.since, spend: report.spend, prices: report.prices } : report;
   }
   else if (resource === 'usage' && action === 'item') result = router.call('usage.item', { itemId: id, days: Number(option('days', '30')) || 30 });
+  else if (resource === 'library' && action === 'sync') {
+    const started = new Date().toISOString();
+    const synced = await router.call('library.sync', { force: Boolean(option('force')) }) as { fetchError: string; warning?: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] };
+    // installs.json gains the newly approved skills; commit and push that before exiting, as the desktop would shortly after.
+    router.flushOrganisation(); await router.publisher.idle();
+    const organised = router.publisher.list().find(job => job.action === 'organise' && job.startedAt >= started);
+    result = { ...syncSummary(wb, synced), ...(organised?.status === 'failed' ? { publishError: `installs.json was updated here but not pushed, so other machines won't see the new install wishes yet: ${organised.error}` } : {}) };
+  }
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));
   else if (resource === 'home' && ['read', 'backups'].includes(action)) result = await router.call(`home.${action}`, { key: id });

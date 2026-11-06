@@ -347,3 +347,41 @@ test('bulk unlink closes old ownership without deleting an external link target'
     assert.equal(f.deployment.receipts().filter(r => r.destination === destination).at(-1)?.status, 'uninstalled');
   } finally { f.close(); }
 });
+
+test('sync with force: a deleted copy is reinstalled, a link is replaced by a real copy, and an identical copy owned by another item is taken over', () => {
+  const f = fixture();
+  try {
+    const approve = (item: { id: string; revision: string }) => f.wb.approve({ id: item.id, revision: item.revision, reviewer: 'Human', scope: 'Test', note: 'Reviewed', waivedChecks: 'Fixture' });
+    const item = f.wb.create({ title: 'Review', kind: 'skill', content: skill('careful-review') }); approve(item);
+    f.wb.setInstall(item.id, 'claude', true);
+    const folder = path.join(f.home, '.claude', 'skills', 'careful-review');
+    assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['installed approved revision']);
+
+    // Deleted outside Kiln: skipped, then with force installed again (nothing to keep).
+    fs.rmSync(folder, { recursive: true });
+    assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['skipped: deleted on this machine since Kiln installed it']);
+    assert.deepEqual(f.deployment.syncInstalls({ force: true }).map(r => r.result), ['installed approved revision']);
+    assert.equal(fs.readFileSync(path.join(folder, 'SKILL.md'), 'utf8'), skill('careful-review'));
+
+    // A link in its place is never followed: skipped, then with force unlinked (its target untouched) and a real copy installed.
+    const elsewhere = path.join(f.root, 'elsewhere'); fs.mkdirSync(elsewhere); fs.writeFileSync(path.join(elsewhere, 'SKILL.md'), 'mine');
+    fs.rmSync(folder, { recursive: true }); fs.symlinkSync(elsewhere, folder, 'junction');
+    assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['skipped: a link to another folder is there']);
+    assert.deepEqual(f.deployment.syncInstalls({ force: true }).map(r => r.result), ['installed approved revision']);
+    assert.ok(!fs.lstatSync(folder).isSymbolicLink());
+    assert.equal(fs.readFileSync(path.join(elsewhere, 'SKILL.md'), 'utf8'), 'mine');
+
+    // Another item with the same text installed to the same folder: the copy becomes this item's, so its updates reach it.
+    const other = f.wb.create({ title: 'Review copy', kind: 'skill', content: skill('careful-review'), collection: 'Copies' }); approve(other);
+    f.wb.setInstall(item.id, 'claude', false); f.wb.setInstall(other.id, 'claude', true);
+    assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['already installed']);
+    assert.equal(f.deployment.installations(other.id).filter(c => c.provider === 'claude' && c.state === 'installed').length, 1);
+
+    // The folder already holds a newer approved revision (written by hand), but Kiln's receipt is for the older one: it is
+    // re-recorded, not left reading as drifted.
+    const newer = f.wb.update({ id: other.id, expect: other.revision, summary: 'Newer', value: { ...f.wb.authoring(other.id), content: skill('careful-review', 'Cite the line.') } }); approve(newer);
+    fs.writeFileSync(path.join(folder, 'SKILL.md'), skill('careful-review', 'Cite the line.'));
+    assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['already installed']);
+    assert.deepEqual(f.deployment.installations(other.id).filter(c => c.provider === 'claude').map(c => [c.state, Boolean(c.outdated)]), [['installed', false]]);
+  } finally { f.close(); }
+});

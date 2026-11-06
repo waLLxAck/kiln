@@ -399,3 +399,100 @@ test('until reporting is started, nothing publishes a machine report: installs, 
     assert.equal(a.router.fleet.publishState().state, 'idle');
   } finally { await f.close(); }
 });
+
+test('library.sync pulls, installs skills approved elsewhere, skips copies edited here until forced, and leaves removed skills removed', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    const b = f.clone();
+    for (const provider of ['claude', 'codex'] as const) b.wb.enroll({ name: provider === 'claude' ? 'Claude' : 'Agents', root: b.home, provider, scope: 'personal', profile: 'Personal' });
+    type Synced = { fetchError: string; pull: PullResult; installs: { itemId: string; provider?: string; result: string; newApproval?: true }[] };
+    const sync = (force = false) => b.router.call('library.sync', { force }) as Promise<Synced>;
+    const claudeCopy = path.join(b.home, '.claude', 'skills', 'careful-review', 'SKILL.md'), agentsCopy = path.join(b.home, '.agents', 'skills', 'careful-review', 'SKILL.md');
+
+    // A approves a skill and pushes it; B has never seen it, and nothing lists it in installs.json.
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    let synced = await sync();
+    assert.equal(synced.pull.status, 'pulled');
+    assert.deepEqual(synced.installs.map(e => [e.provider, e.result, e.newApproval]), [['claude', 'installed approved revision', true], ['codex', 'installed approved revision', true]]);
+    assert.equal(fs.readFileSync(claudeCopy, 'utf8'), skill('careful-review'));
+    assert.equal(fs.readFileSync(agentsCopy, 'utf8'), skill('careful-review'));
+    assert.deepEqual(b.wb.installs()[item.id], ['claude', 'codex'], 'recorded so other machines install it too');
+    assert.equal(b.wb.approvals().length, 1, 'sync never creates approvals');
+    assert.deepEqual((await sync()).installs.map(e => e.result), ['already installed', 'already installed'], 'a second sync is a no-op');
+
+    // A approves a new revision while B's Claude copy has local edits: the edits stay until --force sets them aside.
+    fs.writeFileSync(claudeCopy, skill('careful-review') + '\nMy local note.\n');
+    const revised = a.wb.update({ id: item.id, expect: item.revision, summary: 'Tighten', value: { ...a.wb.authoring(item.id), content: skill('careful-review') + '\nCite the line.\n' } });
+    a.router.approve(approveArgs(revised)); await a.router.publisher.idle();
+    synced = await sync();
+    assert.equal(synced.pull.status, 'pulled');
+    assert.deepEqual(synced.installs.map(e => [e.provider, e.result]), [['claude', 'skipped: edited on this machine since Kiln installed it'], ['codex', 'installed approved revision']]);
+    assert.match(fs.readFileSync(claudeCopy, 'utf8'), /My local note/);
+    assert.match(fs.readFileSync(agentsCopy, 'utf8'), /Cite the line/);
+    synced = await sync(true);
+    const replaced = synced.installs.find(e => e.provider === 'claude')!.result;
+    assert.match(replaced, /^replaced: the previous copy is kept in /);
+    assert.match(fs.readFileSync(claudeCopy, 'utf8'), /Cite the line/);
+    assert.match(fs.readFileSync(path.join(replaced.replace(/^replaced: the previous copy is kept in /, ''), 'SKILL.md'), 'utf8'), /My local note/, 'the edits are kept, not deleted');
+
+    // B removes the skill on purpose; a later approval elsewhere doesn't bring it back.
+    for (const target of b.wb.targets()) b.router.call('skills.remove', { itemId: item.id, targetId: target.id, confirm: true });
+    assert.equal(b.wb.installs()[item.id], undefined);
+    const again = a.wb.update({ id: item.id, expect: revised.revision, summary: 'Again', value: { ...a.wb.authoring(item.id), content: skill('careful-review') + '\nCite the line and the test.\n' } });
+    a.router.approve(approveArgs(again)); await a.router.publisher.idle();
+    synced = await sync();
+    assert.equal(synced.pull.status, 'pulled');
+    assert.deepEqual(synced.installs, []);
+    assert.ok(!fs.existsSync(claudeCopy) && !fs.existsSync(agentsCopy));
+  } finally { await f.close(); }
+});
+
+test('library.sync publishes install wishes that differ from the last commit, including ones left unpublished before it ran', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    const b = f.clone();
+    b.wb.enroll({ name: 'Claude', root: b.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    // Written outside the router (a script, an earlier crash): nothing queued it for publishing.
+    b.wb.setInstall(item.id, 'claude', true);
+    const synced = await b.router.call('library.sync', {}) as { installs: { result: string }[] };
+    assert.deepEqual(synced.installs.map(e => e.result), ['installed approved revision']);
+    b.router.flushOrganisation(); await b.router.publisher.idle();
+    assert.deepEqual(JSON.parse(execFileSync('git', ['-C', f.origin, 'show', 'main:workbench/installs.json'], { encoding: 'utf8' }))[item.id], ['claude']);
+  } finally { await f.close(); }
+});
+
+test('a new approval waits until a location is set up, and a skipped location stays listed so --force can install it later', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    type Synced = { installs: { provider?: string; result: string; newApproval?: true }[] };
+    const sync = (force = false) => a.router.call('library.sync', { force }) as Promise<Synced>;
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    assert.deepEqual((await sync()).installs, [], 'no Claude or Agents location yet');
+    // A damaged history: the pass is skipped with a warning and the file is left for the person to repair.
+    const seenFile = path.join(a.wb.local, 'fleet', 'seen-approved.json');
+    fs.mkdirSync(path.dirname(seenFile), { recursive: true }); fs.writeFileSync(seenFile, '{not json');
+    a.wb.enroll({ name: 'Claude', root: a.home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    const damaged = await a.router.call('library.sync', {}) as Synced & { warning?: string };
+    assert.deepEqual(damaged.installs, []);
+    assert.match(damaged.warning ?? '', /seen-approved\.json/);
+    assert.equal(fs.readFileSync(seenFile, 'utf8'), '{not json');
+    fs.rmSync(seenFile);
+    assert.equal(a.wb.installs()[item.id], undefined);
+
+    // A different folder of the same name is already in Agents: Claude installs, Agents is skipped but stays wanted.
+    a.wb.enroll({ name: 'Agents', root: a.home, provider: 'codex', scope: 'personal', profile: 'Personal' });
+    const theirs = path.join(a.home, '.agents', 'skills', 'careful-review'); fs.mkdirSync(theirs, { recursive: true }); fs.writeFileSync(path.join(theirs, 'SKILL.md'), 'someone else’s skill');
+    assert.deepEqual((await sync()).installs.map(e => [e.provider, e.result, e.newApproval]), [['claude', 'installed approved revision', true], ['codex', 'skipped: a different folder of this name is already there', true]]);
+    assert.deepEqual(a.wb.installs()[item.id], ['claude', 'codex']);
+    const forced = (await sync(true)).installs;
+    assert.deepEqual(forced.map(e => [e.provider, e.result.replace(/ in .*/, '')]), [['claude', 'already installed'], ['codex', 'replaced: the previous copy is kept']]);
+    assert.equal(fs.readFileSync(path.join(theirs, 'SKILL.md'), 'utf8'), skill('careful-review'));
+  } finally { await f.close(); }
+});

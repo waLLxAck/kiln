@@ -97,7 +97,8 @@ export class DeploymentService {
   private target(id: string) {
     const target = this.wb.targets().find(t => t.id === id); invariant(target, 'TARGET_NOT_ENROLLED', 'Enroll this environment before deployment.'); noLinks(target.root); return target;
   }
-  private render(itemId: string, revision: string, target: Target, read?: Revision) {
+  /** `leafLink` lets the destination itself be a link (its parents still may not), for a caller that handles that link. */
+  private render(itemId: string, revision: string, target: Target, read?: Revision, leafLink = false) {
     const item = this.wb.getItem(itemId), bundle = read?.itemId === itemId && read.hash === revision ? read : this.wb.getRevision(itemId, revision);
     invariant(!item.deletedAt, 'ITEM_DELETED', 'Restore this item before deploying.');
     invariant(['skill', 'agent', 'instruction'].includes(bundle.kind), 'NOT_DEPLOYABLE', 'Only skills, agents and instruction resources can be deployed.');
@@ -116,7 +117,7 @@ export class DeploymentService {
       relative = target.provider === 'copilot' ? (target.scope === 'project' ? '.github/copilot-instructions.md' : '.copilot/copilot-instructions.md') : target.scope === 'project' ? (target.provider === 'codex' ? 'AGENTS.md' : 'CLAUDE.md') : (target.provider === 'codex' ? '.codex/AGENTS.md' : '.claude/CLAUDE.md');
       files = { '.instruction': Buffer.from(bundle.content).toString('base64') };
     }
-    const destination = contained(target.root, relative); noLinks(destination);
+    const destination = contained(target.root, relative); noLinks(leafLink ? path.dirname(destination) : destination);
     return { destination, files, proposedHash: digest(files) };
   }
   /** Whether a receipt makes a copy this item's: its own, or one written for a copy since merged into it (consolidation). */
@@ -478,18 +479,23 @@ export class DeploymentService {
    * Moves a folder into the machine-private `replaced` folder so nothing is lost. When Kiln owned the folder, an
    * `uninstalled` receipt closes that ownership so the destination reads as empty for the next plan.
    */
-  private setAside(destination: string, target: Target) {
+  private setAside(destination: string, target: Target): string;
+  private setAside(destination: string, target: Target, missingOk: true): string | null;
+  private setAside(destination: string, target: Target, missingOk = false) {
     const backup = path.join(this.wb.local, 'replaced', `${path.basename(destination)}-${randomUUID()}`);
-    fs.mkdirSync(path.dirname(backup), { recursive: true });
-    const owner = this.latest(destination);
-    const previousFiles = owner ? (() => { try { return readDestination(destination); } catch { return null; } })() : null;
-    try { fs.renameSync(destination, backup); } catch { fs.cpSync(destination, backup, { recursive: true }); fs.rmSync(destination, { recursive: true, force: true }); }
+    const owner = this.latest(destination), present = Boolean(fs.lstatSync(destination, { throwIfNoEntry: false }));
+    const previousFiles = owner && present ? (() => { try { return readDestination(destination); } catch { return null; } })() : null;
+    // A copy deleted outside Kiln: nothing to keep; only its ownership is closed below.
+    if (present || !missingOk) {
+      fs.mkdirSync(path.dirname(backup), { recursive: true });
+      try { fs.renameSync(destination, backup); } catch { fs.cpSync(destination, backup, { recursive: true }); fs.rmSync(destination, { recursive: true, force: true }); }
+    }
     if (owner) {
       const closed: Receipt = { ...owner, id: randomUUID(), planId: `set-aside-${owner.id}`, status: 'uninstalled', previousHash: stateHash(previousFiles), previousFiles, previousRevision: owner.revision, createdAt: now() };
       this.writeReceipt(closed);
-      this.wb.record('uninstalled', `Set aside the edited copy in ${target.name}; kept under ${backup}`, owner.itemId, owner.revision);
+      this.wb.record('uninstalled', present ? `Set aside the edited copy in ${target.name}; kept under ${backup}` : `Closed the copy in ${target.name} that was deleted outside Kiln`, owner.itemId, owner.revision);
     }
-    return backup;
+    return present || !missingOk ? backup : null;
   }
   /** Records Kiln ownership of a folder whose bytes already equal the revision, so it can later be updated or removed like any install. */
   private adopt(target: Target, item: Item, revision: Revision, destination: string) {
@@ -608,36 +614,60 @@ export class DeploymentService {
     this.wb.record('imported', `Imported “${data.name}” from ${target.name}`, item.id, item.revision);
     return item;
   }
-  /** Brings this machine in line with the desired installs recorded in the library. Missing personal environments are reported, not created. */
-  syncInstalls() {
+  /**
+   * Brings this machine in line with the desired installs recorded in the library. Missing personal environments are reported, not created.
+   * `force` sets copies edited here aside (kept under the private `replaced` folder) and installs the approved revision over them.
+   */
+  syncInstalls(options: { force?: boolean } = {}) {
     return this.batch(() => {
       const installs = this.wb.installs(), targets = this.wb.targets(); const report: { itemId: string; provider: ProviderId | 'codex-native'; result: string }[] = [];
       for (const [itemId, providers] of Object.entries(installs)) for (const provider of providers) {
         const target = this.personalTarget(provider, targets);
         if (!target) { report.push({ itemId, provider, result: 'skipped: skill location not set up on this machine' }); continue; }
-        report.push({ itemId, provider, result: this.installApproved(itemId, target) });
+        report.push({ itemId, provider, result: this.installApproved(itemId, target, options) });
       }
       return report;
     });
   }
   /**
    * Installs the latest locally trusted approved revision of an item into one target, as sync does: an identical copy is
-   * adopted, a Kiln-owned unchanged copy is updated, anything else is refused by the plan. Never approves; returns the outcome
-   * in words rather than throwing, so one bad entry doesn't stop a batch.
+   * adopted, a Kiln-owned unchanged copy is updated, anything else (a copy edited here, a different folder of the same name) is
+   * skipped, or with `force` set aside and replaced. Never approves; returns the outcome in words rather than throwing, so one
+   * bad entry doesn't stop a batch.
    */
-  installApproved(itemId: string, target: Target) {
+  installApproved(itemId: string, target: Target, options: { force?: boolean } = {}) {
     try {
       const item = this.wb.getItem(itemId); if (item.deletedAt) return 'skipped: item is in the trash';
       const approval = this.approvals().filter(a => a.itemId === itemId && a.trust === 'local').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
       invariant(approval, 'APPROVAL_REQUIRED', 'No approved revision is available. Review and approve this item before syncing.');
       const revision = this.wb.getRevision(itemId, approval.revision);
-      const rendered = this.render(itemId, revision.hash, target, revision);
-      const current = readDestination(rendered.destination);
+      const rendered = this.render(itemId, revision.hash, target, revision, true), destination = rendered.destination;
+      // A link (symlink or junction) is never followed: skipped, or with force unlinked so a real copy goes in its place.
+      if (fs.lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        if (!options.force) return 'skipped: a link to another folder is there';
+        this.removeLink(destination);
+      }
+      const current = readDestination(destination);
       if (current && stateHash(current) === rendered.proposedHash) {
-        if (!this.latest(rendered.destination)) this.adopt(target, item, revision, rendered.destination);
+        // Identical bytes: record it as this item's copy of this revision unless that is already so, so later updates and drift
+        // checks see it as installed (another item's receipt, or this item's for an older revision, would not).
+        const owner = this.latest(destination);
+        if (!this.owns(owner, itemId) || owner.hash !== rendered.proposedHash) this.adopt(target, item, revision, destination);
         return 'already installed';
       }
-      const plan = this.plan({ itemId, revision: revision.hash, targetId: target.id });
+      let plan = this.plan({ itemId, revision: revision.hash, targetId: target.id }), kept: string | null = null;
+      if (plan.blocked) {
+        const reason = !current ? 'deleted on this machine since Kiln installed it' : plan.blocked.startsWith('TARGET_DRIFTED') ? 'edited on this machine since Kiln installed it' : 'a different folder of this name is already there';
+        if (!options.force) return `skipped: ${reason}`;
+        kept = this.setAside(destination, target, true);
+        try { plan = this.plan({ itemId, revision: revision.hash, targetId: target.id }); this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true }); }
+        catch (error) {
+          // Put the set-aside copy back so a failed replacement leaves the folder as it was found.
+          if (kept && !fs.existsSync(destination)) { try { fs.renameSync(kept, destination); } catch { fs.cpSync(kept, destination, { recursive: true }); fs.rmSync(kept, { recursive: true, force: true }); } }
+          throw error;
+        }
+        return kept ? `replaced: the previous copy is kept in ${kept}` : 'installed approved revision';
+      }
       this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true });
       return 'installed approved revision';
     } catch (error) { return `failed: ${error instanceof Error ? error.message : String(error)}`; }
