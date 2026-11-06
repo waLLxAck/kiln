@@ -130,17 +130,21 @@ function syncSummary(wb: Workbench, synced: { fetchError: string; pull: { status
   const place = (e: SyncEntry) => e.label ?? e.location ?? ({ claude: 'Claude', codex: 'Agents', 'codex-native': 'Codex', copilot: 'Copilot' } as const)[e.provider ?? 'claude'];
   const line = (e: SyncEntry) => `${title(e.itemId)} → ${place(e)}${e.newApproval ? ' (newly approved)' : ''}`;
   const groups = { installed: [] as string[], replaced: [] as string[], skipped: [] as string[], failed: [] as string[] };
-  let current = 0, trashed = 0;
+  let current = 0, trashed = 0, forceable = 0;
   for (const e of synced.installs) {
     if (e.result === 'already installed') current++;
     // installs.json still names items merged or moved to the trash; there is nothing to do for them.
     else if (e.result === 'skipped: item is in the trash') trashed++;
     else if (e.result === 'installed approved revision') groups.installed.push(line(e));
     else if (e.result.startsWith('replaced')) groups.replaced.push(`${line(e)}: ${e.result.replace(/^replaced: /, '')}`);
-    else if (e.result.startsWith('skipped')) groups.skipped.push(`${line(e)}: ${e.result.replace(/^skipped: /, '')}`);
+    else if (e.result.startsWith('skipped')) {
+      groups.skipped.push(`${line(e)}: ${e.result.replace(/^skipped: /, '')}`);
+      // Only folder conflicts are what --force resolves; a location not set up here is not.
+      if (/^skipped: (edited|deleted|a different folder|a link)/.test(e.result)) forceable++;
+    }
     else groups.failed.push(`${line(e)}: ${e.result.replace(/^failed: /, '')}`);
   }
-  return { pull: pulled, ...(synced.fetchError ? { fetchError: synced.fetchError } : {}), ...(pull.pushError ? { pushError: pull.pushError } : {}), installed: groups.installed, replaced: groups.replaced, skipped: groups.skipped, failed: groups.failed, alreadyCurrent: current, ...(trashed ? { inTrash: trashed } : {}), ...(groups.skipped.length ? { hint: 'kiln sync --force sets the skipped folders aside (kept under the private replaced folder) and installs the approved revisions.' } : {}), ...(groups.installed.length || groups.replaced.length ? { note: 'Start a new agent session to load the new skills.' } : {}) };
+  return { pull: pulled, ...(synced.fetchError ? { fetchError: synced.fetchError } : {}), ...(pull.pushError ? { pushError: pull.pushError } : {}), installed: groups.installed, replaced: groups.replaced, skipped: groups.skipped, failed: groups.failed, alreadyCurrent: current, ...(trashed ? { inTrash: trashed } : {}), ...(forceable ? { hint: `kiln sync --force sets the ${forceable} edited, deleted, linked or differing folder${forceable === 1 ? '' : 's'} above aside (kept under the private replaced folder) and installs the approved revisions.` } : {}), ...(groups.installed.length || groups.replaced.length ? { note: 'Start a new agent session to load the new skills.' } : {}) };
 }
 if (args.includes('--help') || args.length === 0) { process.stdout.write(help); process.exit(0); }
 async function main() {
@@ -229,10 +233,12 @@ try {
   }
   else if (resource === 'usage' && action === 'item') result = router.call('usage.item', { itemId: id, days: Number(option('days', '30')) || 30 });
   else if (resource === 'library' && action === 'sync') {
+    const started = new Date().toISOString();
     const synced = await router.call('library.sync', { force: Boolean(option('force')) }) as { fetchError: string; pull: { status: string; count?: number; reason?: string; items?: { title: string }[]; pushError?: string }; installs: SyncEntry[] };
     // installs.json gains the newly approved skills; commit and push that before exiting, as the desktop would shortly after.
     router.flushOrganisation(); await router.publisher.idle();
-    result = syncSummary(wb, synced);
+    const organised = router.publisher.list().find(job => job.action === 'organise' && job.startedAt >= started);
+    result = { ...syncSummary(wb, synced), ...(organised?.status === 'failed' ? { publishError: `installs.json was updated here but not pushed, so other machines won't see the new install wishes yet: ${organised.error}` } : {}) };
   }
   else if (resource === 'library' && action === 'export') result = wb.exportLibrary(path.resolve(option('file')));
   else if (resource === 'library' && action === 'import') result = wb.importLibrary(path.resolve(option('file')));

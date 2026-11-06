@@ -210,26 +210,29 @@ export class FleetService {
   }
   /**
    * Skills approved (on any machine) that nothing lists yet: no entry in installs.json and no Kiln install, past or present, on this
-   * machine. Each goes into this machine's Claude and Agents folders and into installs.json, so other machines follow. An item is
-   * looked at once (`seen-approved.json`, machine-private), so a skill removed on purpose stays removed; one that couldn't be installed
-   * is tried again next time.
+   * machine. Each goes into this machine's Claude and Agents folders, and both are added to installs.json even when one install is
+   * skipped or fails, so the listed-installs pass retries it (and `force` can replace it) while other machines follow. An item is
+   * looked at once (`seen-approved.json`, machine-private), so a skill removed on purpose stays removed; one found while neither
+   * location is set up here stays new until one is.
    */
   private newApprovals(options: SyncOptions) {
     const file = path.join(this.folder, 'seen-approved.json'), entries: SyncEntry[] = [];
-    const seen = new Set(z.array(z.string()).catch([]).parse(fs.existsSync(file) ? readJson(file) : []));
+    let stored: unknown = [];
+    // A damaged file is treated as empty: the receipt and installs.json checks below still keep removed skills removed.
+    try { if (fs.existsSync(file)) stored = readJson(file); } catch (error) { this.log('fleet.seen.unreadable', { message: error instanceof Error ? error.message : String(error) }); }
+    const seen = new Set(z.array(z.string()).catch([]).parse(stored));
     const installs = this.wb.installs(), targets = this.wb.targets(), handled = new Set(this.deployments.receipts().map(r => r.itemId));
+    const places = (['claude', 'codex'] as const).flatMap(provider => { const target = this.deployments.personalTarget(provider, targets); return target ? [{ provider, target }] : []; });
     for (const itemId of new Set(this.wb.approvals().filter(a => a.trust === 'local').map(a => a.itemId))) {
       if (seen.has(itemId)) continue;
       let item; try { item = this.wb.getItem(itemId); } catch { continue; }
       if (item.deletedAt || item.kind !== 'skill' || installs[itemId] || handled.has(itemId)) { seen.add(itemId); continue; }
-      let done = true;
-      for (const provider of ['claude', 'codex'] as const) {
-        const target = this.deployments.personalTarget(provider, targets); if (!target) continue;
-        const result = this.deployments.installApproved(itemId, target, options);
-        entries.push({ itemId, provider, label: target.name, result, newApproval: true });
-        if (/^(installed|already installed|replaced)/.test(result)) this.wb.setInstall(itemId, provider, true); else done = false;
+      if (!places.length) continue;
+      for (const { provider, target } of places) {
+        entries.push({ itemId, provider, label: target.name, result: this.deployments.installApproved(itemId, target, options), newApproval: true });
+        this.wb.setInstall(itemId, provider, true);
       }
-      if (done) seen.add(itemId);
+      seen.add(itemId);
     }
     writeJson(file, [...seen].sort());
     if (entries.length) this.changed();

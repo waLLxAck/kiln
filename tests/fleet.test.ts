@@ -465,3 +465,25 @@ test('library.sync publishes install wishes that differ from the last commit, in
     assert.deepEqual(JSON.parse(execFileSync('git', ['-C', f.origin, 'show', 'main:workbench/installs.json'], { encoding: 'utf8' }))[item.id], ['claude']);
   } finally { await f.close(); }
 });
+
+test('a new approval waits until a location is set up, and a skipped location stays listed so --force can install it later', async () => {
+  const f = fleet();
+  try {
+    const { a } = f;
+    type Synced = { installs: { provider?: string; result: string; newApproval?: true }[] };
+    const sync = (force = false) => a.router.call('library.sync', { force }) as Promise<Synced>;
+    const item = a.wb.create({ title: 'Careful review', kind: 'skill', content: skill('careful-review') });
+    a.router.approve(approveArgs(item)); await a.router.publisher.idle();
+    assert.deepEqual((await sync()).installs, [], 'no Claude or Agents location yet');
+    assert.equal(a.wb.installs()[item.id], undefined);
+
+    // A different folder of the same name is already in Agents: Claude installs, Agents is skipped but stays wanted.
+    for (const provider of ['claude', 'codex'] as const) a.wb.enroll({ name: provider === 'claude' ? 'Claude' : 'Agents', root: a.home, provider, scope: 'personal', profile: 'Personal' });
+    const theirs = path.join(a.home, '.agents', 'skills', 'careful-review'); fs.mkdirSync(theirs, { recursive: true }); fs.writeFileSync(path.join(theirs, 'SKILL.md'), 'someone else’s skill');
+    assert.deepEqual((await sync()).installs.map(e => [e.provider, e.result, e.newApproval]), [['claude', 'installed approved revision', true], ['codex', 'skipped: a different folder of this name is already there', true]]);
+    assert.deepEqual(a.wb.installs()[item.id], ['claude', 'codex']);
+    const forced = (await sync(true)).installs;
+    assert.deepEqual(forced.map(e => [e.provider, e.result.replace(/ in .*/, '')]), [['claude', 'already installed'], ['codex', 'replaced: the previous copy is kept']]);
+    assert.equal(fs.readFileSync(path.join(theirs, 'SKILL.md'), 'utf8'), skill('careful-review'));
+  } finally { await f.close(); }
+});

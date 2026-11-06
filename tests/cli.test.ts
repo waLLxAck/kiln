@@ -6,6 +6,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { buildSync } from 'esbuild';
 import { Workbench } from '../packages/domain/workbench';
+import { DeploymentService } from '../packages/deployment/service';
 import { parseArguments } from '../apps/cli/arguments';
 import { SearchIndex } from '../packages/storage/search';
 import { itemSchema, revisionSchema } from '../packages/protocol/schema';
@@ -193,6 +194,29 @@ test('kiln sync is library sync; -f and --force force it, and it takes nothing e
   const summary = JSON.parse(result.stdout).data;
   assert.match(summary.pull, /^not pulled: This library is not a Git repository/);
   assert.deepEqual([summary.installed, summary.skipped, summary.failed, summary.alreadyCurrent], [[], [], [], 0]);
+});
+
+test('kiln sync skips a copy edited here and names --force; sync -f keeps the edits aside and installs the approved revision', () => {
+  const lib = path.join(root, 'sync-force'), priv = path.join(root, 'sync-force-private'), home = path.join(root, 'sync-force-home'); fs.mkdirSync(home);
+  const content = '---\nname: tidy\ndescription: Tidy a change before review.\n---\n\nRemove dead code.\n';
+  const wb = new Workbench(lib, priv);
+  try {
+    const item = wb.create({ title: 'tidy', kind: 'skill', content });
+    const target = wb.enroll({ name: 'Claude', root: home, provider: 'claude', scope: 'personal', profile: 'Personal' });
+    new DeploymentService(wb).installSkill({ itemId: item.id, targetId: target.id, confirm: true });
+  } finally { wb.close(); }
+  const copy = path.join(home, '.claude', 'skills', 'tidy', 'SKILL.md');
+  fs.writeFileSync(copy, content + '\nMy note.\n');
+  const sync = (...extra: string[]) => { const result = spawnSync(process.execPath, [cli, '--library', lib, '--local', priv, 'sync', ...extra], { encoding: 'utf8', windowsHide: true, timeout: 30_000 }); assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout).data; };
+  const skipped = sync();
+  assert.deepEqual(skipped.skipped, ['tidy → Claude: edited on this machine since Kiln installed it']);
+  assert.match(skipped.hint, /--force/);
+  assert.match(fs.readFileSync(copy, 'utf8'), /My note/);
+  const forced = sync('-f');
+  assert.equal(forced.replaced.length, 1);
+  assert.equal(fs.readFileSync(copy, 'utf8'), content);
+  const kept = forced.replaced[0].replace(/^.*kept in /, '');
+  assert.match(fs.readFileSync(path.join(kept, 'SKILL.md'), 'utf8'), /My note/);
 });
 
 test('CLI help shows collection-first discovery and batch examples', () => {
