@@ -649,8 +649,10 @@ export class DeploymentService {
       }
       const current = readDestination(destination);
       if (current && stateHash(current) === rendered.proposedHash) {
-        // Identical bytes: take it over unless it is already this item's, so later updates treat it as this item's copy.
-        if (!this.owns(this.latest(destination), itemId)) this.adopt(target, item, revision, destination);
+        // Identical bytes: record it as this item's copy of this revision unless that is already so, so later updates and drift
+        // checks see it as installed (another item's receipt, or this item's for an older revision, would not).
+        const owner = this.latest(destination);
+        if (!this.owns(owner, itemId) || owner.hash !== rendered.proposedHash) this.adopt(target, item, revision, destination);
         return 'already installed';
       }
       let plan = this.plan({ itemId, revision: revision.hash, targetId: target.id }), kept: string | null = null;
@@ -661,7 +663,7 @@ export class DeploymentService {
         try { plan = this.plan({ itemId, revision: revision.hash, targetId: target.id }); this.apply({ planId: plan.id, expectState: plan.expectedState, confirm: true }); }
         catch (error) {
           // Put the set-aside copy back so a failed replacement leaves the folder as it was found.
-          if (kept && !fs.existsSync(destination)) fs.renameSync(kept, destination);
+          if (kept && !fs.existsSync(destination)) { try { fs.renameSync(kept, destination); } catch { fs.cpSync(kept, destination, { recursive: true }); fs.rmSync(kept, { recursive: true, force: true }); } }
           throw error;
         }
         return kept ? `replaced: the previous copy is kept in ${kept}` : 'installed approved revision';

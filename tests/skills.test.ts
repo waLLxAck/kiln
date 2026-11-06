@@ -376,5 +376,12 @@ test('sync with force: a deleted copy is reinstalled, a link is replaced by a re
     f.wb.setInstall(item.id, 'claude', false); f.wb.setInstall(other.id, 'claude', true);
     assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['already installed']);
     assert.equal(f.deployment.installations(other.id).filter(c => c.provider === 'claude' && c.state === 'installed').length, 1);
+
+    // The folder already holds a newer approved revision (written by hand), but Kiln's receipt is for the older one: it is
+    // re-recorded, not left reading as drifted.
+    const newer = f.wb.update({ id: other.id, expect: other.revision, summary: 'Newer', value: { ...f.wb.authoring(other.id), content: skill('careful-review', 'Cite the line.') } }); approve(newer);
+    fs.writeFileSync(path.join(folder, 'SKILL.md'), skill('careful-review', 'Cite the line.'));
+    assert.deepEqual(f.deployment.syncInstalls().map(r => r.result), ['already installed']);
+    assert.deepEqual(f.deployment.installations(other.id).filter(c => c.provider === 'claude').map(c => [c.state, Boolean(c.outdated)]), [['installed', false]]);
   } finally { f.close(); }
 });
