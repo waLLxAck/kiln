@@ -32,6 +32,7 @@ npm run preview:marketing   # Serve the built website
 npm run check
 npm test
 npm run test:desktop
+npm run yt-dlp              # the bundled yt-dlp for this platform, into vendor/ (package and dist:* fetch it themselves)
 npm run package
 npm run dist:win            # on Windows: release/Kiln Setup <version>.exe
 npm run dist:mac            # on macOS: arm64 and x64 .dmg and .zip
@@ -39,6 +40,8 @@ npm run dist:linux          # on Linux: .AppImage and .deb
 ```
 
 Each installer builds on its own platform; `.github/workflows/release.yml` builds all three on GitHub's runners.
+
+Each installer includes a standalone [yt-dlp](https://github.com/yt-dlp/yt-dlp), so video distillation needs no separate install. `package` and `dist:*` run `scripts/yt-dlp.mjs`, which downloads that platform's build (no Python needed) with yt-dlp's `LICENSE` and `THIRD_PARTY_LICENSES.txt` into `vendor/yt-dlp/<os>/`, and rejects any file whose SHA-256 differs from `scripts/yt-dlp.json`. electron-builder copies the folder to `resources/yt-dlp` (`extraResources`), the desktop app passes that path on as `KILN_BUNDLED_YT_DLP`, and a yt-dlp of the user's own still comes first (`findYtDlp` in `packages/agent/youtube.ts`). The packaged smoke check runs the bundled copy. `npm run dev` and `npm start` use `vendor/yt-dlp` after `npm run yt-dlp`. To move to a newer yt-dlp, run `node scripts/yt-dlp.mjs --pin <version>`, distill a video with it, and commit the updated `scripts/yt-dlp.json`.
 
 `npm run test:desktop` runs isolated Electron tests. The real-install test is skipped by default and must be explicitly enabled; it should only be run against an authorized machine (see [IMPLEMENTATION.md](IMPLEMENTATION.md#executed-checks)). Build outputs and local verification evidence are ignored by Git.
 

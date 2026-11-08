@@ -4,13 +4,90 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AgentService } from '../packages/agent/service';
-import { cleanVtt, fetchTranscript, timestamp, transcriptMarkdown, youtubeCookieArgs, youtubeDownloadError, youtubeId, type VideoTranscript } from '../packages/agent/youtube';
+import { cleanVtt, fetchTranscript, findYtDlp, timestamp, transcriptMarkdown, youtubeCookieArgs, youtubeDownloadError, youtubeId, ytDlpFolders, type VideoTranscript } from '../packages/agent/youtube';
 import { Workbench } from '../packages/domain/workbench';
 import { Router } from '../packages/domain/router';
 
 const fixture = () => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-test-')); return new Workbench(path.join(root, 'library'), path.join(root, 'private')); };
 const wait = async (service: AgentService) => { for (let i = 0; i < 300 && service.running; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(service.running, 0); };
 const video: VideoTranscript = { id: 'Q7n0PGbMW_U', url: 'https://www.youtube.com/watch?v=Q7n0PGbMW_U', title: 'Anthropic Is "Increasing" Your Limits', channel: 'Theo', durationSeconds: 920, uploadDate: '20260831', description: 'Limits went up 25%.', chapters: [{ title: 'Intro', start: 0 }, { title: 'The maths', start: 245 }], transcript: 'Starting September 14th, we are raising limits.\nHere is the maths.', language: 'en-orig' };
+
+const installer = (home: string) => (...parts: string[]) => { const file = path.join(home, ...parts); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, ''); return file; };
+
+test('yt-dlp is found where pip --user and the usual Windows installers put it, even when that folder is not on PATH', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-ytdlp-windows-')), install = installer(home);
+  const env = { ProgramFiles: path.join(home, 'Program Files') };
+  try {
+    assert.equal(findYtDlp('', 'win32', home, env), null);
+    // pip falls back to a per-user install when it cannot write to the Python folder; that Scripts folder is never on PATH. Newest Python wins.
+    install('AppData', 'Roaming', 'Python', 'Python39', 'Scripts', 'yt-dlp.exe');
+    const user = install('AppData', 'Roaming', 'Python', 'Python314', 'Scripts', 'yt-dlp.exe');
+    fs.mkdirSync(path.join(home, 'AppData', 'Roaming', 'Python', 'share'));
+    assert.equal(findYtDlp('', 'win32', home, env), user);
+    // Only yt-dlp.exe starts without a shell, so a .cmd wrapper or an extensionless script on PATH is passed over.
+    const shims = path.join(home, 'shims'); install('shims', 'yt-dlp.cmd'); install('shims', 'yt-dlp');
+    assert.equal(findYtDlp(`"${shims}"`, 'win32', home, env), user);
+    // A copy on PATH comes first.
+    const onPath = install('tools', 'yt-dlp.exe');
+    assert.equal(findYtDlp(`${shims};${path.dirname(onPath)}`, 'win32', home, env), onPath);
+
+    fs.mkdirSync(path.join(home, 'AppData', 'Local', 'Programs', 'Python', 'Python313'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'Program Files', 'Python312'), { recursive: true }); fs.mkdirSync(path.join(home, 'Program Files', 'Git'));
+    const store = path.join(home, 'AppData', 'Local', 'Packages', 'PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0', 'LocalCache', 'local-packages', 'Python313');
+    fs.mkdirSync(store, { recursive: true });
+    assert.deepEqual(ytDlpFolders(home, 'win32', env), [
+      path.join(home, 'AppData', 'Roaming', 'Python', 'Python314', 'Scripts'),
+      path.join(home, 'AppData', 'Roaming', 'Python', 'Python39', 'Scripts'),
+      path.join(home, 'AppData', 'Local', 'Programs', 'Python', 'Python313', 'Scripts'),
+      path.join(home, 'Program Files', 'Python312', 'Scripts'),
+      path.join(store, 'Scripts'),
+      path.join(home, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links'),
+      path.join(home, 'scoop', 'shims'),
+      path.join(home, '.local', 'bin'),
+    ]);
+    // %APPDATA%, %LOCALAPPDATA% and %SCOOP% are used when set.
+    const moved = ytDlpFolders(home, 'win32', { APPDATA: path.join(home, 'Roaming'), LOCALAPPDATA: path.join(home, 'Local'), SCOOP: path.join(home, 'apps', 'scoop') });
+    assert.deepEqual(moved, [path.join(home, 'Local', 'Microsoft', 'WinGet', 'Links'), path.join(home, 'apps', 'scoop', 'shims'), path.join(home, '.local', 'bin')]);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('yt-dlp from pip install --user is found in ~/Library/Python on macOS and ~/.local/bin on Linux', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-ytdlp-posix-')), install = installer(home);
+  try {
+    install('Library', 'Python', '3.9', 'bin', 'yt-dlp');
+    const user = install('Library', 'Python', '3.12', 'bin', 'yt-dlp');
+    assert.equal(findYtDlp('', 'darwin', home, {}), user);
+    assert.deepEqual(ytDlpFolders(home, 'darwin', {}).slice(0, 2), [path.join(home, 'Library', 'Python', '3.12', 'bin'), path.join(home, 'Library', 'Python', '3.9', 'bin')]);
+    assert.ok(ytDlpFolders(home, 'darwin', {}).includes('/opt/homebrew/bin'));
+    assert.ok(ytDlpFolders(home, 'linux', {}).includes(path.posix.join(home, '.local', 'bin')));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('without a yt-dlp of their own, a fresh install uses the one bundled with Kiln, and a copy of the user’s own still comes first', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-ytdlp-bundled-')), install = installer(home);
+  try {
+    const bundled = install('Kiln', 'resources', 'yt-dlp', 'yt-dlp.exe'), env = { KILN_BUNDLED_YT_DLP: bundled };
+    assert.equal(findYtDlp('', 'win32', home, env), bundled);
+    assert.equal(findYtDlp('', 'win32', home, { KILN_BUNDLED_YT_DLP: path.join(home, 'missing', 'yt-dlp.exe') }), null);
+    const user = install('AppData', 'Roaming', 'Python', 'Python314', 'Scripts', 'yt-dlp.exe');
+    assert.equal(findYtDlp('', 'win32', home, env), user);
+    const onPath = install('tools', 'yt-dlp.exe');
+    assert.equal(findYtDlp(path.dirname(onPath), 'win32', home, env), onPath);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('every installer build fetches the pinned yt-dlp and bundles it where the app looks for it', () => {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  for (const os of ['win', 'mac', 'linux']) assert.match(pkg.scripts[`dist:${os}`], new RegExp(`&& node scripts/yt-dlp\\.mjs ${os} && electron-builder `));
+  assert.match(pkg.scripts.package, /&& node scripts\/yt-dlp\.mjs && electron-builder /);
+  assert.deepEqual(pkg.build.extraResources, [{ from: 'vendor/yt-dlp/${os}', to: 'yt-dlp' }]);
+  assert.match(fs.readFileSync(path.join('apps', 'desktop', 'main.ts'), 'utf8'), /KILN_BUNDLED_YT_DLP = app\.isPackaged \? path\.join\(process\.resourcesPath, 'yt-dlp', ytDlp\)/);
+  const pins = JSON.parse(fs.readFileSync(path.join('scripts', 'yt-dlp.json'), 'utf8'));
+  assert.match(pins.version, /^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/);
+  assert.deepEqual(Object.keys(pins.files).sort(), ['linux', 'mac', 'win']);
+  assert.deepEqual(Object.keys(pins.licences).sort(), ['LICENSE', 'THIRD_PARTY_LICENSES.txt']);
+  for (const sum of [...Object.values(pins.files), ...Object.values(pins.licences)]) assert.match(String(sum), /^[0-9a-f]{64}$/);
+});
 
 test('YouTube cookie arguments require an explicit browser choice and prefer it over the home cookie file', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-cookies-'));

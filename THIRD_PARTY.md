@@ -12,4 +12,6 @@ Imported skill content retains its original source and licence metadata. The mig
 
 The marketing site bundles Caveat, Familjen Grotesk, Instrument Sans and JetBrains Mono from the [Google Fonts repository](https://github.com/google/fonts/tree/main/ofl). These fonts use the SIL Open Font License 1.1. Their copyright notices are listed in `apps/marketing/src/fonts/README.md`, and each font file carries its copyright notice and licence URL in its name table.
 
+Kiln's installers bundle the standalone build of [yt-dlp](https://github.com/yt-dlp/yt-dlp), unmodified, in `resources/yt-dlp`; the version and checksums are pinned in `scripts/yt-dlp.json`. yt-dlp is released under the Unlicense. Its standalone build includes Python and other packages under their own licences, listed in yt-dlp's `THIRD_PARTY_LICENSES.txt`, which ships beside it with yt-dlp's `LICENSE`.
+
 PDF text extraction bundles [unpdf](https://github.com/unjs/unpdf) (MIT) and its embedded [PDF.js](https://github.com/mozilla/pdf.js) (Apache-2.0). Their notices ship in `assets/licenses/LICENSE-unpdf` and `assets/licenses/LICENSE-pdfjs`.

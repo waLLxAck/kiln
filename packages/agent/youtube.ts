@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { capture } from './process';
+import { commonBinFolders } from '../providers/path';
 import { youtubeAuthSchema, type YouTubeAuth } from '../protocol/schema';
 
 /** Everything Kiln keeps from a video before asking an agent to distill it. */
@@ -32,9 +33,45 @@ export function cleanVtt(vtt: string, markerEverySeconds = 30): string {
   }
   return out.join('\n');
 }
+const YT_DLP_MISSING = 'yt-dlp was not found. Kiln’s installers include it; in a build from source, run `npm run yt-dlp` once, or install yt-dlp (for example `pip install yt-dlp`), then retry.';
+/** Subfolders of `folder` whose names match `pattern`, highest version first. None when `folder` cannot be read. */
+const versionFolders = (folder: string, pattern: RegExp) => {
+  try { return fs.readdirSync(folder).filter(name => pattern.test(name)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map(name => path.join(folder, name)); }
+  catch { return []; }
+};
+/**
+ * Folders yt-dlp is often installed to without being on PATH. `pip install --user` (what pip does by itself when it cannot write to the
+ * Python folder) uses a per-version `Scripts` folder on Windows, or `~/Library/Python/<version>/bin` on macOS, that is never added to
+ * PATH. Python.org and Microsoft Store installs keep their own `Scripts` folders. winget, Scoop and pipx add theirs to PATH, but an app
+ * that was already running does not see that. Newer Python versions come first.
+ */
+export function ytDlpFolders(home = os.homedir(), platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (platform !== 'win32') return [...(platform === 'darwin' ? versionFolders(path.join(home, 'Library', 'Python'), /^\d+\.\d+$/).map(folder => path.join(folder, 'bin')) : []), ...commonBinFolders(home, platform)];
+  const roaming = env.APPDATA || path.join(home, 'AppData', 'Roaming'), local = env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  const pythons = [
+    ...versionFolders(path.join(roaming, 'Python'), /^Python\d+$/),
+    ...versionFolders(path.join(local, 'Programs', 'Python'), /^Python\d+$/),
+    ...(env.ProgramFiles ? versionFolders(env.ProgramFiles, /^Python\d+$/) : []),
+    ...versionFolders(path.join(local, 'Packages'), /^PythonSoftwareFoundation\.Python\.\d/).flatMap(store => versionFolders(path.join(store, 'LocalCache', 'local-packages'), /^Python\d+$/)),
+  ];
+  return [...pythons.map(folder => path.join(folder, 'Scripts')), path.join(local, 'Microsoft', 'WinGet', 'Links'), path.join(env.SCOOP || path.join(home, 'scoop'), 'shims'), path.join(home, '.local', 'bin')];
+}
+/**
+ * The yt-dlp to run: the user's own on PATH or in one of `ytDlpFolders`, so a copy they keep up to date wins; otherwise the one bundled with
+ * Kiln (`KILN_BUNDLED_YT_DLP`, set by the desktop app). On Windows only `yt-dlp.exe` counts: every installer provides it, and it is the only
+ * form that starts without a shell. Looked up on each fetch, so installing yt-dlp needs no restart.
+ */
+export function findYtDlp(searchPath = process.env.PATH ?? process.env.Path ?? '', platform: NodeJS.Platform = process.platform, home = os.homedir(), env: NodeJS.ProcessEnv = process.env): string | null {
+  const file = platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  const isFile = (candidate: string) => { try { return fs.statSync(candidate).isFile(); } catch { return false; } };
+  const lookIn = (folders: string[]) => folders.map(folder => path.join(folder, file)).find(isFile);
+  const onPath = searchPath.split(platform === 'win32' ? ';' : ':').map(folder => folder.replace(/^"|"$/g, '')).filter(Boolean);
+  const bundled = env.KILN_BUNDLED_YT_DLP;
+  return lookIn(onPath) ?? lookIn(ytDlpFolders(home, platform, env)) ?? (bundled && isFile(bundled) ? bundled : null);
+}
 /** Runs yt-dlp. Cancelling or timing out stops its whole tree, and the run settles even if something it started keeps the pipes open. */
 async function run(executable: string, args: string[], cwd: string, signal: AbortSignal, timeoutMs: number) {
-  const result = await capture(executable, args, { cwd, signal, timeoutMs, limit: 8000 }).catch(error => { throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new Error('yt-dlp was not found on PATH. Install it (pip install yt-dlp) so Kiln can read video transcripts.') : error; });
+  const result = await capture(executable, args, { cwd, signal, timeoutMs, limit: 8000 }).catch(error => { throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new Error(YT_DLP_MISSING) : error; });
   if (result.cancelled || signal.aborted) throw new Error('Cancelled');
   if (result.timedOut) throw new Error(`yt-dlp did not finish within ${Math.round(timeoutMs / 60000)} minutes.`);
   return { code: result.code, output: result.output };
@@ -58,12 +95,13 @@ export function youtubeDownloadError(code: number | null, output: string, browse
 /** Fetches English captions and metadata with yt-dlp, using the chosen browser or ~/cookies.txt when present. Nothing but subtitles and the info JSON is downloaded. */
 export const fetchTranscript: TranscriptFetcher = async ({ url, folder, signal, onPhase, auth }) => {
   const id = youtubeId(url); if (!id) throw new Error('Not a YouTube link.');
+  const executable = findYtDlp(); if (!executable) throw new Error(YT_DLP_MISSING);
   const out = path.join(folder, 'video'); fs.mkdirSync(out, { recursive: true });
   onPhase('Fetching transcript with yt-dlp');
   const args = ['--write-auto-subs', '--write-subs', '--write-info-json', '--skip-download', '--sub-langs', 'en-orig,en,en-US,en-GB', '--sub-format', 'vtt', '--js-runtimes', 'node', '--remote-components', 'ejs:github', '--quiet', '--no-warnings', '-o', '%(id)s.%(ext)s'];
   args.push(...youtubeCookieArgs(auth));
   args.push(`https://www.youtube.com/watch?v=${id}`);
-  const result = await run('yt-dlp', args, out, signal, 180_000);
+  const result = await run(executable, args, out, signal, 180_000);
   if (result.code !== 0) throw youtubeDownloadError(result.code, result.output, auth?.youtubeBrowser);
   const files = fs.readdirSync(out);
   const vtt = ['.en-orig.vtt', '.en.vtt', '.en-US.vtt', '.en-GB.vtt'].map(suffix => files.find(f => f.endsWith(suffix))).find(Boolean) ?? files.find(f => f.endsWith('.vtt'));
