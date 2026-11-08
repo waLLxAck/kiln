@@ -54,7 +54,7 @@ The macOS builds have only been started on CI runners; the Linux build has been 
 - **macOS:** drag Kiln to Applications. It is not notarized, so Gatekeeper blocks the first launch: right-click it and choose **Open** (on macOS 15 and later, **Open Anyway** in System Settings → Privacy & Security), or run `xattr -dr com.apple.quarantine /Applications/Kiln.app`.
 - **Linux:** `chmod +x Kiln-0.25.9-x86_64.AppImage` and run it. It needs FUSE 2: `sudo pacman -S fuse2` (Arch), `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with `--appimage-extract-and-run`. The tar.gz needs no FUSE: unpack it and run `kiln-workbench`. Or install the package with `sudo apt install ./kiln_0.25.9_amd64.deb`. If it exits with a sandbox error, start it with `--no-sandbox`.
 
-You also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in; first launch creates or opens your Kiln repository on GitHub. Agent runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on PATH. [Install notes in full](docs/GUIDE.md#installing).
+You also need Git and the [GitHub CLI](https://cli.github.com/) (`gh`), signed in; first launch creates or opens your Kiln repository on GitHub. Agent runs need the official Codex or Claude Code CLI, and video distillation needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), found on PATH or where pip, pipx, winget, Scoop or Homebrew installed it. [Install notes in full](docs/GUIDE.md#installing).
 
 ## Build from source
 
