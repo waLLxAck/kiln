@@ -4,6 +4,7 @@
 //   node scripts/smoke-packaged.mjs <path to the Kiln executable>
 // On Linux, run it under a display, for example `xvfb-run -a node scripts/smoke-packaged.mjs release/linux-unpacked/kiln-workbench`.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,9 +23,14 @@ try {
   const snapshot = await page.evaluate(() => window.kiln.call('snapshot'));
   assert.equal(path.resolve(snapshot.root), path.join(root, 'library'), 'the backend opened the isolated library');
   assert.equal(snapshot.items.length, 0, 'the new library is readable');
-  const main = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), platform: process.platform, arch: process.arch }));
+  const main = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), platform: process.platform, arch: process.arch, resources: process.resourcesPath, ytDlp: process.env.KILN_BUNDLED_YT_DLP }));
   assert.equal(main.packaged, true, 'runs as a packaged app');
   assert.equal(main.version, version, 'reports the package.json version');
+  // Video distillation needs no separate install: the installer's own yt-dlp (scripts/yt-dlp.mjs) is where the app looks, and it starts.
+  assert.equal(main.ytDlp, path.join(main.resources, 'yt-dlp', main.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'), 'the app points video distillation at the bundled yt-dlp');
+  const ytDlpVersion = execFileSync(main.ytDlp, ['--version'], { encoding: 'utf8', timeout: 120_000 }).trim();
+  assert.equal(ytDlpVersion, JSON.parse(fs.readFileSync(path.join('scripts', 'yt-dlp.json'), 'utf8')).version, 'the bundled yt-dlp starts and is the pinned version');
+  for (const licence of ['LICENSE', 'THIRD_PARTY_LICENSES.txt']) assert.ok(fs.existsSync(path.join(path.dirname(main.ytDlp), licence)), `yt-dlp's ${licence} ships beside it`);
   const bridge = await page.evaluate(async () => ({ title: document.title, platform: window.kiln.platform, update: await window.kiln.call('desktop.updateCheck') }));
   assert.match(bridge.title, /^Kiln/);
   assert.equal(bridge.platform, main.platform, 'the renderer sees the same platform');

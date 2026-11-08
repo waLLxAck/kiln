@@ -63,6 +63,32 @@ test('yt-dlp from pip install --user is found in ~/Library/Python on macOS and ~
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+test('without a yt-dlp of their own, a fresh install uses the one bundled with Kiln, and a copy of the user’s own still comes first', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-ytdlp-bundled-')), install = installer(home);
+  try {
+    const bundled = install('Kiln', 'resources', 'yt-dlp', 'yt-dlp.exe'), env = { KILN_BUNDLED_YT_DLP: bundled };
+    assert.equal(findYtDlp('', 'win32', home, env), bundled);
+    assert.equal(findYtDlp('', 'win32', home, { KILN_BUNDLED_YT_DLP: path.join(home, 'missing', 'yt-dlp.exe') }), null);
+    const user = install('AppData', 'Roaming', 'Python', 'Python314', 'Scripts', 'yt-dlp.exe');
+    assert.equal(findYtDlp('', 'win32', home, env), user);
+    const onPath = install('tools', 'yt-dlp.exe');
+    assert.equal(findYtDlp(path.dirname(onPath), 'win32', home, env), onPath);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('every installer build fetches the pinned yt-dlp and bundles it where the app looks for it', () => {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  for (const os of ['win', 'mac', 'linux']) assert.match(pkg.scripts[`dist:${os}`], new RegExp(`&& node scripts/yt-dlp\\.mjs ${os} && electron-builder `));
+  assert.match(pkg.scripts.package, /&& node scripts\/yt-dlp\.mjs && electron-builder /);
+  assert.deepEqual(pkg.build.extraResources, [{ from: 'vendor/yt-dlp/${os}', to: 'yt-dlp' }]);
+  assert.match(fs.readFileSync(path.join('apps', 'desktop', 'main.ts'), 'utf8'), /KILN_BUNDLED_YT_DLP = app\.isPackaged \? path\.join\(process\.resourcesPath, 'yt-dlp', ytDlp\)/);
+  const pins = JSON.parse(fs.readFileSync(path.join('scripts', 'yt-dlp.json'), 'utf8'));
+  assert.match(pins.version, /^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/);
+  assert.deepEqual(Object.keys(pins.files).sort(), ['linux', 'mac', 'win']);
+  assert.deepEqual(Object.keys(pins.licences).sort(), ['LICENSE', 'THIRD_PARTY_LICENSES.txt']);
+  for (const sum of [...Object.values(pins.files), ...Object.values(pins.licences)]) assert.match(String(sum), /^[0-9a-f]{64}$/);
+});
+
 test('YouTube cookie arguments require an explicit browser choice and prefer it over the home cookie file', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-cookies-'));
   try {

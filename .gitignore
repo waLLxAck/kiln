@@ -8,3 +8,4 @@ playwright-report/
 .env
 artifacts/
 .claude/
+vendor/

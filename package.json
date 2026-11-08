@@ -30,10 +30,11 @@
     "test": "tsx --test --test-timeout=300000 tests/*.test.ts",
     "test:desktop": "npm run build && playwright test",
     "cli": "tsx apps/cli/main.ts",
-    "package": "npm run build && electron-builder --dir",
-    "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:linux": "npm run build && electron-builder --linux",
+    "yt-dlp": "node scripts/yt-dlp.mjs",
+    "package": "npm run build && node scripts/yt-dlp.mjs && electron-builder --dir",
+    "dist:win": "npm run build && node scripts/yt-dlp.mjs win && electron-builder --win nsis",
+    "dist:mac": "npm run build && node scripts/yt-dlp.mjs mac && electron-builder --mac",
+    "dist:linux": "npm run build && node scripts/yt-dlp.mjs linux && electron-builder --linux",
     "dev:marketing": "npm run dev --workspace @kiln/marketing",
     "build:marketing": "npm run build --workspace @kiln/marketing",
     "build:all": "npm run build && npm run build:marketing",
@@ -81,6 +82,12 @@
     ],
     "asarUnpack": [
       "dist/cli/**"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/yt-dlp/${os}",
+        "to": "yt-dlp"
+      }
     ],
     "win": {
       "target": "nsis",

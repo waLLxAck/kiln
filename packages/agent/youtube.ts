@@ -33,7 +33,7 @@ export function cleanVtt(vtt: string, markerEverySeconds = 30): string {
   }
   return out.join('\n');
 }
-const YT_DLP_MISSING = 'yt-dlp was not found. Install it (for example `pip install yt-dlp`) and retry. Kiln looks on PATH and in the folders pip, pipx, winget, Scoop and Homebrew install to, so the install folder does not need to be on PATH.';
+const YT_DLP_MISSING = 'yt-dlp was not found. Kiln’s installers include it; in a build from source, run `npm run yt-dlp` once, or install yt-dlp (for example `pip install yt-dlp`), then retry.';
 /** Subfolders of `folder` whose names match `pattern`, highest version first. None when `folder` cannot be read. */
 const versionFolders = (folder: string, pattern: RegExp) => {
   try { return fs.readdirSync(folder).filter(name => pattern.test(name)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map(name => path.join(folder, name)); }
@@ -57,14 +57,17 @@ export function ytDlpFolders(home = os.homedir(), platform: NodeJS.Platform = pr
   return [...pythons.map(folder => path.join(folder, 'Scripts')), path.join(local, 'Microsoft', 'WinGet', 'Links'), path.join(env.SCOOP || path.join(home, 'scoop'), 'shims'), path.join(home, '.local', 'bin')];
 }
 /**
- * yt-dlp on PATH, otherwise in one of `ytDlpFolders`. On Windows only `yt-dlp.exe` counts: every installer provides it, and it is the only
+ * The yt-dlp to run: the user's own on PATH or in one of `ytDlpFolders`, so a copy they keep up to date wins; otherwise the one bundled with
+ * Kiln (`KILN_BUNDLED_YT_DLP`, set by the desktop app). On Windows only `yt-dlp.exe` counts: every installer provides it, and it is the only
  * form that starts without a shell. Looked up on each fetch, so installing yt-dlp needs no restart.
  */
 export function findYtDlp(searchPath = process.env.PATH ?? process.env.Path ?? '', platform: NodeJS.Platform = process.platform, home = os.homedir(), env: NodeJS.ProcessEnv = process.env): string | null {
   const file = platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
-  const lookIn = (folders: string[]) => folders.map(folder => path.join(folder, file)).find(candidate => { try { return fs.statSync(candidate).isFile(); } catch { return false; } });
+  const isFile = (candidate: string) => { try { return fs.statSync(candidate).isFile(); } catch { return false; } };
+  const lookIn = (folders: string[]) => folders.map(folder => path.join(folder, file)).find(isFile);
   const onPath = searchPath.split(platform === 'win32' ? ';' : ':').map(folder => folder.replace(/^"|"$/g, '')).filter(Boolean);
-  return lookIn(onPath) ?? lookIn(ytDlpFolders(home, platform, env)) ?? null;
+  const bundled = env.KILN_BUNDLED_YT_DLP;
+  return lookIn(onPath) ?? lookIn(ytDlpFolders(home, platform, env)) ?? (bundled && isFile(bundled) ? bundled : null);
 }
 /** Runs yt-dlp. Cancelling or timing out stops its whole tree, and the run settles even if something it started keeps the pipes open. */
 async function run(executable: string, args: string[], cwd: string, signal: AbortSignal, timeoutMs: number) {

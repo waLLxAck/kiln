@@ -331,6 +331,10 @@ if (singleInstance) void app.whenReady().then(async () => {
   // Apps opened from the Dock, Finder or a desktop launcher get a minimal PATH; take the login shell's so codex, claude, git and gh are found.
   // Set before the backend worker starts, which copies the environment.
   if (app.isPackaged) { process.env.PATH = await desktopPath(); log('path.resolved', { entries: process.env.PATH.split(path.delimiter).length }); }
+  // The installers include a standalone yt-dlp (scripts/yt-dlp.mjs), so video distillation works without installing it. A yt-dlp of the
+  // user's own is still preferred (findYtDlp). A source build uses the copy `npm run yt-dlp` downloads, if there is one.
+  const ytDlp = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  process.env.KILN_BUNDLED_YT_DLP = app.isPackaged ? path.join(process.resourcesPath, 'yt-dlp', ytDlp) : path.join(app.getAppPath(), 'vendor', 'yt-dlp', process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux', ytDlp);
   // Machine reports name the app version they were written by.
   process.env.KILN_APP_VERSION = app.getVersion();
   // The CLI bundle is unpacked from the asar so a chat agent can run it with this executable acting as Node.
