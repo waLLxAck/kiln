@@ -185,7 +185,7 @@ const cues: [number, string][] = [
 const vttTime = (s: number) => `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}.000`;
 export const videoFiles = {
   [`${video.id}.en.vtt`]: `WEBVTT\nKind: captions\nLanguage: en\n\n${cues.map(([at, text], i) => `${vttTime(at)} --> ${vttTime(cues[i + 1]?.[0] ?? at + 6)}\n${text}\n`).join('\n')}`,
-  [`${video.id}.info.json`]: JSON.stringify({ id: video.id, title: video.title, channel: video.channel, duration: video.duration, upload_date: video.uploadDate, description: video.description, webpage_url: `https://www.youtube.com/watch?v=${video.id}`, chapters: video.chapters.map(([title, start_time], i) => ({ title, start_time, end_time: video.chapters[i + 1]?.[1] ?? video.duration })) }),
+  [`${video.id}.info.json`]: JSON.stringify({ id: video.id, title: video.title, channel: video.channel, duration: video.duration, upload_date: video.uploadDate, description: video.description, webpage_url: `https://www.youtube.com/watch?v=${video.id}`, subtitles: { en: [{ ext: 'vtt', name: 'English', url: `https://www.youtube.com/api/timedtext?v=${video.id}&lang=en&fmt=vtt` }] }, chapters: video.chapters.map(([title, start_time], i) => ({ title, start_time, end_time: video.chapters[i + 1]?.[1] ?? video.duration })) }),
 };
 
 /** The fictional game project the experiment runs on, and a second project so the selector has a choice. */

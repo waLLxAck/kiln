@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AgentService } from '../packages/agent/service';
-import { cleanVtt, fetchTranscript, timestamp, transcriptMarkdown, youtubeCookieArgs, youtubeDownloadError, youtubeId, type VideoTranscript } from '../packages/agent/youtube';
+import { chooseCaptions, cleanVtt, fetchTranscript, timestamp, transcriptMarkdown, youtubeCookieArgs, youtubeDownloadError, youtubeId, type VideoTranscript } from '../packages/agent/youtube';
 import { Workbench } from '../packages/domain/workbench';
 import { Router } from '../packages/domain/router';
 
@@ -33,33 +33,76 @@ test('YouTube bot checks explain recovery in Kiln, while unrelated downloader er
     assert.match(youtubeDownloadError(1, output, 'firefox').message, /Open the video in firefox/);
   }
   assert.equal(youtubeDownloadError(1, 'ERROR: Video unavailable').message, 'yt-dlp exited (1). ERROR: Video unavailable');
+  const limited = youtubeDownloadError(1, "ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests").message;
+  assert.match(limited, /HTTP 429/); assert.match(limited, /Wait a few minutes, then retry/); assert.match(limited, /Settings → YouTube/); assert.doesNotMatch(limited, /yt-dlp exited/);
+  assert.match(youtubeDownloadError(1, 'HTTP Error 429: Too Many Requests', 'firefox').message, /signed in to YouTube in firefox/);
 });
 
-test('the transcript downloader passes browser cookies to yt-dlp and translates its bot-check failure', { skip: process.platform === 'win32' }, async t => {
+/** A caption track as yt-dlp lists it; YouTube fetches a machine translation with a `tlang` parameter. */
+const track = (spoken: string, name: string, translated = false) => ['json3', 'vtt'].map(ext => ({ ext, name, url: `https://www.youtube.com/api/timedtext?v=x&lang=${spoken}&fmt=${ext}${translated ? '&tlang=xx' : ''}` }));
+
+test('captions come in the language the video is spoken in, never as one of YouTube’s machine translations', () => {
+  // A Spanish video: English exists only as a translation, which YouTube refuses with HTTP 429 far more readily.
+  const spanish = { language: 'es-US', automatic_captions: { en: track('es', 'English', true), es: track('es', 'Spanish'), 'es-orig': track('es', 'Spanish (Original)'), fr: track('es', 'French', true) } };
+  assert.deepEqual(chooseCaptions(spanish), { lang: 'es-orig', automatic: true, name: 'Spanish (Original)' });
+  // Subtitles people wrote in the spoken language come first, even under a regional code.
+  assert.deepEqual(chooseCaptions({ ...spanish, subtitles: { en: track('en', 'English'), 'es-ES-7eCR4kqQbL4': track('es', 'Spanish (Spain)') } }), { lang: 'es-ES-7eCR4kqQbL4', automatic: false, name: 'Spanish (Spain)' });
+  // English videos keep working: the original automatic captions, or English subtitles when someone wrote them.
+  const english = { language: 'en', automatic_captions: { 'en-orig': track('en', 'English (Original)'), en: track('en', 'English'), de: track('en', 'German', true) } };
+  assert.deepEqual(chooseCaptions(english), { lang: 'en-orig', automatic: true, name: 'English (Original)' });
+  assert.deepEqual(chooseCaptions({ ...english, subtitles: { en: track('en', 'English'), live_chat: [{ ext: 'json' }] } }), { lang: 'en', automatic: false, name: 'English' });
+  // No untranslated automatic captions and no known language: English subtitles, then any written ones.
+  assert.deepEqual(chooseCaptions({ subtitles: { ja: track('ja', 'Japanese'), 'en-nP7-2PuUl7o': track('en', 'English') }, automatic_captions: { de: track('ja', 'German', true) } }), { lang: 'en-nP7-2PuUl7o', automatic: false, name: 'English' });
+  assert.deepEqual(chooseCaptions({ subtitles: { ja: track('ja', 'Japanese') } }), { lang: 'ja', automatic: false, name: 'Japanese' });
+  // Only translations, a live chat replay, or nothing: no captions to use.
+  assert.equal(chooseCaptions({ automatic_captions: { en: track('ko', 'English', true) } }), null);
+  assert.equal(chooseCaptions({ subtitles: { live_chat: [{ ext: 'json' }] } }), null);
+  assert.equal(chooseCaptions({}), null);
+});
+
+test('the transcript downloader reads the details, then fetches the spoken-language captions with browser cookies, and explains failures', { skip: process.platform === 'win32' }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiln-youtube-downloader-'));
   const previousPath = process.env.PATH;
   try {
     const executable = path.join(root, 'yt-dlp');
     fs.writeFileSync(executable, `#!/usr/bin/env node
 const fs = require('node:fs');
-fs.writeFileSync('args.json', JSON.stringify(process.argv.slice(2)));
-if (process.argv.includes('firefox:blocked')) {
+const args = process.argv.slice(2);
+const calls = fs.existsSync('calls.json') ? JSON.parse(fs.readFileSync('calls.json', 'utf8')) : [];
+fs.writeFileSync('calls.json', JSON.stringify([...calls, args]));
+if (args.includes('firefox:blocked')) {
   console.error('ERROR: [youtube] Kl-I7sUcAOY: Sign in to confirm you’re not a bot.');
   process.exit(1);
 }
-fs.writeFileSync('Kl-I7sUcAOY.en.vtt', 'WEBVTT\\n\\n00:00:00.000 --> 00:00:02.000\\nHello from captions\\n');
-fs.writeFileSync('Kl-I7sUcAOY.info.json', JSON.stringify({ title: 'Test video', channel: 'Test channel' }));
+if (!args.includes('--load-info-json')) {
+  const track = (name, translated) => [{ ext: 'vtt', name, url: 'https://www.youtube.com/api/timedtext?v=Kl-I7sUcAOY&lang=es' + (translated ? '&tlang=en' : '') }];
+  fs.writeFileSync('Kl-I7sUcAOY.info.json', JSON.stringify({ title: 'Prueba', channel: 'Canal', language: 'es', automatic_captions: { en: track('English', true), 'es-orig': track('Spanish (Original)') } }));
+  process.exit(0);
+}
+if (args.includes('firefox:limited')) {
+  console.error("ERROR: Unable to download video subtitles for 'es-orig': HTTP Error 429: Too Many Requests");
+  process.exit(1);
+}
+fs.writeFileSync('Kl-I7sUcAOY.' + args[args.indexOf('--sub-langs') + 1] + '.vtt', 'WEBVTT\\n\\n00:00:00.000 --> 00:00:02.000\\nHola desde los subtítulos\\n');
 `);
     fs.chmodSync(executable, 0o755);
     process.env.PATH = `${root}${path.delimiter}${previousPath ?? ''}`;
     t.mock.method(os, 'homedir', () => root);
-    const input = { url: 'https://youtu.be/Kl-I7sUcAOY', folder: root, signal: new AbortController().signal, onPhase: () => {}, auth: { youtubeBrowser: 'firefox' as const, youtubeBrowserProfile: 'Personal Profile' } };
+    const phases: string[] = [];
+    const input = { url: 'https://youtu.be/Kl-I7sUcAOY', folder: root, signal: new AbortController().signal, onPhase: (phase: string) => { phases.push(phase); }, auth: { youtubeBrowser: 'firefox' as const, youtubeBrowserProfile: 'Personal Profile' } };
     const fetched = await fetchTranscript(input);
-    assert.equal(fetched.title, 'Test video'); assert.match(fetched.transcript, /Hello from captions/);
-    const args: string[] = JSON.parse(fs.readFileSync(path.join(root, 'video', 'args.json'), 'utf8'));
-    assert.equal(args[args.indexOf('--cookies-from-browser') + 1], 'firefox:Personal Profile');
-    assert.ok(!args.includes('--cookies')); assert.ok(args.includes('--skip-download'));
+    assert.equal(fetched.title, 'Prueba'); assert.match(fetched.transcript, /Hola desde los subtítulos/); assert.equal(fetched.language, 'es-orig');
+    assert.deepEqual(phases, ['Fetching transcript with yt-dlp', 'Fetching Spanish (Original) captions with yt-dlp']);
+    const [details, captions]: string[][] = JSON.parse(fs.readFileSync(path.join(root, 'video', 'calls.json'), 'utf8'));
+    for (const args of [details, captions]) {
+      assert.equal(args[args.indexOf('--cookies-from-browser') + 1], 'firefox:Personal Profile');
+      assert.ok(!args.includes('--cookies')); assert.ok(args.includes('--skip-download'));
+    }
+    assert.ok(details.includes('--write-info-json') && !details.includes('--sub-langs'), 'the first step reads only the details');
+    assert.deepEqual(captions.slice(captions.indexOf('--write-auto-subs')), ['--write-auto-subs', '--sub-langs', 'es-orig', '--sub-format', 'vtt', '--load-info-json', 'Kl-I7sUcAOY.info.json']);
+    assert.ok(!captions.includes('--write-subs') && !captions.some(arg => arg.includes('youtube.com/watch')), 'the second step reuses the saved details and asks for that one track');
     await assert.rejects(fetchTranscript({ ...input, auth: { youtubeBrowser: 'firefox', youtubeBrowserProfile: 'blocked' } }), /Settings → YouTube/);
+    await assert.rejects(fetchTranscript({ ...input, auth: { youtubeBrowser: 'firefox', youtubeBrowserProfile: 'limited' } }), /HTTP 429[\s\S]*Wait a few minutes/);
   } finally { process.env.PATH = previousPath; fs.rmSync(root, { recursive: true, force: true }); }
 });
 
